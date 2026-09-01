@@ -33,6 +33,8 @@ from archimedes.api import strategies_routes as sr
 from archimedes.services import request_path_warmup as warmup
 from archimedes.services.rigor_evaluator import run_rigor_gate
 
+from tests.db_isolation import redirect_to_tmp_sqlite
+
 
 def _passing_series(seed: int = 0, n: int = 250) -> list[float]:
     return np.random.default_rng(seed).normal(0.0015, 0.004, n).tolist()
@@ -40,6 +42,18 @@ def _passing_series(seed: int = 0, n: int = 250) -> list[float]:
 
 def _fake_app() -> SimpleNamespace:
     return SimpleNamespace(state=SimpleNamespace())
+
+
+@pytest.fixture
+def _isolated_lifespan_db(tmp_path):
+    """Lifespan starts #1718's background ``seed_from_manifest``.
+
+    Without a tmp DB that seed writes the production manifest (~18k rows)
+    into the process-global test database (#1640), and later
+    ``test_loader_env_override`` sees 18752 papers instead of its 4-row
+    fixture. Same isolation pattern as ``test_gateway_chain_lifespan_wiring``.
+    """
+    yield from redirect_to_tmp_sqlite(tmp_path)
 
 
 class _TinyProvider:
@@ -159,7 +173,7 @@ async def test_warmup_budget_interrupts_a_sync_prime(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_timed_out_warmup_does_not_yield_lifespan(monkeypatch) -> None:
+async def test_timed_out_warmup_does_not_yield_lifespan(monkeypatch, _isolated_lifespan_db) -> None:
     """A timed-out warmup must not become an ALB-ready target (#1713).
 
     MUTATION: restore the lifespan ``except Exception`` swallow around
@@ -169,6 +183,13 @@ async def test_timed_out_warmup_does_not_yield_lifespan(monkeypatch) -> None:
     monkeypatch.delenv("TESTING", raising=False)
     monkeypatch.setenv("REQUEST_PATH_WARMUP", "true")
     monkeypatch.setattr(warmup, "WARMUP_BUDGET_SECONDS", 0.05)
+    # The seed import is inside the worker; patch the module so a thread
+    # that outlives this test cannot write the production manifest into
+    # the restored process-global DB.
+    monkeypatch.setattr(
+        "archimedes.services.corpus_service.seed_from_manifest",
+        lambda: 0,
+    )
     released = threading.Event()
 
     def _hang():
