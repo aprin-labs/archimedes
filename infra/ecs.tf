@@ -573,12 +573,12 @@ resource "aws_ecs_task_definition" "backend" {
       # the documented twin, kept in step by
       # backend/tests/test_ecs_readiness_deploy_pin.py.
       healthCheck = {
-        command     = ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')\" || exit 1"]
-        interval    = 30
-        timeout     = 5
-        retries     = 3
+        command  = ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')\" || exit 1"]
+        interval = 30
+        timeout  = 5
+        retries  = 3
         # 90s: must cover request-path warmup (#1713, 60s budget) so ECS
-        # ignores /health failures while uvicorn is not yet listening.
+        # ignores /health/ready failures while uvicorn is not yet listening.
         # deploy.yml clones the live task-def and does not apply this file;
         # ecs_rewrite_task_def.py pins the same startPeriod on every CI
         # deploy so a clone of the 30s live revision cannot leave the
