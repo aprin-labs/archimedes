@@ -733,8 +733,14 @@ jobs:
           # isolated child, #1728); pulling it back is PAPER_ADVANCE_VALUE in
           # .github/scripts/ecs_rewrite_task_def.py plus the ecs.tf twin. The
           # code default stays false, so a revision that never heard of the
-          # name still cannot tick. terraform apply is still required for
-          # other ecs.tf drift; this flag must not depend on it.
+          # name still cannot tick. This PR does not flip that pin.
+          # The same rewrite pins backend healthCheck.startPeriod=90 so a
+          # clone of the live 30s startPeriod cannot leave the #1713 60s
+          # warmup budget outside ECS's ignored-failure window, and points
+          # the container probe at /health/ready (#1818 P3). terraform apply
+          # is still required for other ecs.tf drift; these pins must not
+          # depend on it. Do not terraform-noop
+          # deployment_minimum_healthy_percent.
           # The same script also ensures the backend container carries the
           # TIINGO_API_TOKEN secret (#1798), for the same reason and against
           # the same drift (#1799): the SSM parameter has existed since

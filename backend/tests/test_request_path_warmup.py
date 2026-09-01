@@ -4,7 +4,7 @@ Two properties, both demonstrated to reject:
 
 1. The FastAPI lifespan calls ``arm_request_path_warmup`` BEFORE ``yield`` —
    uvicorn is not listening, so the ALB cannot mark the target healthy, until
-   the helper has run (or failed-soft).
+   the helper has run. A timed-out warmup must not yield (listen cold).
 2. The helper actually primes the caches the Library page reads: cohort
    returns, ``strategies_list`` rigor, ``selection_bias_gate`` rigor. A
    subsequent ``_live_rigor_results_for_strategies`` must not re-run
@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import threading
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -84,6 +85,13 @@ def test_lifespan_warms_request_path_caches_before_yield() -> None:
         "request-path warmup runs AFTER yield, so the ALB can mark the target "
         "healthy before the Library caches are primed"
     )
+    # A try/except Exception around the await is the #1713 bug: timeout
+    # fail-softs and the task still listens cold.
+    warmup_block = "\n".join(lines[warmup_at:yield_at])
+    assert "except Exception" not in warmup_block, (
+        "lifespan swallows warmup failures between arm and yield — a timed-out "
+        "warmup would still become an ALB-ready target"
+    )
     assert "evaluate_rigor_gate" not in code
     assert "BacktestResultRecord" not in code
 
@@ -104,40 +112,101 @@ def test_warmup_kill_switch_is_off_when_requested(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_arm_is_a_noop_when_disabled(monkeypatch) -> None:
     """MUTATION: drop the ``warmup_enabled`` gate. Under TESTING this would
-    then enter ``_prime`` and this spy would fire."""
+    then enter ``_prime_sync`` and this spy would fire."""
     called = []
 
-    async def _should_not_run(_app):
+    def _should_not_run():
         called.append("prime")
         return {}
 
-    monkeypatch.setattr(warmup, "_prime", _should_not_run)
+    monkeypatch.setattr(warmup, "_prime_sync", _should_not_run)
     result = await warmup.arm_request_path_warmup(_fake_app())
     assert result == {}
     assert called == []
 
 
 @pytest.mark.asyncio
-async def test_warmup_budget_does_not_block_boot_forever(monkeypatch) -> None:
-    """A hung warmup must not pin uvicorn off the loop.
+async def test_warmup_budget_interrupts_a_sync_prime(monkeypatch) -> None:
+    """THE GUARD: ``asyncio.wait_for`` cannot interrupt a sync prime on the
+    event loop. The budget is real only if the prime runs in a worker.
 
-    MUTATION: drop the ``asyncio.wait_for``. This then parks on the 3600s
-    sleep until the hard-stop... except the 2s wall-clock bar fails first.
+    Production primes are ``get_all_daily_returns`` / ``run_rigor_gate`` —
+    no await. ``time.sleep`` is the same shape. A test that patches
+    ``_prime`` with ``asyncio.sleep(3600)`` proves nothing about that path:
+    sleep *is* cancellable at an await.
+
+    MUTATION: drop ``to_thread`` and run ``_prime_sync`` on the loop. The
+    3s sleep then blocks the loop, ``wait_for`` cannot fire, and the
+    2s wall-clock bar fails. Dropping ``wait_for`` entirely also fails.
     """
     monkeypatch.delenv("TESTING", raising=False)
     monkeypatch.setenv("REQUEST_PATH_WARMUP", "true")
     monkeypatch.setattr(warmup, "WARMUP_BUDGET_SECONDS", 0.05)
 
-    async def _hang(_app):
-        await asyncio.sleep(3600)
+    def _hang():
+        # Blocking, no await — identical to a hung blob-decode. 3s is >>
+        # the 0.05s budget and would fail the 2s bar if wait_for cannot
+        # interrupt; asyncio.sleep would be cancellable at an await and
+        # would not prove the production path.
+        time.sleep(3)
         return {"hung": True}
 
-    monkeypatch.setattr(warmup, "_prime", _hang)
+    monkeypatch.setattr(warmup, "_prime_sync", _hang)
     started = time.perf_counter()
-    result = await warmup.arm_request_path_warmup(_fake_app())
+    with pytest.raises(warmup.RequestPathWarmupTimeout, match="refusing to listen cold"):
+        await warmup.arm_request_path_warmup(_fake_app())
     elapsed = time.perf_counter() - started
-    assert result == {}
-    assert elapsed < 2.0, f"warmup hung boot for {elapsed:.2f}s; the ALB grace is 90s"
+    assert elapsed < 2.0, f"sync prime was not interrupted ({elapsed:.2f}s); the 60s cap is fake"
+
+
+@pytest.mark.asyncio
+async def test_timed_out_warmup_does_not_yield_lifespan(monkeypatch) -> None:
+    """A timed-out warmup must not become an ALB-ready target (#1713).
+
+    MUTATION: restore the lifespan ``except Exception`` swallow around
+    ``arm_request_path_warmup``. The context then yields, which is listen
+    / register cold. This test drives the real lifespan, not a source grep.
+    """
+    monkeypatch.delenv("TESTING", raising=False)
+    monkeypatch.setenv("REQUEST_PATH_WARMUP", "true")
+    monkeypatch.setattr(warmup, "WARMUP_BUDGET_SECONDS", 0.05)
+    released = threading.Event()
+
+    def _hang():
+        released.wait(timeout=3600)
+        return {}
+
+    monkeypatch.setattr(warmup, "_prime_sync", _hang)
+    yielded: list[str] = []
+    try:
+        with pytest.raises(warmup.RequestPathWarmupTimeout):
+            await asyncio.wait_for(
+                _enter_lifespan(yielded),
+                timeout=15.0,
+            )
+        assert yielded == [], (
+            "lifespan yielded after a warmup timeout — uvicorn would listen "
+            "and the ALB would register a cold task"
+        )
+    finally:
+        released.set()
+
+
+async def _enter_lifespan(yielded: list[str]) -> None:
+    async with main_module.lifespan(_fake_app()):
+        yielded.append("yielded")
+
+
+def test_arm_uses_to_thread_so_the_budget_can_fire() -> None:
+    """Source pin: wait_for over an async _prime that does sync work is fake.
+
+    MUTATION: replace ``asyncio.to_thread(_prime_sync)`` with ``_prime(app)``.
+    This fails. The interruptibility test above is the behavioral twin.
+    """
+    source = inspect.getsource(warmup.arm_request_path_warmup)
+    assert "to_thread" in source
+    assert "wait_for" in source
+    assert "_prime_sync" in source
 
 
 @pytest.mark.asyncio
