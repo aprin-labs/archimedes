@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+import time
 from collections.abc import Iterable
 from datetime import UTC, datetime
 
@@ -18,6 +20,25 @@ from archimedes.models.backtest import BacktestResult
 from archimedes.models.backtest_store import BacktestResultRecord
 
 logger = logging.getLogger(__name__)
+
+# Process-local memo of the Library's cohort daily-returns read (#1713).
+# ``rigor_cache`` cannot absorb this cost: the returns ARE that cache's key, so
+# a rigor HIT still used to re-decode every artifact_json blob (~12s on a
+# cold task). This layer is the missing half: same 600s TTL + the same
+# insert_backtest_if_missing invalidation as rigor_cache, so a write still
+# forces the next Library read to recompute against live data. The key is
+# the sorted id set (order-insensitive) so the two page-load callers
+# (``/api/strategies/`` and ``/api/selection-bias/gate``) share one entry.
+_COHORT_RETURNS_TTL_SECONDS = 600.0
+_cohort_returns_lock = threading.Lock()
+_cohort_returns_store: dict[tuple[str, ...], tuple[float, dict[str, list[float]]]] = {}
+
+
+def clear_cohort_returns_cache() -> None:
+    """Drop every cached cohort-returns entry. Called from the writer path."""
+    with _cohort_returns_lock:
+        _cohort_returns_store.clear()
+
 
 # Canonical source_pipeline values — every writer through
 # insert_backtest_if_missing must pass one of these (the function has no
@@ -142,6 +163,13 @@ def insert_backtest_if_missing(
         rigor_cache.clear()
     except Exception as exc:
         logger.warning("rigor_cache invalidation failed after new backtest row (non-fatal): %s", exc)
+    try:
+        clear_cohort_returns_cache()
+    except Exception as exc:
+        logger.warning(
+            "cohort-returns cache invalidation failed after new backtest row (non-fatal): %s",
+            exc,
+        )
 
     return row, True
 
@@ -237,11 +265,17 @@ def get_all_daily_returns(
     ``/api/strategies/`` at p50 12.85 s and ``/api/selection-bias/gate`` at p50
     15.62 s (2026-08-31 ALB-log evidence sprint).
 
-    **The shared rigor cache cannot absorb this.** The returns ARE the cohort
-    cache key (``rigor_cache.cohort_key``, called from
+    **The shared rigor cache cannot absorb this by itself.** The returns ARE
+    the cohort cache key (``rigor_cache.cohort_key``, called from
     ``strategies_routes.py``'s ``_live_rigor_results_for_strategies``), so a
-    cache HIT still pays the full read — which is also why nothing may be
-    cached in FRONT of this function: the read produces the key.
+    rigor HIT still used to pay the full read. #1713 adds a process-local
+    memo IN FRONT of this function, invalidated on the same writer path as
+    ``rigor_cache.clear()`` (``insert_backtest_if_missing``) and capped at the
+    same 600s TTL. The read still produces the key — a cache HIT here serves
+    the same decoded series a live read would have, so ``cohort_key`` cannot
+    drift from the data it fingerprints. A writer that bypassed
+    ``insert_backtest_if_missing`` would be the same staleness window rigor
+    already had.
 
     Query shape mirrors ``latest_backtests_by_strategy`` below (#1543): resolve
     "latest row per strategy" with a window function IN THE DATABASE, then
@@ -268,6 +302,14 @@ def get_all_daily_returns(
     ids = list(dict.fromkeys(strategy_ids))
     if not ids:
         return {}
+
+    cache_key = tuple(sorted(ids))
+    now = time.monotonic()
+    with _cohort_returns_lock:
+        hit = _cohort_returns_store.get(cache_key)
+        if hit is not None and now - hit[0] < _COHORT_RETURNS_TTL_SECONDS:
+            cached = hit[1]
+            return {sid: list(cached[sid]) for sid in ids if sid in cached}
 
     ranked = (
         select(
@@ -305,6 +347,11 @@ def get_all_daily_returns(
         returns = decoded.get(sid)
         if returns:
             out[sid] = returns
+    with _cohort_returns_lock:
+        _cohort_returns_store[cache_key] = (
+            time.monotonic(),
+            {sid: list(series) for sid, series in out.items()},
+        )
     return out
 
 

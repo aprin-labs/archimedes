@@ -936,3 +936,94 @@ def test_get_all_daily_returns_ignores_unrequested_strategies() -> None:
         assert set(get_all_daily_returns(session, subset)) == set(subset)
     finally:
         session.close()
+
+
+def test_get_all_daily_returns_cache_hit_issues_no_query() -> None:
+    """#1713: the second Library read must not re-decode artifact blobs.
+
+    MUTATION: delete the cache lookup in ``get_all_daily_returns``. This then
+    sees a SELECT on the second call and fails. The first-call one-query
+    guard above still requires a live read — the cache is a memo, not a fixture.
+    """
+    session, _SessionLocal, ids = _seeded_session_with_artifacts(n_strategies=10, n_cycles=3)
+    try:
+        first = get_all_daily_returns(session, ids)
+        session.expunge_all()
+        statements, detach = _capture_sql(session.get_bind())
+        try:
+            second = get_all_daily_returns(session, ids)
+        finally:
+            detach()
+
+        selects = _selects_from_backtest_results(statements)
+        assert selects == [], (
+            "cohort-returns cache miss on the second call — the Library page "
+            f"would still pay the blob decode. statements={selects!r}"
+        )
+        assert second == first
+        # The two page-load callers pass the same ids in different orders;
+        # a key that included caller order would make them miss each other.
+        statements, detach = _capture_sql(session.get_bind())
+        try:
+            reversed_order = get_all_daily_returns(session, list(reversed(ids)))
+        finally:
+            detach()
+        assert _selects_from_backtest_results(statements) == []
+        assert set(reversed_order) == set(first)
+    finally:
+        session.close()
+
+
+def test_get_all_daily_returns_cache_is_invalidated_by_a_new_backtest_row() -> None:
+    """A cached series must not outlive ``insert_backtest_if_missing``.
+
+    MUTATION: drop ``clear_cohort_returns_cache()`` from the writer. This
+    then reads ``[0.0]`` after inserting ``[9.0]``.
+    """
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    SessionLocal = sessionmaker(bind=engine)
+    Base.metadata.create_all(bind=engine)
+    session = SessionLocal()
+    try:
+        insert_backtest_if_missing(
+            session,
+            strategy_id="s1",
+            content_hash="s1-0",
+            result=_sample_result("s1", 0.0),
+            source_pipeline="run_backtests",
+            run_id="run-0",
+            artifact_json=_artifact_with([0.0]),
+        )
+        session.commit()
+        assert get_all_daily_returns(session, ["s1"]) == {"s1": [0.0]}
+
+        insert_backtest_if_missing(
+            session,
+            strategy_id="s1",
+            content_hash="s1-1",
+            result=_sample_result("s1", 9.0),
+            source_pipeline="run_backtests",
+            run_id="run-1",
+            artifact_json=_artifact_with([9.0]),
+        )
+        session.commit()
+        session.expunge_all()
+        assert get_all_daily_returns(session, ["s1"]) == {"s1": [9.0]}, (
+            "cohort-returns cache served the pre-insert series after a new "
+            "backtest row — the Library would grade stale returns"
+        )
+    finally:
+        session.close()
+
+
+def test_get_all_daily_returns_cache_returns_a_copy() -> None:
+    """Mutating the returned lists must not poison the memo for the next caller."""
+    session, _SessionLocal, ids = _seeded_session_with_artifacts(n_strategies=3, n_cycles=1)
+    try:
+        first = get_all_daily_returns(session, ids)
+        sid = next(iter(first))
+        first[sid].append(99.0)
+        second = get_all_daily_returns(session, ids)
+        assert 99.0 not in second[sid]
+    finally:
+        session.close()
