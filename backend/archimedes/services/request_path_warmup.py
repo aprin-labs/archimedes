@@ -17,9 +17,11 @@ so uvicorn is not listening and the ALB target cannot be healthy until the
 caches the Library page actually reads are populated:
 
 * cohort daily returns (process-local memo in ``backtest_repository``)
-* the ``strategies_list:`` ``rigor_cache`` entry
+* the Library list's stored-passport read (``stored_passports_for``; the
+  live ``_live_rigor_results_for_strategies`` helper was deleted on main
+  with the verdict-of-record ADR — the list no longer runs a gate)
 * the ``selection_bias_gate:`` ``rigor_cache`` entry (and the shared Redis
-  layer, when configured)
+  layer, when configured) — this is the remaining live-gate cold path
 * explore-assets, kicked off but not awaited (oracle + yfinance can take
   up to ~57s; blocking boot on that would blow the ALB 90s grace window)
 
@@ -163,12 +165,15 @@ def _prime_sync() -> dict[str, bool]:
         logger.warning("request-path warmup: cohort returns failed: %s", exc)
 
     try:
-        from archimedes.api.strategies_routes import _live_rigor_results_for_strategies
+        from archimedes.api.strategies_routes import stored_passports_for
+        from archimedes.db import get_session, init_db
 
-        _live_rigor_results_for_strategies(library)
+        init_db()
+        with get_session() as session:
+            stored_passports_for(session, [s.id for s in library])
         warmed["strategies_list"] = True
     except Exception as exc:
-        logger.warning("request-path warmup: strategies_list rigor cache failed: %s", exc)
+        logger.warning("request-path warmup: strategies_list stored passports failed: %s", exc)
 
     try:
         from archimedes.api.selection_bias_routes import DEFAULT_LEVEL, evaluate_rigor_gate

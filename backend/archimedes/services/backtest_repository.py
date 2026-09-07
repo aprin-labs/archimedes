@@ -267,7 +267,7 @@ def get_all_daily_returns(
 
     **The shared rigor cache cannot absorb this by itself.** The returns ARE
     the cohort cache key (``rigor_cache.cohort_key``, called from
-    ``strategies_routes.py``'s ``_live_rigor_results_for_strategies``), so a
+    ``selection_bias_routes.evaluate_rigor_gate``), so a
     rigor HIT still used to pay the full read. #1713 adds a process-local
     memo IN FRONT of this function, invalidated on the same writer path as
     ``rigor_cache.clear()`` (``insert_backtest_if_missing``) and capped at the

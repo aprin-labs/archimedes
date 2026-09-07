@@ -5,10 +5,10 @@ Two properties, both demonstrated to reject:
 1. The FastAPI lifespan calls ``arm_request_path_warmup`` BEFORE ``yield`` —
    uvicorn is not listening, so the ALB cannot mark the target healthy, until
    the helper has run. A timed-out warmup must not yield (listen cold).
-2. The helper actually primes the caches the Library page reads: cohort
-   returns, ``strategies_list`` rigor, ``selection_bias_gate`` rigor. A
-   subsequent ``_live_rigor_results_for_strategies`` must not re-run
-   ``run_rigor_gate``.
+2. The helper actually primes the caches the Library page and the
+   selection-bias gate read: cohort returns, stored passports for the
+   list path, ``selection_bias_gate`` rigor. A subsequent
+   ``evaluate_rigor_gate`` must not re-run ``run_rigor_gate``.
 
 Hermetic: no network, no Redis, no .env. Explore is mocked at the
 ``asset_market_service`` boundary so a CI box cannot hang on yfinance.
@@ -245,13 +245,15 @@ async def test_prime_fail_soft_when_the_library_is_unavailable(monkeypatch) -> N
 
 @pytest.mark.asyncio
 async def test_prime_populates_the_strategies_list_cache(monkeypatch) -> None:
-    """THE GUARD (#1713): after warmup, the next Library list must not
-    re-run ``run_rigor_gate``.
+    """THE GUARD (#1713): after warmup, the next selection-bias gate must not
+    re-run ``run_rigor_gate``. The Library list itself no longer runs a live
+    gate (verdict-of-record); warmup still reads stored passports for that
+    path and primes the remaining live-gate cache.
 
-    MUTATION: delete the ``_live_rigor_results_for_strategies(library)``
-    call in ``_prime``. The post-warmup call-count then grows and this
-    fails. The two strategies are a real curated pair so look-ahead and
-    cohort PBO run on the production path; returns are injected at the
+    MUTATION: delete the ``evaluate_rigor_gate`` call in ``_prime_sync``.
+    The post-warmup call-count then grows and this fails. The two
+    strategies are a real curated pair so look-ahead and cohort PBO run
+    on the production path; returns are injected at the
     ``get_all_daily_returns`` boundary.
     """
     library = sr.strategy_provider().list_strategies()[:2]
@@ -289,11 +291,11 @@ async def test_prime_populates_the_strategies_list_cache(monkeypatch) -> None:
         after_warmup = len(gate_calls)
         assert after_warmup >= len(library), f"warmup did not run the cohort gate (calls={gate_calls!r})"
 
-        sr._live_rigor_results_for_strategies(library)
+        await sb_routes.evaluate_rigor_gate(strictness=sb_routes.DEFAULT_LEVEL)
         assert len(gate_calls) == after_warmup, (
-            f"post-warmup Library list re-ran run_rigor_gate "
+            f"post-warmup selection-bias gate re-ran run_rigor_gate "
             f"({len(gate_calls) - after_warmup} extra calls) — the task would "
-            "still serve the 12s cold hit"
+            "still serve the 24s cold hit"
         )
     finally:
         task = getattr(app.state, "explore_warmup_task", None)
@@ -356,7 +358,6 @@ async def test_explore_arm_failure_does_not_undo_rigor_warmup(monkeypatch) -> No
         lambda session, ids: {sid: _passing_series(0) for sid in ids},
     )
     monkeypatch.setattr(sb_routes, "evaluate_rigor_gate", AsyncMock(return_value=SimpleNamespace()))
-    monkeypatch.setattr(sr, "_live_rigor_results_for_strategies", lambda lib: {})
 
     # No `.state` — the explore arm raises; rigor steps already completed.
     warmed = await warmup._prime(SimpleNamespace())
