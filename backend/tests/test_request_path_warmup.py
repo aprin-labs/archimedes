@@ -279,6 +279,7 @@ async def test_prime_populates_the_strategies_list_cache(monkeypatch) -> None:
         gate_calls.append(kwargs.get("strategy_id") or (args[0] if args else "?"))
         return real_gate(*args, **kwargs)
 
+    monkeypatch.setattr(sb_routes, "run_rigor_gate", _counting)
     monkeypatch.setattr("archimedes.services.rigor_evaluator.run_rigor_gate", _counting)
 
     app = _fake_app()
