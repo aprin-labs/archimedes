@@ -85,7 +85,7 @@ jobs:
       # On the default shallow clone every page would report the same date (or
       # none), which is exactly the hand-typed-stamp problem the plugin
       # replaces. It costs a few seconds on a repo this size.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 

@@ -97,7 +97,7 @@ jobs:
     steps:
       # No `submodules:` — deliberate. No .tf file references a submodule path,
       # so cloning them would cost minutes for zero signal.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       - name: Install Terraform
         uses: hashicorp/setup-terraform@v3

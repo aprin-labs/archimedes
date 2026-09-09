@@ -171,7 +171,7 @@ jobs:
 
     steps:
       # No `submodules:` — no .tf file references a submodule path.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       # Fail with a sentence somebody can act on, rather than letting
       # configure-aws-credentials fail on an empty `role-to-assume` with a
