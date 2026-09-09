@@ -165,4 +165,4 @@ pypdf>=6.16.2
 # AWS / S3
 boto3>=1.43.82
 # Imported directly for AWS exceptions/config; boto3 constrains compatibility.
-botocore>=1.43.81
+botocore>=1.43.88
