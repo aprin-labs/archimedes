@@ -25,13 +25,16 @@ test("every /start call carries the attempt-scoped Idempotency-Key", () => {
 	// probe, signed retry, passkey branch) can forget it.
 	assert.match(
 		generate,
-		/apiPostWithMeta\("\/api\/generate\/start", buildBrief\(\), \{\s*"Idempotency-Key": paymentAttemptKey\(\),\s*\.\.\.extraHeaders,\s*\}\)/,
+		/apiPostWithMeta\(\s*"\/api\/generate\/start",\s*buildBrief\(\),\s*\{\s*"Idempotency-Key": paymentAttemptKey\(\),\s*\.\.\.extraHeaders,\s*\},?\s*\)/,
 	);
 });
 
 test("the attempt key is reused until a job is accepted, then regenerated", () => {
 	// Created lazily once per attempt…
-	assert.match(generate, /paymentAttemptKeyRef\.current = crypto\.randomUUID\(\)/);
+	assert.match(
+		generate,
+		/paymentAttemptKeyRef\.current = crypto\.randomUUID\(\)/,
+	);
 	// …and consumed only on acceptance, inside the shared success helper.
 	assert.match(
 		generate,

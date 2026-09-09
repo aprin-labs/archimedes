@@ -20,6 +20,7 @@ import {
 } from '../password-rules'
 import { postAuthPath } from '../routes'
 import BrandMark from './BrandMark'
+import ThemeSwitcher from './ThemeSwitcher.jsx'
 
 const STRENGTH_COLORS = ['var(--text-4)', 'var(--text-4)', 'var(--warning, #b08a3e)', 'var(--accent)', 'var(--accent)']
 
@@ -370,7 +371,6 @@ export default function AuthPage({ mode, oauthError }) {
         <section className="auth-context" aria-label="Archimedes account boundary">
           <a href="/" className="auth-brand" aria-label="Archimedes home">
             <BrandMark />
-            <span>Archimedes</span>
           </a>
           <div>
             <p className="public-kicker">Account before wallet</p>
@@ -384,7 +384,10 @@ export default function AuthPage({ mode, oauthError }) {
         </section>
 
         <section className="auth-form-panel" aria-labelledby="auth-title">
-        <a href="/" className="caption text-[var(--accent)]">← Archimedes</a>
+        <div className="auth-toolbar">
+          <a href="/" className="caption text-[var(--accent)]">← Archimedes</a>
+          <ThemeSwitcher />
+        </div>
         <h1 id="auth-title" className="serif text-[2rem] mt-4 mb-2">{title}</h1>
 
         {resetting ? (

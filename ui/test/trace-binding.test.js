@@ -60,7 +60,10 @@ test("hash_matched maps to the verified tone", () => {
 
 test("anchored_only maps to its own tone, distinct from verified", () => {
 	assert.equal(verificationTone("anchored_only"), "anchored");
-	assert.notEqual(verificationTone("anchored_only"), verificationTone("hash_matched"));
+	assert.notEqual(
+		verificationTone("anchored_only"),
+		verificationTone("hash_matched"),
+	);
 });
 
 test("failed, unrecognised, and missing modes all degrade to failed", () => {
@@ -129,10 +132,19 @@ test("the anchored tone's button branch never reuses the verified check icon or 
 	// branch's icon. Avoids a full-JSX parse while still pinning the actual
 	// rendered branch, not just a substring anywhere in the file.
 	const verifiedLabelIdx = reasoningSrc.indexOf("Hash verified");
-	assert.ok(verifiedLabelIdx !== -1, "no verified-tone label branch found in Reasoning.jsx");
+	assert.ok(
+		verifiedLabelIdx !== -1,
+		"no verified-tone label branch found in Reasoning.jsx",
+	);
 
-	const anchoredIdx = reasoningSrc.indexOf("vTone === 'anchored'", verifiedLabelIdx);
-	assert.ok(anchoredIdx !== -1, "no anchored-tone label branch found in Reasoning.jsx");
+	const anchoredIdx = reasoningSrc.indexOf(
+		"vTone === 'anchored'",
+		verifiedLabelIdx,
+	);
+	assert.ok(
+		anchoredIdx !== -1,
+		"no anchored-tone label branch found in Reasoning.jsx",
+	);
 
 	const branchEnd = reasoningSrc.indexOf("i-lucide-search", anchoredIdx);
 	assert.ok(branchEnd !== -1, "could not find the end of the anchored branch");
@@ -169,7 +181,10 @@ test("a chain-sourced trace with an invalid reveal renders the red invalid-bindi
 	const danglingIdx = reasoningSrc.indexOf(
 		"temporal_binding_source === 'chain' && t.temporal_binding_valid === false",
 	);
-	assert.ok(danglingIdx !== -1, "no explicit dangling-reveal (source===chain, valid===false) detection found");
+	assert.ok(
+		danglingIdx !== -1,
+		"no explicit dangling-reveal (source===chain, valid===false) detection found",
+	);
 
 	// Extract the block-order panel body (from the dangling-reveal check to
 	// the panel's closing IIFE) and confirm the affordance branches use the
@@ -178,7 +193,8 @@ test("a chain-sourced trace with an invalid reveal renders the red invalid-bindi
 	const panel = reasoningSrc.slice(danglingIdx, panelEnd);
 
 	assert.ok(
-		panel.includes("i-lucide-x-circle") && panel.includes("text-[var(--negative)]"),
+		panel.includes("i-lucide-x-circle") &&
+			panel.includes("text-[var(--negative)]"),
 		"the dangling-reveal case must render the red x-circle / negative styling",
 	);
 	assert.ok(
@@ -201,6 +217,6 @@ test("Architecture.jsx's contract-enforced claims are untouched (anti-goal)", ()
 		new URL("../src/components/Architecture.jsx", import.meta.url),
 		"utf8",
 	);
-	assert.ok(architectureSrc.includes("the ordering is enforced by the contract"));
+	assert.match(architectureSrc, /the ordering is enforced by the\s+contract/);
 	assert.ok(architectureSrc.includes("contract-enforced ordering"));
 });

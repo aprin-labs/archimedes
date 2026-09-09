@@ -285,7 +285,9 @@ function PipelineStep({ index, title, sub, youAct, actLabel, isLast }) {
 						// 3.91:1 as a numeral on the light theme's pale card. The filled
 						// state needs --accent-on (pure white on light) rather than
 						// --canvas, which is the tinted page ground and gave 4.16:1.
-						color: youAct ? "var(--accent-on, var(--canvas))" : "var(--accent-text, var(--accent))",
+						color: youAct
+							? "var(--accent-on, var(--canvas))"
+							: "var(--accent-text, var(--accent))",
 						background: youAct ? "var(--accent)" : "var(--surface-1)",
 						border: "1.5px solid var(--accent)",
 						boxShadow: youAct ? "0 0 0 4px var(--accent-glow)" : "none",
@@ -353,11 +355,10 @@ function PipelineFlow() {
 			>
 				{ROADMAP_SURFACES_ENABLED ? (
 					<>
-						You stay in the loop at two binding moments: reviewing the
-						passport and signing the deploy steps. The agent cannot withdraw,
-						cannot change what the vault may hold, and cannot trade without a
-						prior on-chain commitment. If nothing clears the bar, Archimedes
-						says so:{" "}
+						You stay in the loop at two binding moments: reviewing the passport
+						and signing the deploy steps. The agent cannot withdraw, cannot
+						change what the vault may hold, and cannot trade without a prior
+						on-chain commitment. If nothing clears the bar, Archimedes says so:{" "}
 						<strong style={{ color: "var(--text-2)" }}>
 							abstaining is a first-class outcome, not a failure state.
 						</strong>
@@ -564,7 +565,8 @@ function RigorGateSection({ leaderboard, leaderboardError }) {
 					}}
 				>
 					How many curated-library strategies currently pass is unestablished —
-					the live gate is the only authority, and this page will never quote a count.{" "}
+					the live gate is the only authority, and this page will never quote a
+					count.{" "}
 					{leaderboardError ? (
 						<span style={{ color: "var(--text-4)" }}>
 							Live leaderboard size unavailable right now.
@@ -612,13 +614,13 @@ function OnChainExecutionRoadmap({ contracts, contractsError }) {
 					Non-custodial vault execution is on the roadmap; not yet live.
 				</strong>{" "}
 				The contracts exist and are deployed to Arc testnet, but no user
-				strategy runs against them today, and Archimedes does not manage capital.
-				Everything else on this page describes a path that does run.
+				strategy runs against them today, and Archimedes does not manage
+				capital. Everything else on this page describes a path that does run.
 			</p>
 			<p className="caption" style={{ color: "var(--text-3)" }}>
-				Generation is not anchored on-chain today. The commit-before-trade
-				loop is the vault-path mechanism, and vault execution is roadmap.
-				Settlement, when execution ships, is USDC on Arc testnet
+				Generation is not anchored on-chain today. The commit-before-trade loop
+				is the vault-path mechanism, and vault execution is roadmap. Settlement,
+				when execution ships, is USDC on Arc testnet
 				{contractsError
 					? " (chain id unavailable right now)"
 					: contracts?.chain_id
@@ -752,10 +754,10 @@ function ProvenanceSection() {
 				mechanism, and vault execution is roadmap:
 			</p>
 			<p className="caption mb-4" style={{ color: "var(--text-3)" }}>
-				Read this as the ordering rule the contracts will enforce when that
-				path ships, not as a claim that generation records the decision on Arc.
-				The trade half belongs to the execution path described above as
-				roadmap. No user vault has been deployed.
+				Read this as the ordering rule the contracts will enforce when that path
+				ships, not as a claim that generation records the decision on Arc. The
+				trade half belongs to the execution path described above as roadmap. No
+				user vault has been deployed.
 			</p>
 			<div className="mb-4" style={{ overflowX: "auto" }}>
 				<CommitTradeRevealLoop />
@@ -775,9 +777,9 @@ function ProvenanceSection() {
 						2. Trade
 					</div>
 					<div className="caption" style={{ color: "var(--text-3)" }}>
-						The execution contract&apos;s <code>rebalance()</code> reverts unless
-						that commitment exists — the ordering is enforced by the contract,
-						not by our code being well-behaved.
+						The execution contract&apos;s <code>rebalance()</code> reverts
+						unless that commitment exists — the ordering is enforced by the
+						contract, not by our code being well-behaved.
 					</div>
 				</div>
 				<div className="card-flat p-3">
@@ -787,8 +789,8 @@ function ProvenanceSection() {
 					<div className="caption" style={{ color: "var(--text-3)" }}>
 						After settlement, the full trace is published off-chain and the
 						contract itself re-hashes the content to verify it matches the
-						commitment. The on-chain keccak256 is the integrity anchor; we
-						do not pin traces to IPFS.
+						commitment. The on-chain keccak256 is the integrity anchor; we do
+						not pin traces to IPFS.
 					</div>
 				</div>
 			</div>
@@ -868,9 +870,9 @@ function CorpusSection({ health, healthError }) {
 					{fmtNum(health.corpus_papers)}-paper arXiv manifest spanning
 					statistical finance, portfolio math, market microstructure, and
 					agentic AI. At generate time, retrieval runs in two stages: a
-					keyword/asset-class filter, then a relevance rerank against your brief,
-					scored at request time over each candidate's title and abstract, with no
-					vector index behind it (
+					keyword/asset-class filter, then a relevance rerank against your
+					brief, scored at request time over each candidate's title and
+					abstract, with no vector index behind it (
 					{health.paper_rag === "live"
 						? "/health reports paper_rag: live — the rerank is running MiniLM sentence embeddings right now"
 						: "/health reports paper_rag: degraded — the rerank is running the lexical TF-IDF fallback right now"}
@@ -986,8 +988,8 @@ function HonestyLedger({ health, healthError, agentStatus, agentStatusError }) {
 				Archimedes runs on the Arc public testnet — real contracts, real
 				signatures, faucet USDC. No mainnet money; generation settles real
 				testnet USDC (read GET /api/generate/quote). Claims must be true on the
-				live path; here is the current state, kept current from the system's
-				own health surface:
+				live path; here is the current state, kept current from the system's own
+				health surface:
 			</p>
 			<div className="table-container mb-3">
 				<table>
@@ -1024,8 +1026,8 @@ function HonestyLedger({ health, healthError, agentStatus, agentStatusError }) {
 							<td>
 								<LedgerStatus tone="roadmap">Roadmap</LedgerStatus> —
 								contract-enforced ordering on the vault path; generation
-								computes a hash and does not write it on-chain. The trade
-								half waits on the execution path above
+								computes a hash and does not write it on-chain. The trade half
+								waits on the execution path above
 							</td>
 						</tr>
 						{ROADMAP_SURFACES_ENABLED && (
@@ -1047,14 +1049,13 @@ function HonestyLedger({ health, healthError, agentStatus, agentStatusError }) {
 										</span>
 									) : agentStatus.alive ? (
 										<>
-											<LedgerStatus tone="live">Live</LedgerStatus>{" "}
-											— the runner loop is ticking: heartbeat confirmed
-											within the last 10 minutes on the dedicated runner
-											instance (relocated off the old detached EC2 box,
-											#1043/#1065). The heartbeat is written after every
-											tick, including a failed one, and independently of
-											dry-run — it confirms the loop is alive, not that a
-											given tick reached commit/trade/reveal
+											<LedgerStatus tone="live">Live</LedgerStatus> — the runner
+											loop is ticking: heartbeat confirmed within the last 10
+											minutes on the dedicated runner instance (relocated off
+											the old detached EC2 box, #1043/#1065). The heartbeat is
+											written after every tick, including a failed one, and
+											independently of dry-run — it confirms the loop is alive,
+											not that a given tick reached commit/trade/reveal
 										</>
 									) : (
 										<>
@@ -1062,9 +1063,9 @@ function HonestyLedger({ health, healthError, agentStatus, agentStatusError }) {
 												No recent heartbeat
 											</LedgerStatus>{" "}
 											— the loop is defined to evaluate, then
-											commit/trade/reveal when not in dry-run; no
-											heartbeat in the last 10 minutes, so neither uptime
-											nor execution is confirmed
+											commit/trade/reveal when not in dry-run; no heartbeat in
+											the last 10 minutes, so neither uptime nor execution is
+											confirmed
 										</>
 									)}
 								</td>
@@ -1182,7 +1183,7 @@ function CallToAction({ onNavigate }) {
 					className="btn btn-primary"
 					onClick={() => onNavigate?.("generate")}
 				>
-					Generate a strategy →
+					Generate a strategy
 				</button>
 				<button
 					className="btn btn-outline"

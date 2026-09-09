@@ -46,7 +46,7 @@ const REQUIRED_DISCLOSURE = [
 	],
 	[
 		"nothing_sold_or_redistributed",
-		/[Nn]othing on this page is sold or commercially\s+redistributed/,
+		/[Nn]othing on this page is sold or\s+commercially\s+redistributed/,
 		"Nothing on this page is sold or commercially redistributed — it is here to look at.",
 	],
 	[

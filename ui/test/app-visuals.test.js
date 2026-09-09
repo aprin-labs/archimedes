@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const css = readFileSync(new URL("../src/App.css", import.meta.url), "utf8");
+const tokens = readFileSync(
+	new URL("../public/theme.css", import.meta.url),
+	"utf8",
+);
 const authPage = readFileSync(
 	new URL("../src/components/AuthPage.jsx", import.meta.url),
 	"utf8",
@@ -42,7 +46,7 @@ const insights = readFileSync(
 	"utf8",
 );
 
-test("authenticated shell has isolated operational tokens and journey rail", () => {
+test("authenticated shell inherits shared Fulcro roles and retains journey rail", () => {
 	assert.match(layout, /shell app-site/);
 	assert.match(layout, /BrandMark/);
 	assert.match(layout, /className="app-skip-link"/);
@@ -58,7 +62,10 @@ test("authenticated shell has isolated operational tokens and journey rail", () 
 	// would pass regardless of whether the flag-derived split is wired
 	// correctly; the 3-vs-5-stage behaviour itself is exercised by
 	// getProofStages(false)/(true)/() in roadmap-copy.test.js.
-	assert.match(layout, /import \{ getProofStages \} from ["']\.\.\/proofStages\.js["'];/);
+	assert.match(
+		layout,
+		/import \{ getProofStages \} from ["']\.\.\/proofStages\.js["'];/,
+	);
 	assert.match(layout, /const PROOF_STAGES = getProofStages\(\);/);
 	assert.match(layout, /className="app-proof-rail"/);
 	assert.match(layout, /aria-current=\{isCurrent \? "step" : undefined\}/);
@@ -73,17 +80,11 @@ test("authenticated shell has isolated operational tokens and journey rail", () 
 		generate,
 		/onStageChange\?\.\(drillInJobId \? ["']debate["'] : ["']brief["']\)/,
 	);
-	assert.match(css, /\.app-site\s*\{[^}]*--app-canvas:\s*#081218;/s);
-	assert.match(
-		css,
-		/:root\[data-theme="light"\] \.app-site\s*\{[^}]*--app-canvas:\s*#f2f5f1;/s,
-	);
+	assert.match(tokens, /--app-canvas:\s*var\(--canvas\);/);
+	assert.match(tokens, /--text-4:\s*var\(--muted\);/);
 	assert.match(css, /\.app-site :focus-visible\s*\{/);
-	assert.match(css, /\.app-site\s*\{[^}]*--text-4:\s*#71867e;/s);
-	assert.match(
-		css,
-		/:root\[data-theme="light"\] \.app-site\s*\{[^}]*--text-4:\s*#60746b;/s,
-	);
+	assert.match(layout, /<ThemeSwitcher \/>/);
+	assert.doesNotMatch(css, /\.app-site\s*\{[^}]*--canvas:/s);
 });
 
 test("authenticated routes load behind route-level suspense boundaries", () => {
@@ -103,16 +104,15 @@ test("onboarding uses proof-frame identity and verified product language", () =>
 	assert.doesNotMatch(onboarding, /Λ|bleeding-edge/i);
 });
 
-test("getStoredTheme stays off window.matchMedia — dark is the product default (#1357)", () => {
-	// getStoredTheme runs as the lazy useState initializer on the render path
-	// of every /app page. An unguarded window.matchMedia there reintroduces
-	// the #1357 failure class (an uncaught throw unmounts the React root),
-	// and it contradicts theme.test.js's pinned behavior: any stored value
-	// other than 'light' — including nothing — resolves to 'dark'. If a
-	// system-preference first theme is ever wanted, it needs a guarded,
-	// test-reconciled design of its own; this guard rejects the shortcut.
-	assert.doesNotMatch(theme, /matchMedia/);
-	assert.match(theme, /stored === ["']light["'] \? ["']light["'] : ["']dark["']/);
+test("storage reader defaults to System without unguarded media queries (#1357)", () => {
+	const storedReader = theme.match(
+		/export function getStoredTheme\(\) \{[\s\S]*?\n\}/,
+	)?.[0];
+	assert.ok(storedReader);
+	assert.doesNotMatch(storedReader, /matchMedia/);
+	assert.match(storedReader, /canStore\(THEME_STORAGE_KEY\)/);
+	assert.match(storedReader, /catch\s*\{\s*return "system"/);
+	// Actual default/throw/System behavior is exercised in theme.test.js.
 });
 
 test("social auth controls do not wait for provider discovery", () => {
@@ -133,6 +133,12 @@ test("Generate uses a mobile-first brief-first workbench with context rail", () 
 	assert.match(generate, /className="app-page-heading generate-page__heading"/);
 	assert.match(generate, /className="generate-workbench"/);
 	assert.match(generate, /className="card generate-brief"/);
+	assert.match(generate, /className="generate-brief-editor"/);
+	assert.match(generate, /className="generate-brief-editor__footer"/);
+	assert.match(
+		css,
+		/\.app-site \.generate-brief \.generate-brief-input\s*\{[^}]*min-height:\s*8rem;[^}]*font-family:\s*var\(--sans\);/s,
+	);
 	assert.match(generate, /className="generate-context-rail"/);
 	assert.match(generate, /className="generate-register"/);
 
@@ -140,7 +146,10 @@ test("Generate uses a mobile-first brief-first workbench with context rail", () 
 	// around it — is now the phone layout: one column. Pinning the base as
 	// single-column is what makes "mobile-first" a mechanical property rather
 	// than a claim in a comment; a desktop grid restored here would fail.
-	assert.match(css, /\.generate-workbench\s*\{[^}]*grid-template-columns:\s*1fr;/s);
+	assert.match(
+		css,
+		/\.generate-workbench\s*\{[^}]*grid-template-columns:\s*1fr;/s,
+	);
 
 	// The two-column brief+rail grid and the sticky rail are the enhancement,
 	// and they live behind min-width — never behind a max-width collapse.
@@ -152,7 +161,10 @@ test("Generate uses a mobile-first brief-first workbench with context rail", () 
 		desktopTier[1],
 		/\.generate-workbench\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1\.35fr\) minmax\(280px,\s*0\.65fr\);/s,
 	);
-	assert.match(desktopTier[1], /\.generate-context-rail\s*\{[^}]*position:\s*sticky;/s);
+	assert.match(
+		desktopTier[1],
+		/\.generate-context-rail\s*\{[^}]*position:\s*sticky;/s,
+	);
 
 	// The retired always-visible examples list and its styles are gone.
 	assert.doesNotMatch(css, /\.generate-example\s*[,{]/);
@@ -169,8 +181,16 @@ test("Strategy Passport separates evidence from user authority", () => {
 		css,
 		/\.passport-workspace\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(280px,\s*340px\);/s,
 	);
-	assert.match(css, /\.passport-authority\s*\{[^}]*position:\s*sticky;/s);
-	assert.match(css, /\.passport-rigor\s*\{[^}]*--text-4:\s*#566a61;/s);
+	assert.match(
+		css,
+		/\.passport-authority\s*\{[^}]*position:\s*sticky;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s,
+		"nested authority grid must not size its track to an overflowing control's intrinsic width",
+	);
+	assert.doesNotMatch(
+		css,
+		/\.passport-rigor\s*\{[^}]*(?:--text-[1-4]:|background:\s*#fff)/s,
+		"rigor evidence must inherit the active theme, not force white panels or dark ink",
+	);
 	// #1646 rehomed the evidence column's source-paper cards onto one table
 	// and added the DSL panel, so the class pins above no longer describe the
 	// whole evidence column. The pins for the new markup live in
@@ -178,7 +198,21 @@ test("Strategy Passport separates evidence from user authority", () => {
 	// this case keeps owning the page's SKELETON (workspace / authority /
 	// evidence split), which is unchanged.
 	assert.match(passport, /className="passport-sources passport-dense fade-up/);
-	assert.match(css, /\.passport-dense \.passport-panel\s*\{[^}]*padding:\s*16px 18px;/s);
+	assert.match(
+		css,
+		/\.passport-dense \.passport-panel\s*\{[^}]*padding:\s*16px 18px;/s,
+	);
+});
+
+test("Quant evidence is excluded from modal elevation", () => {
+	assert.match(
+		css,
+		/\.app-site \.card-elevated:not\(\.quant-lab \.card-elevated\)/,
+	);
+	assert.match(
+		css,
+		/\.quant-lab \.card-elevated\s*\{[^}]*border-radius:\s*0;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s,
+	);
 });
 
 test("Portfolio uses ledger metrics and split audit workspace", () => {
@@ -194,12 +228,12 @@ test("Portfolio uses ledger metrics and split audit workspace", () => {
 	);
 });
 
-test("app semantics reserve cobalt for action and verdigris for verification", () => {
-	assert.match(css, /--app-action:\s*var\(--brand-cobalt\);/);
-	assert.match(css, /--app-verify:\s*var\(--brand-verdigris\);/);
+test("app semantics reserve lime for primary actions and status ink for verification", () => {
+	assert.match(tokens, /--app-action:\s*var\(--control\);/);
+	assert.match(tokens, /--app-verify:\s*var\(--positive\);/);
 	assert.match(
 		css,
-		/\.app-site \.btn-primary\s*\{[^}]*background:\s*var\(--app-action\);/s,
+		/\.app-site \.btn-primary\s*\{[^}]*background:\s*var\(--primary\);/s,
 	);
 	assert.match(
 		css,
@@ -224,7 +258,9 @@ test("app motion and core workspaces respect narrow or reduced-motion contexts",
 	// would happily span from any earlier media query to the base
 	// `.generate-workbench` rule and "find" a violation that is not there.
 	// Top-level blocks in this file close with a `}` in column 0.
-	for (const block of css.matchAll(/@media \(max-width: \d+px\)\s*\{([\s\S]*?)\n\}/g)) {
+	for (const block of css.matchAll(
+		/@media \(max-width: \d+px\)\s*\{([\s\S]*?)\n\}/g,
+	)) {
 		assert.doesNotMatch(
 			block[1],
 			/\.generate-workbench\s*[,{]/,
@@ -243,6 +279,93 @@ const generationCopy = readFileSync(
 	"utf8",
 );
 
+test("generation feed is keyboard-scrollable and styles prose separately from machine details", () => {
+	assert.match(generationStream, /role="log"[^>]*tabIndex=\{0\}/s);
+	assert.match(generationStream, /className="generation-event__headline"/);
+	assert.match(
+		css,
+		/\.generation-stream__log\s*\{[^}]*max-height:\s*460px;[^}]*overflow-y:\s*auto;/s,
+	);
+	assert.match(
+		css,
+		/\.generation-event__detail\s*\{[^}]*overflow-wrap:\s*anywhere;/s,
+	);
+	const jobs = readFileSync(
+		new URL("../src/components/GenerationStatus.jsx", import.meta.url),
+		"utf8",
+	);
+	assert.match(jobs, /className="generation-table-scroll"[^>]*tabIndex=\{0\}/);
+	assert.match(
+		css,
+		/\.generation-table-scroll\s*\{[^}]*position:\s*relative;[^}]*overflow-x:\s*auto;/s,
+		"offscreen sr-only column labels must remain inside the table's scroll container",
+	);
+});
+
+test("narrow app typography and chrome wrap instead of clipping enlarged text", () => {
+	assert.match(
+		css,
+		/\.app-page-heading h1\s*\{[^}]*overflow-wrap:\s*anywhere;/s,
+	);
+	assert.match(
+		css,
+		/html:has\(\.app-site\)\s*\{[^}]*scroll-padding-top:\s*calc\(4rem \+ 64px\);/s,
+	);
+	assert.match(
+		css,
+		/\.app-site \.topbar\s*\{[^}]*height:\s*auto;[^}]*flex-wrap:\s*wrap;/s,
+	);
+	assert.match(
+		css,
+		/\.catalog-filter \.cs-trigger\s*\{[^}]*min-height:\s*44px;/s,
+	);
+});
+
+test("discovery uses native controls and complete, readable research titles", () => {
+	const explore = readFileSync(
+		new URL("../src/components/Explore.jsx", import.meta.url),
+		"utf8",
+	);
+	const corpus = readFileSync(
+		new URL("../src/components/CorpusExplorer.jsx", import.meta.url),
+		"utf8",
+	);
+	assert.match(explore, /<h1>Explore<\/h1>/);
+	assert.doesNotMatch(
+		explore,
+		/onMouseEnter|onMouseLeave/,
+		"hover and focus belong in shared CSS, not pointer-only style mutations",
+	);
+	assert.match(css, /\.explore-entry:focus-visible/);
+	assert.match(corpus, /aria-pressed=\{tab === t\}/);
+	assert.match(css, /\.catalog-title-btn\s*\{[^}]*white-space:\s*normal;/s);
+	assert.match(corpus, /<thead>\s*<tr>\s*<th scope="col">Title<\/th>/);
+	assert.match(corpus, /<label className="catalog-search-field">/);
+	assert.match(corpus, /<h2[^>]*>Abstract<\/h2>/);
+	assert.doesNotMatch(
+		corpus,
+		/<h[34]\b/,
+		"research views must not skip directly from h1 to h3 or h4",
+	);
+	assert.match(explore, /href="\/app\/generate"/);
+	assert.match(
+		explore,
+		/assets\.length > 0 && \(\s*<dl className="explore-summary"/,
+		"coverage counts describe served assets, not empty or unavailable data",
+	);
+	for (const value of [
+		"assets.length",
+		"groups.length",
+		"oracleBackedCount",
+		"staleCount",
+	]) {
+		assert.ok(
+			explore.includes(`<dd>{${value}}</dd>`),
+			`missing served coverage value: ${value}`,
+		);
+	}
+});
+
 test("generation stream claims papers only from real per-candidate citations (task #54)", () => {
 	// The event copy moved out of GenerationStream.jsx into src/generation-copy.js
 	// (a plain module so the copy is runnable in tests); the claim it may make is
@@ -254,7 +377,10 @@ test("generation stream claims papers only from real per-candidate citations (ta
 	assert.doesNotMatch(generationStream, /candidates;.*papers/);
 	// The honest claim: candidate_drafted's own provenance-checked citations,
 	// omitted when absent.
-	assert.match(generationCopy, /candidate_drafted:[\s\S]{0,400}source_arxiv_ids/);
+	assert.match(
+		generationCopy,
+		/candidate_drafted:[\s\S]{0,400}source_arxiv_ids/,
+	);
 	assert.match(generationCopy, /from \$\{plural\(n, "paper", "papers"\)\}/);
 });
 
@@ -274,7 +400,10 @@ test("leaderboard caveat banner is own-scope-gated (#1306; the refresh-residual 
 	// about the RESEARCH board only — repeating it over the live paper board,
 	// whose numbers come from the forward ledger, would be false. Pinning both
 	// halves keeps the banner from drifting onto the wrong surface.
-	assert.match(leaderboard, /\{isResearch && isOwn && \(\s*<div\s*\n?\s*role="status"/);
+	assert.match(
+		leaderboard,
+		/\{isResearch && isOwn && \(\s*<div\s*\n?\s*role="status"/,
+	);
 	// The one remaining residual: pre-correction rows are fixed at generation
 	// time (never refreshed) — see the dedicated test below (#1365).
 	assert.match(leaderboard, /before the August engine corrections/);

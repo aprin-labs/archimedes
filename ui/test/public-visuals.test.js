@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 
 const app = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
 const css = readFileSync(new URL("../src/App.css", import.meta.url), "utf8");
+const tokens = readFileSync(
+	new URL("../public/theme.css", import.meta.url),
+	"utf8",
+);
 const architecture = readFileSync(
 	new URL("../src/components/Architecture.jsx", import.meta.url),
 	"utf8",
@@ -32,22 +35,27 @@ const nginx = readFileSync(
 	"utf8",
 );
 
-test("public shell owns calm-precision tokens and accessible navigation", () => {
+test("public shell inherits Fulcro tokens and retains accessible navigation", () => {
 	assert.match(publicLayout, /className="public-site"/);
 	assert.match(publicLayout, /BrandMark/);
 	assert.match(publicLayout, /className="public-announcement"/);
 	assert.match(publicLayout, /aria-label="Public navigation"/);
-	assert.match(publicLayout, /aria-label=.*theme/i);
+	assert.match(publicLayout, /<ThemeSwitcher \/>/);
 	assert.doesNotMatch(
 		css,
 		/\.public-brand__copy small,\s*\.public-theme-toggle\s*\{\s*display:\s*none;/s,
 	);
 	assert.match(publicLayout, /href="\/app\/generate"/);
-	assert.match(css, /--brand-canvas:\s*#f4f1e9;/i);
-	assert.match(css, /--brand-ink:\s*#0d1218;/i);
-	assert.match(css, /--brand-cobalt:\s*#4658e8;/i);
-	assert.match(css, /--brand-verdigris:\s*#147a69;/i);
-	assert.match(css, /--brand-muted:\s*#596570;/i);
+	assert.match(tokens, /--brand-canvas:\s*var\(--canvas\);/);
+	assert.match(tokens, /--brand-ink:\s*var\(--ink\);/);
+	assert.match(tokens, /--brand-cobalt:\s*var\(--link\);/);
+	assert.match(tokens, /--brand-verdigris:\s*var\(--positive\);/);
+	assert.match(tokens, /--brand-muted:\s*var\(--muted\);/);
+	assert.doesNotMatch(
+		css,
+		/\.public-site\s*\{[^}]*--public-paper:/s,
+		"a legacy shell-local paper token must not shadow the canonical root palette",
+	);
 	assert.match(css, /\.public-site :focus-visible\s*\{/);
 	assert.match(
 		css,
@@ -55,6 +63,19 @@ test("public shell owns calm-precision tokens and accessible navigation", () => 
 	);
 	assert.doesNotMatch(css, /gradient\(/i);
 	assert.doesNotMatch(architecture, /gradient\(/i);
+});
+
+test("public shell owns one shared footer after page content", () => {
+	assert.match(
+		publicLayout,
+		/<div id="public-content" tabIndex="-1">\s*\{children\}\s*<\/div>\s*<PublicFooter \/>/,
+	);
+	assert.equal((publicLayout.match(/<PublicFooter \/>/g) ?? []).length, 1);
+	assert.match(
+		publicLayout,
+		/function PublicFooter\(\)[\s\S]*<footer className="public-footer">/,
+	);
+	assert.doesNotMatch(landing, /PublicFooter|className="public-footer"/);
 });
 
 test("security page separates verified controls from known limits", () => {
@@ -126,15 +147,15 @@ test("landing uses a bespoke product theatre instead of register-template motifs
 		landing,
 		/Inspection register|Admission register|Product anatomy/,
 	);
-	assert.match(css, /--public-haze:\s*#efedff;/i);
-	assert.match(css, /--public-stage:\s*#0c0c11;/i);
+	assert.match(tokens, /--public-haze:\s*var\(--canvas\);/);
+	assert.match(tokens, /--public-stage:\s*var\(--canvas\);/);
 	assert.match(
-		css,
-		/@font-face\s*\{[^}]*font-family:\s*"Gabarito";[^}]*gabarito-latin\.woff2/s,
+		tokens,
+		/@font-face\s*\{[^}]*font-family:\s*"DM Sans";[^}]*dm-sans-latin\.woff2/s,
 	);
 	assert.match(
-		css,
-		/@font-face\s*\{[^}]*font-family:\s*"IBM Plex Mono";[^}]*ibm-plex-mono-latin-400\.woff2/s,
+		tokens,
+		/@font-face\s*\{[^}]*font-family:\s*Inter;[^}]*inter-latin\.woff2/s,
 	);
 	assert.match(
 		css,
@@ -145,15 +166,11 @@ test("landing uses a bespoke product theatre instead of register-template motifs
 		/html:has\(\.public-site\),\s*body:has\(\.public-site\)\s*\{[^}]*overflow:\s*visible;/s,
 	);
 	assert.equal(
-		existsSync(
-			new URL("../public/fonts/gabarito-latin.woff2", import.meta.url),
-		),
+		existsSync(new URL("../public/fonts/dm-sans-latin.woff2", import.meta.url)),
 		true,
 	);
 	assert.equal(
-		existsSync(
-			new URL("../public/fonts/ibm-plex-mono-latin-400.woff2", import.meta.url),
-		),
+		existsSync(new URL("../public/fonts/inter-latin.woff2", import.meta.url)),
 		true,
 	);
 });
@@ -188,8 +205,14 @@ test("proof deck shows all four checks at once instead of stacking them", () => 
 	);
 	// The board-level card and the verdict rule are full-width rows under the
 	// four panels, not a fifth cell in the two-column flow.
-	assert.match(css, /\.public-proof-deck__board\s*\{[^}]*grid-column:\s*1 \/ -1;/s);
-	assert.match(css, /\.public-proof-deck__rule\s*\{[^}]*grid-column:\s*1 \/ -1;/s);
+	assert.match(
+		css,
+		/\.public-proof-deck__board\s*\{[^}]*grid-column:\s*1 \/ -1;/s,
+	);
+	assert.match(
+		css,
+		/\.public-proof-deck__rule\s*\{[^}]*grid-column:\s*1 \/ -1;/s,
+	);
 });
 
 test("each rigor panel states its own limit, and the deck names all four verdict states", () => {
@@ -271,23 +294,81 @@ test("landing consolidates proof into connected instrument sections", () => {
 	assert.match(landing, /className="authority-boundary__verdict"/);
 	assert.match(
 		css,
-		/\.public-path__sequence ol\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fit,/s,
+		/\.public-path__sequence ol\s*\{[^}]*grid-template-columns:\s*1fr;/s,
 	);
-	assert.match(
+	assert.match(landing, /className="public-shell public-context__layout"/);
+	assert.doesNotMatch(
 		css,
-		/\.public-use-case-scenes \.is-research\s*\{[^}]*margin-left:\s*auto;/s,
+		/\.public-use-case-scenes[^{}]*\{[^}]*margin-left:/s,
+		"use cases must align with the reading grid, not stagger into empty space",
 	);
 });
 
-test("landing uses real product capture and one primary CTA label", () => {
+test("landing uses an uncropped editor capture with truthful preview labeling", () => {
+	const image = readFileSync(
+		new URL("../public/product-workspace.png", import.meta.url),
+	);
+	assert.equal(image.toString("hex", 0, 8), "89504e470d0a1a0a");
 	assert.match(landing, /src="\/product-workspace\.png"/);
-	assert.match(landing, /width=\{1600\}/);
-	assert.match(landing, /height=\{1000\}/);
+	assert.ok(landing.includes(`width={${image.readUInt32BE(16)}}`));
+	assert.ok(landing.includes(`height={${image.readUInt32BE(20)}}`));
+	assert.match(landing, /Example brief · offline preview/);
+	assert.match(landing, /no run submitted/i);
+	const imageStyle =
+		css.match(/\.public-product-frame img\s*\{[^}]*\}/)?.[0] ?? "";
+	assert.match(imageStyle, /height:\s*auto/);
+	assert.doesNotMatch(imageStyle, /aspect-ratio|object-fit:\s*cover/);
 	assert.match(landing, /Generate a strategy/);
 	assert.doesNotMatch(landing, /Get started|Try free|Start now/);
 	assert.match(landing, /apiGet\("\/api\/config\/contracts"\)/);
 	assert.match(landing, /Live census unavailable/);
 	assert.match(landing, /poolsUnread/);
+});
+
+test("landing and security share the closing CTA and navbar-style action", () => {
+	const security = readFileSync(securityUrl, "utf8");
+	assert.match(publicLayout, /export function PublicCallToAction\(\)/);
+	for (const page of [landing, security]) {
+		assert.match(
+			page,
+			/import \{ PublicCallToAction \} from "\.\/PublicLayout"/,
+		);
+		assert.equal((page.match(/<PublicCallToAction \/>/g) ?? []).length, 1);
+	}
+	const sections = [
+		...landing.matchAll(/<section className="public-hero"[\s\S]*?<\/section>/g),
+		...publicLayout.matchAll(
+			/<section className="public-final"[\s\S]*?<\/section>/g,
+		),
+	];
+	assert.equal(sections.length, 2);
+	const button = /<a[^>]*href="\/app\/generate"[^>]*>[\s\S]*?<\/a>/;
+	const navbar = publicLayout.match(button)?.[0];
+	assert.ok(navbar);
+	for (const [section] of sections) {
+		const cta = section.match(button)?.[0];
+		assert.ok(cta, "each entry point must retain the generation route");
+		assert.equal(
+			cta.replace(/\s+/g, " ").trim(),
+			navbar.replace(/\s+/g, " ").trim(),
+		);
+	}
+	assert.doesNotMatch(css, /\.public-final \.public-cta--primary/);
+});
+
+test("public actions drop the secondary hero button and requested arrow icons", () => {
+	assert.doesNotMatch(landing, /See the product/);
+	assert.match(
+		landing,
+		/<a href="\/architecture">\s*Read system architecture\s*<\/a>/,
+	);
+	const cta = architecture.slice(
+		architecture.indexOf("function CallToAction("),
+		architecture.indexOf("export default function Architecture"),
+	);
+	assert.match(cta, /onClick=\{\(\) => onNavigate\?\.\("generate"\)\}/);
+	assert.match(cta, />\s*Generate a strategy\s*<\/button>/);
+	assert.doesNotMatch(cta, /[→↗]/);
 });
 
 test("public architecture page uses one skip target and main landmark", () => {
@@ -319,31 +400,36 @@ test("architecture stats keep two mobile columns and four desktop columns", () =
 	);
 });
 
-test("public product theatre stays structural across desktop and mobile", () => {
+test("editorial hero gives copy and real product capture separate columns", () => {
 	assert.match(
 		css,
-		/\.public-hero__stage\s*\{[^}]*display:\s*grid;[^}]*border-radius:\s*10px;[^}]*background:\s*var\(--public-theatre-bg\);/s,
+		/\.public-hero__stage\s*\{[^}]*grid-template-columns:\s*minmax\(0, 0\.95fr\) minmax\(0, 1\.05fr\);[^}]*background:\s*var\(--canvas\);/s,
 	);
+	assert.match(css, /\.public-hero__copy\s*\{[^}]*text-align:\s*left;/s);
 	assert.match(
 		css,
-		/\.public-product-frame\s*\{[^}]*width:\s*min\(100%,\s*900px\);/s,
+		/@media \(max-width: 1100px\)\s*\{[^]*?\.public-hero__stage\s*\{[^}]*grid-template-columns:\s*1fr;/,
 	);
-	assert.match(
-		css,
-		/@media \(max-width: 760px\)[^{]*\{[\s\S]*?\.public-hero__stage\s*\{[^}]*padding:\s*44px 20px 0;/s,
+	const lede = landing.match(/className="public-hero__lede">([^<]+)<\/p>/)?.[1];
+	assert.ok(lede, "hero needs a readable summary");
+	assert.ok(
+		lede.trim().split(/\s+/).length <= 25,
+		"hero summary must fit beside the product",
 	);
 });
 
-test("light landing replaces every dark theatre surface", () => {
+test("wrapped public navigation leaves keyboard focus room at larger text sizes", () => {
 	assert.match(
 		css,
-		/:root\[data-theme="light"\] \.public-site\s*\{[^}]*--public-theatre-bg:\s*var\(--surface-2\);[^}]*--public-theatre-text:\s*var\(--public-ink\);/s,
+		/@media \(max-width: 760px\)\s*\{[^{]*html:has\(\.public-site\)\s*\{[^}]*scroll-padding-top:\s*calc\(4rem \+ 64px\);/s,
 	);
-	for (const selector of [
-		"public-hero__stage",
-		"public-path__sequence",
-		"authority-boundary",
-	]) {
+	assert.match(css, /\.public-nav\s*\{[^}]*flex-wrap:\s*wrap;/s);
+});
+
+test("light landing replaces every dark theatre surface", () => {
+	assert.match(tokens, /--public-theatre-bg:\s*var\(--surface-2\);/);
+	assert.match(tokens, /--public-theatre-text:\s*var\(--ink\);/);
+	for (const selector of ["public-path__sequence", "authority-boundary"]) {
 		assert.match(
 			css,
 			new RegExp(
@@ -354,16 +440,13 @@ test("light landing replaces every dark theatre surface", () => {
 	}
 	assert.match(
 		css,
-		/\.public-proof-deck article:nth-child\(3\)\s*\{[^}]*background:\s*var\(--public-theatre-bg\);/s,
+		/\.public-proof-deck article\s*\{[^}]*background:\s*var\(--surface-1\);/s,
 	);
 	assert.match(
 		css,
-		/\.public-use-case-scenes \.is-research\s*\{[^}]*background:\s*var\(--public-theatre-bg\);/s,
+		/\.public-use-case-scenes article\s*\{[^}]*background:\s*transparent;/s,
 	);
-	assert.match(
-		css,
-		/:root\[data-theme="light"\] \.public-site\s*\{[^}]*--public-theatre-positive:\s*#116c5e;/s,
-	);
+	assert.match(tokens, /--public-theatre-positive:\s*var\(--positive\);/);
 	assert.match(
 		css,
 		/\.authority-boundary__side--agent \.authority-boundary__owner\s*\{[^}]*color:\s*var\(--public-theatre-positive\);/s,
@@ -371,44 +454,25 @@ test("light landing replaces every dark theatre surface", () => {
 });
 
 test("dark landing preserves atmospheric contrast and semantic accents", () => {
-	assert.match(
-		css,
-		/\.public-site\s*\{[^}]*--canvas:\s*#15131d;[^}]*--glass-border:\s*#484155;[^}]*--accent-on:\s*#17151f;/s,
-	);
-	assert.match(css, /--accent-on-muted:\s*rgba\(23, 21, 31, 0\.82\);/);
-	// The light half of this pair used to be rgba(255,255,255,0.9). It is drawn
-	// on --accent (#625cf6), whose contrast ceiling with PURE white is 4.79:1 —
-	// so a 0.9 alpha landed at 4.21:1 and the closing panel's disclaimer failed
-	// 1.4.3. There is no headroom to mute against this accent; the paragraph
-	// takes its lower prominence from size instead. Pinned opaque so a future
-	// edit cannot quietly reintroduce an alpha here.
-	assert.match(
-		css,
-		/:root\[data-theme="light"\] \.public-site\s*\{[^}]*--accent-on-muted:\s*#ffffff;/s,
-	);
-	assert.match(
-		css,
-		/\.public-site\s*\{[^}]*--public-theatre-bg:\s*var\(--public-stage\);/s,
-	);
+	assert.match(tokens, /\[data-theme="dark"\]\s*\{[^}]*--canvas:\s*#0d1917;/s);
+	assert.match(tokens, /--glass-border:\s*var\(--line\);/);
+	// Contrast text stays opaque; lowering alpha can violate its 4.5:1 floor.
+	assert.match(tokens, /--accent-on-muted:\s*var\(--on-control\);/);
+	assert.match(tokens, /--public-theatre-bg:\s*var\(--surface-2\);/);
 	assert.match(
 		css,
 		/\.authority-boundary\s*\{[^}]*background:\s*var\(--public-theatre-bg\);/s,
 	);
 	assert.match(
 		css,
-		/\.public-proof-deck article:nth-child\(2\)\s*\{[^}]*background:\s*var\(--accent\);[^}]*color:\s*var\(--accent-on\);/s,
+		/\.public-proof-deck article\s*\{[^}]*color:\s*var\(--text-1\);/s,
 	);
 });
 
 test("ownership verdict follows the active public theme", () => {
-	assert.match(
-		css,
-		/\.public-site\s*\{[^}]*--public-theatre-contrast:\s*var\(--surface-1\);[^}]*--public-theatre-contrast-text:\s*var\(--text-1\);[^}]*--public-theatre-contrast-muted:\s*var\(--text-3\);/s,
-	);
-	assert.match(
-		css,
-		/:root\[data-theme="light"\] \.public-site\s*\{[^}]*--public-theatre-contrast-muted:\s*#625d6a;/s,
-	);
+	assert.match(tokens, /--public-theatre-contrast:\s*var\(--surface\);/);
+	assert.match(tokens, /--public-theatre-contrast-text:\s*var\(--ink\);/);
+	assert.match(tokens, /--public-theatre-contrast-muted:\s*var\(--muted\);/);
 	assert.match(
 		css,
 		/\.authority-boundary__verdict span\s*\{[^}]*color:\s*var\(--public-theatre-contrast-muted\);/s,
@@ -472,11 +536,11 @@ test("share cards do not claim generation is recorded on-chain", () => {
 	assert.match(html, /Generation is not anchored on-chain/);
 });
 
-test("public announcement and landing footer do not say unqualified No real funds", () => {
+test("public announcement and shared footer do not say unqualified No real funds", () => {
 	assert.doesNotMatch(publicLayout, /No real funds/);
 	assert.doesNotMatch(landing, /No real funds/);
 	assert.match(publicLayout, /No mainnet money/);
-	assert.match(landing, /Generation fee is real testnet USDC/);
+	assert.match(publicLayout, /Generation fee is real testnet\s+USDC/);
 });
 
 test("landing FAQ does not name the unmerged paper_agent_trades table as a visitor path", () => {
@@ -487,7 +551,7 @@ test("landing FAQ does not name the unmerged paper_agent_trades table as a visit
 test("architecture page does not quote a curated pass count, including zero", () => {
 	assert.doesNotMatch(architecture, /Not one paper-derived/);
 	assert.doesNotMatch(architecture, /clears our bar/);
-	assert.match(architecture, /will never quote a count/);
+	assert.match(architecture, /will never quote a\s+count/);
 	assert.doesNotMatch(
 		architecture,
 		/admitted only through a statistical rigor gate before anything can run live/,
@@ -500,20 +564,20 @@ test("security page is a canonical public destination", () => {
 	assert.match(app, /security:\s*["']\/security["']/);
 	assert.match(app, /route\.page === ["']security["'][\s\S]*<Security \/>/);
 	assert.match(publicLayout, /href="\/security"[\s\S]*Security/);
-	assert.ok((landing.match(/href="\/security"/g) ?? []).length >= 2);
+	assert.match(landing, /href="\/security"/);
+	const productLinks =
+		publicLayout.match(
+			/<nav aria-label="Product links">[\s\S]*?<\/nav>/,
+		)?.[0] ?? "";
+	assert.match(productLinks, /href="\/security"/);
 	assert.match(sitemap, /<loc>https:\/\/archimedes-arc\.com\/security<\/loc>/);
 });
 
-test("production CSP permits only the hashed theme bootstrap", () => {
-	// Case-insensitive: this extracts our own build's inline bootstrap for CSP
-	// hashing (not a security filter on untrusted input), but CodeQL js/bad-tag-filter
-	// flags a case-sensitive <script> match — and it costs nothing to be exact.
-	const themeBootstrap = html.match(/<script>([\s\S]*?)<\/script>/i)?.[1];
-	assert.ok(themeBootstrap);
-	const themeHash = createHash("sha256")
-		.update(themeBootstrap)
-		.digest("base64");
-	assert.ok(nginx.includes(`script-src 'self' 'sha256-${themeHash}'`));
+test("production bootstrap uses existing same-origin CSP without inline execution", () => {
+	assert.match(html, /<script src="\/theme-init\.js"><\/script>/);
+	assert.ok(existsSync(new URL("../public/theme-init.js", import.meta.url)));
+	assert.doesNotMatch(html, /<script>\s*[^<]+<\/script>/i);
+	assert.ok(nginx.includes("script-src 'self'"));
 	// Scope the unsafe-inline ban to the app's DEFAULT CSP entry: the internal
 	// ~^/docs location (FastAPI docs UI, main-side, pre-existing) legitimately
 	// carries 'unsafe-inline' for swagger assets and is not part of the public
@@ -577,8 +641,14 @@ test("landing does not claim a failed gate is unoverridable, or that a generatio
 	// the verdict is not the user's to move, even though running a failing idea
 	// in simulation is allowed.
 	assert.match(landing, /A failing strategy stays a failing strategy\./);
-	assert.match(landing, /Paper-trading one is allowed\. Relabelling one is not/);
-	assert.match(landing, /paper-trade a failing candidate — simulated, no capital/);
+	assert.match(
+		landing,
+		/Paper-trading one is allowed\. Relabelling one is not/,
+	);
+	assert.match(
+		landing,
+		/paper-trade a failing candidate — simulated, no capital/,
+	);
 
 	// Anti-vacuity: the exact pre-scrub literals must trip the predicates above,
 	// so a future edit that neuters them fails here instead of passing silently.
@@ -619,11 +689,8 @@ test("protocols panel describes V_check by the checks it performs", () => {
 		architecture.indexOf('name: "Hierarchy of Truth"'),
 	);
 	const what = hot.slice(0, hot.indexOf("},"));
-	assert.doesNotMatch(
-		what,
-		/V_check fails any rebalance where they disagree/,
-	);
-    assert.match(
+	assert.doesNotMatch(what, /V_check fails any rebalance where they disagree/);
+	assert.match(
 		what,
 		/When vault execution ships/,
 		"Hierarchy of Truth must not describe the rebalance loop as a live path",
@@ -796,7 +863,7 @@ test("links carry their affordance at rest, not only on hover", () => {
 	// correct on the light canvas, the dark canvas and the theatre panels.
 	assert.match(
 		css,
-		/\.public-site\s*\n\ta:where\([\s\S]{0,400}?\)\s*\{[^}]*text-decoration:\s*underline;[^}]*text-decoration-color:\s*color-mix\(in srgb, currentColor \d+%, transparent\)/s,
+		/\.public-site\s+a:where\([\s\S]{0,400}?\)\s*\{[^}]*text-decoration:\s*underline;[^}]*text-decoration-color:\s*color-mix\(in srgb, currentColor \d+%, transparent\)/s,
 		"public links must underline at rest, derived from currentColor",
 	);
 	// The header's links opt out of the resting underline (five underlines in a
@@ -809,37 +876,29 @@ test("links carry their affordance at rest, not only on hover", () => {
 	);
 });
 
-test("muted ink is never applied over the accent, which has no headroom for it", () => {
-	// The light theme's accent is #625cf6: its contrast ceiling is 4.79:1 with
-	// pure white and 4.38:1 with pure black, so ANY alpha reduction on an
-	// accent-backed surface drops the text under 4.5:1. The deck's secondary
-	// text was muted with a bare `opacity` and measured 3.93–4.09:1 on the
-	// accent card — the honest "what this check does NOT prove" caveat was the
-	// least readable text in the section. The reduction now routes through
-	// --ink-muted so accent-backed surfaces opt out of it entirely.
-	assert.match(
-		css,
-		/\.public-proof-deck article\s*\{[^}]*--ink-muted:\s*0\.88;/s,
-	);
-	assert.match(
-		css,
-		/\.public-proof-deck article:nth-child\(2\)\s*\{[^}]*--ink-muted:\s*1;/s,
-		"the accent-backed deck card must opt out of opacity muting",
-	);
-	assert.match(
-		css,
-		/\.public-use-case-scenes \.is-rigor\s*\{[^}]*--ink-muted:\s*1;/s,
-		"the accent-backed use-case card must opt out of opacity muting",
-	);
-	// And no deck rule may go back to a bare literal, which would bypass the
-	// opt-out entirely.
+test("methodology panels keep equal weight and fully legible caveats", () => {
 	const deck = css.slice(
 		css.indexOf(".public-proof-deck article {"),
 		css.indexOf(".public-proof-deck__board"),
 	);
+	assert.ok(deck.length > 0);
 	assert.doesNotMatch(
 		deck,
-		/^\topacity:\s*0\.\d+;$/m,
-		"a proof-deck rule sets a bare opacity literal instead of var(--ink-muted)",
+		/background:\s*var\(--accent\)/,
+		"a check must not look selected or more important just because of its position",
+	);
+	assert.doesNotMatch(
+		deck,
+		/opacity:/,
+		"method and limit text must use theme ink, not opacity-reduced ink",
+	);
+	assert.match(deck, /color:\s*var\(--text-2\)/);
+	assert.match(
+		css,
+		/\.public-use-case-scenes article > p\s*\{[^}]*color:\s*var\(--text-2\);/s,
+	);
+	assert.doesNotMatch(
+		css,
+		/\.public-use-case-scenes article > p\s*\{[^}]*opacity:/s,
 	);
 });

@@ -4,6 +4,7 @@ import 'virtual:uno.css'
 import './App.css'
 import App from './App.jsx'
 import { AuthProvider } from './AuthContext.jsx'
+import { ThemeProvider } from './ThemeContext.jsx'
 import ConsentBanner from './components/ConsentBanner.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 
@@ -17,8 +18,10 @@ createRoot(document.getElementById('root')).render(
   <StrictMode>
     <AuthProvider>
       <ErrorBoundary>
-        <App />
-        <ConsentBanner />
+        <ThemeProvider>
+          <App />
+          <ConsentBanner />
+        </ThemeProvider>
       </ErrorBoundary>
     </AuthProvider>
   </StrictMode>,

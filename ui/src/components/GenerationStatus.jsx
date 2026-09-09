@@ -149,7 +149,7 @@ export default function GenerationStatus({ activeJobId, onDrillIn, onNavigate })
         </div>
       )}
       {jobs.length > 0 && (
-        <div style={{ overflowX: 'auto' }}>
+        <div className="generation-table-scroll" role="region" aria-label="Recent generations table" tabIndex={0}>
           <table
             style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}
           >

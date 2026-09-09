@@ -1,4 +1,5 @@
 import StorageDisclosure from "./StorageDisclosure";
+import { PublicCallToAction } from "./PublicLayout";
 
 export default function Security() {
 	return (
@@ -12,10 +13,10 @@ export default function Security() {
 						</h1>
 						<p className="security-hero__lede">
 							Archimedes separates account identity, wallet proof, and the
-							service credentials its own agents run under. Generation is a
-							paid call on this testnet, and that boundary is described here
-							too. These controls describe current code—not a promise that
-							failure is impossible.
+							service credentials its own agents run under. Generation is a paid
+							call on this testnet, and that boundary is described here too.
+							These controls describe current code—not a promise that failure is
+							impossible.
 						</p>
 					</div>
 					<ul className="security-status" aria-label="Current product status">
@@ -114,8 +115,8 @@ export default function Security() {
 									Production session cookies are HttpOnly, Secure, and
 									SameSite=Lax. nginx, the UI route guard, and FastAPI
 									independently protect private surfaces. Two browse pages are
-									deliberately anonymous, and the edge and client halves of
-									that carve-out list are kept in lockstep.
+									deliberately anonymous, and the edge and client halves of that
+									carve-out list are kept in lockstep.
 								</p>
 							</div>
 						</li>
@@ -143,7 +144,9 @@ export default function Security() {
 						<li>
 							<span>Payment</span>
 							<div>
-								<h3>Generation is a paid call, bound to the wallet you proved.</h3>
+								<h3>
+									Generation is a paid call, bound to the wallet you proved.
+								</h3>
 								<p>
 									Starting a generation without a signed payment returns HTTP
 									402 carrying the full x402 requirements, and the same terms —
@@ -174,12 +177,14 @@ export default function Security() {
 						<li>
 							<span>Verdict</span>
 							<div>
-								<h3>A rigor verdict is computed server-side, never asserted.</h3>
+								<h3>
+									A rigor verdict is computed server-side, never asserted.
+								</h3>
 								<p>
 									The gate runs outside the generator, on persisted returns, so
-									the thing being graded cannot influence its own grade. A failed
-									or pending result cannot be relabelled as verified from the
-									client.
+									the thing being graded cannot influence its own grade. A
+									failed or pending result cannot be relabelled as verified from
+									the client.
 								</p>
 							</div>
 						</li>
@@ -277,8 +282,8 @@ export default function Security() {
 						<h2 id="evidence-title">Read controls at source.</h2>
 						<p>
 							Security posture should be reviewable, not accepted from copy.
-							Every sentence above has a row in the claims ledger naming the file
-							that makes it true.
+							Every sentence above has a row in the claims ledger naming the
+							file that makes it true.
 						</p>
 					</div>
 					<ul>
@@ -347,6 +352,7 @@ export default function Security() {
 					</ul>
 				</div>
 			</section>
+			<PublicCallToAction />
 		</main>
 	);
 }

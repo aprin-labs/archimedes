@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { changeWindowLabel, groupChangeWindowLabel, median } from "../src/statUtils.js";
+import {
+	changeWindowLabel,
+	groupChangeWindowLabel,
+	median,
+} from "../src/statUtils.js";
 
 // ── #1322: group "24h change" headline must be robust to a single outlier ──
 // A prior arithmetic-mean implementation let one bad tick (or one genuinely
@@ -48,17 +52,29 @@ test("median is robust to one outlier of any magnitude (the actual #1322 bug)", 
 	const meanAfter = meanOf(withOutlier);
 
 	// The median barely moves for one outlier among 11 values...
-	assert.ok(Math.abs(medianAfter - medianBefore) < 1, `median moved by ${medianAfter - medianBefore}`);
+	assert.ok(
+		Math.abs(medianAfter - medianBefore) < 1,
+		`median moved by ${medianAfter - medianBefore}`,
+	);
 	// ...while the mean is dragged by well over 100 points — proving *why*
 	// the median was the correct fix, not merely that it computes correctly.
-	assert.ok(meanAfter - meanBefore > 100, `mean only moved by ${meanAfter - meanBefore}`);
+	assert.ok(
+		meanAfter - meanBefore > 100,
+		`mean only moved by ${meanAfter - meanBefore}`,
+	);
 });
 
 // ── Wiring: both group-headline call sites use the shared median, and the
 // arithmetic-mean pattern the issue names is fully gone from both ──────────
 
-const explorePage = readFileSync(new URL("../src/components/Explore.jsx", import.meta.url), "utf8");
-const groupModal = readFileSync(new URL("../src/components/AssetGroupModal.jsx", import.meta.url), "utf8");
+const explorePage = readFileSync(
+	new URL("../src/components/Explore.jsx", import.meta.url),
+	"utf8",
+);
+const groupModal = readFileSync(
+	new URL("../src/components/AssetGroupModal.jsx", import.meta.url),
+	"utf8",
+);
 
 // The import pins allow sibling named imports — #1378 added
 // changeWindowLabel / groupChangeWindowLabel alongside median. The property
@@ -66,15 +82,27 @@ const groupModal = readFileSync(new URL("../src/components/AssetGroupModal.jsx",
 // re-implemented locally, which a `[^}]*\bmedian\b[^}]*` pin still enforces;
 // pinning the exact one-name import list guarded spelling, not sourcing.
 test("Explore.jsx group headline imports and calls the shared median, not a local mean", () => {
-	assert.match(explorePage, /import \{[^}]*\bmedian\b[^}]*\} from '\.\.\/statUtils'/);
+	assert.match(
+		explorePage,
+		/import \{[^}]*\bmedian\b[^}]*\} from ['"]\.\.\/statUtils['"]/,
+	);
 	assert.match(explorePage, /median\(vals\)/);
-	assert.doesNotMatch(explorePage, /reduce\(\(a, b\) => a \+ b, 0\) \/ vals\.length/);
+	assert.doesNotMatch(
+		explorePage,
+		/reduce\(\(a, b\) => a \+ b, 0\) \/ vals\.length/,
+	);
 });
 
 test("AssetGroupModal.jsx aggregate stat imports and calls the shared median, not a local mean", () => {
-	assert.match(groupModal, /import \{[^}]*\bmedian\b[^}]*\} from '\.\.\/statUtils'/);
+	assert.match(
+		groupModal,
+		/import \{[^}]*\bmedian\b[^}]*\} from '\.\.\/statUtils'/,
+	);
 	assert.match(groupModal, /median\(vals\)/);
-	assert.doesNotMatch(groupModal, /reduce\(\(a, b\) => a \+ b, 0\) \/ vals\.length/);
+	assert.doesNotMatch(
+		groupModal,
+		/reduce\(\(a, b\) => a \+ b, 0\) \/ vals\.length/,
+	);
 });
 
 test("the group headline labels no longer claim 'avg' when the value is a median", () => {

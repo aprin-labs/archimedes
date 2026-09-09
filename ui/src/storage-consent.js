@@ -152,8 +152,7 @@ export const STORAGE_INVENTORY = [
 		source: "ui/src/config.js",
 		purpose:
 			"The display name you gave a wallet at passkey-creation time, keyed by lowercase address.",
-		reveals:
-			"A label you chose, next to your own address, on your own device.",
+		reveals: "A label you chose, next to your own address, on your own device.",
 		onReject:
 			"Not stored. Wallets render as a truncated address (or the backend profile name, if you set one).",
 	},
@@ -162,10 +161,11 @@ export const STORAGE_INVENTORY = [
 		store: "localStorage",
 		category: FUNCTIONAL,
 		source: "ui/src/theme.js",
-		purpose: "Light or dark, remembered across reloads.",
-		reveals: "The single word 'light' or 'dark'.",
+		purpose:
+			"Your appearance preference, remembered across reloads. Without an override, appearance follows your device.",
+		reveals: "The single word 'light', 'dark' or 'system'.",
 		onReject:
-			"Not stored. The toggle still works for the current page; every new load starts on the default dark theme.",
+			"Not stored. Appearance still changes for this visit, including navigation between pages; every new load returns to System.",
 	},
 	{
 		name: "archimedes_payment_key:",
@@ -273,7 +273,8 @@ export const STORAGE_INVENTORY = [
 		source: "ui/src/components/AccountSettings.jsx",
 		purpose:
 			"A one-shot marker naming the provider THIS tab just sent you to link, so a replayed ?linked=… URL cannot fake a success toast.",
-		reveals: "A provider name ('google' or 'github') for the length of one redirect.",
+		reveals:
+			"A provider name ('google' or 'github') for the length of one redirect.",
 		onReject:
 			"Strictly necessary — it is an anti-replay check on the account-linking flow.",
 	},
@@ -297,7 +298,8 @@ export const STORAGE_INVENTORY = [
 		source: "ui/src/circle-wallet.js",
 		purpose:
 			"Older builds kept a per-device passkey username here. Registration now generates a fresh username per wallet and login is discoverable, so nothing writes it; clearCircleSession() deletes it if an old build left one.",
-		reveals: "A username string, only if you used a build from before that change.",
+		reveals:
+			"A username string, only if you used a build from before that change.",
 		onReject: "Never written by current code.",
 	},
 	{
@@ -442,7 +444,11 @@ export function purgeDisallowed() {
 			for (let i = 0; i < api.length; i += 1) {
 				const key = api.key(i);
 				const entry = lookupEntry(key);
-				if (!entry || entry.category === NECESSARY || entry.category === CONSENT) {
+				if (
+					!entry ||
+					entry.category === NECESSARY ||
+					entry.category === CONSENT
+				) {
 					continue;
 				}
 				if (!isCategoryAllowed(entry.category)) doomed.push(key);
