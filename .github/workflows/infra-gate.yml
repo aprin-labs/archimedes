@@ -100,7 +100,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
         with:
           # Pinned, not "latest": `terraform fmt` is a formatter, and a formatter
           # that silently changes its mind between releases turns this gate red on
