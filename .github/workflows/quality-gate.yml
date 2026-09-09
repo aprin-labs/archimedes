@@ -167,7 +167,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: "22"
           cache: npm
@@ -212,7 +212,7 @@ jobs:
       # Pinned to match ruff-gate + .pre-commit-config.yaml (see comment there).
       - run: pip install --quiet ruff==0.15.13
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: "22"
           cache: npm
@@ -364,7 +364,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: "22"
           cache: npm
