@@ -39,9 +39,11 @@ const VERIFICATION_RESENT_MESSAGE = 'Verification email sent — check your inbo
 //      linked-wallets.js linkConnectedWallet always signs the server's SIWE
 //      challenge, and wallet_routes.verify_wallet_challenge 401s with
 //      "Invalid wallet signature" when the recovered signer does not match.
-//   3. Arc public testnet uses no real funds.
-//      chain-config.js DEFAULT_CHAIN_ID 5042002 / DEFAULT_RPC_URL
-//      https://rpc.testnet.arc.network — Arc's public testnet.
+//   3. Generation settles real testnet USDC on Arc public testnet.
+//      GET /api/generate/quote on prod answers dry_run: false,
+//      price "$2.000000" USDC, chain arcTestnet — generate is paid,
+//      not free. chain-config.js DEFAULT_CHAIN_ID 5042002 is Arc's
+//      public testnet (https://rpc.testnet.arc.network).
 // The sentence that used to sit above them was removed rather than reworded:
 // it scoped a linked wallet to chain activity alone, which the code does not
 // bear out — user_routes._extract_linked_wallet gates PII profile reads on
@@ -52,7 +54,7 @@ const VERIFICATION_RESENT_MESSAGE = 'Verification email sent — check your inbo
 const ACCOUNT_BOUNDARY_PROOFS = [
   'Email and password work without a wallet.',
   'Wallet linking requires signature proof.',
-  'Arc public testnet uses no real funds.',
+  'Generation settles real testnet USDC on Arc public testnet.',
 ]
 
 /* Google's four-colour "G", reproduced unmodified per Google's brand
