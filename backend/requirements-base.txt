@@ -68,7 +68,7 @@ pydantic>=2.13.4
 # so this floor never selects the version — pydantic's own pin does. It exists so
 # the dependency is declared where every consumer of this file can see it.
 pydantic-core>=2.46.4
-pydantic-settings>=2.14.2
+pydantic-settings>=2.15.0
 python-dotenv>=1.2.3
 
 # Data + numerics
