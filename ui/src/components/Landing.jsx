@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { apiGet } from "../api";
+import { PublicCallToAction } from "./PublicLayout";
 
 // ConfigService exposes these core singleton fields. The list is deliberately
 // scoped to the contracts backing the claims this page actually makes —
@@ -47,7 +48,7 @@ const RIGOR_CRITERIA = [
 		method:
 			"Deflates the Sharpe by how many candidates the search actually tried, and corrects for returns that are skewed or fat-tailed rather than normal.",
 		limit:
-			"The Verified bar is deflated-Sharpe evidence at the 95% one-sided level — real, not proof.",
+			"The Verified bar is deflated-Sharpe evidence at the 95% one-sided level, not proof.",
 	},
 	{
 		code: "PBO",
@@ -56,7 +57,7 @@ const RIGOR_CRITERIA = [
 		method:
 			"Re-cuts the history into many equal time partitions and counts how often the in-sample winner lands below the out-of-sample median.",
 		limit:
-			"A property of the whole selection set, not one strategy — read it as a library signal.",
+			"A property of the whole selection set, not one strategy. Read it as a library signal.",
 	},
 	{
 		code: "OOS",
@@ -72,9 +73,9 @@ const RIGOR_CRITERIA = [
 		name: "Look-ahead audit",
 		question: "Did information from the future reach a decision?",
 		method:
-			"Generated strategies are checked structurally, against a compiler proven to read only the current bar and earlier — not on the generator's own say-so.",
+			"Generated strategies are checked structurally, against a compiler proven to read only the current bar and earlier, not on the generator's own say-so.",
 		limit:
-			"The proof covers the strategy's decision path in our closed language — it cannot audit the market data itself for after-the-fact revisions.",
+			"The proof covers the strategy's decision path in our closed language. It cannot audit the market data itself for after-the-fact revisions.",
 	},
 ];
 
@@ -100,7 +101,7 @@ const BOARD_FDR = {
 	method:
 		"Benjamini–Hochberg corrects every ranked strategy's “true Sharpe is positive” claim together, at α = 0.05, recomputed over the exact cohort each response serves.",
 	limit:
-		"Advisory — it never flips a gate verdict. The count that clears it is reported as measured, zero included.",
+		"Advisory: it never flips a gate verdict. The count that clears it is reported as measured, zero included.",
 };
 
 // The gate's four states, verbatim from services/live_rigor_gate.py (PASS /
@@ -149,7 +150,7 @@ const WORKFLOW = [
 		// part that is true: nothing is thrown away, and a fail is kept as
 		// durably as a pass.
 		title: "Inspect",
-		body: "Nothing is discarded. The brief, the papers it cited, the candidates that lost, and the measured verdict are all kept with the strategy — a fail as durably as a pass.",
+		body: "Nothing is discarded. The brief, the papers it cited, the candidates that lost, and the measured verdict are all kept with the strategy. A fail is kept as durably as a pass.",
 	},
 ];
 
@@ -170,7 +171,7 @@ const FAQS = [
 		// running a failing idea is allowed, relabelling one is not.
 		question: "What happens when a strategy fails?",
 		answer:
-			"The failure stays visible with the measured reason, and a failed or pending strategy never receives the verified badge. The verdict is computed server-side on persisted returns, so it cannot be relabelled from the browser. You can still paper-trade a failing candidate — simulated, no capital — and its verdict does not change because you did.",
+			"The failure stays visible with the measured reason, and a failed or pending strategy never receives the verified badge. The verdict is computed server-side on persisted returns, so it cannot be relabelled from the browser. You can still paper-trade a failing candidate (simulated, no capital), and its verdict does not change because you did.",
 	},
 	{
 		question: "Do I need a wallet to explore Archimedes?",
@@ -185,7 +186,7 @@ const FAQS = [
 	{
 		question: "Is this running with real money?",
 		answer:
-			"No mainnet money. Archimedes runs on Arc public testnet. Generation settles real testnet USDC — read GET /api/generate/quote (prod answers dry_run: false). Faucet USDC is not mainnet cash. It is a research prototype, not a production investment product.",
+			"No mainnet money. Archimedes runs on Arc public testnet. Generation settles real testnet USDC. Read GET /api/generate/quote (prod answers dry_run: false). Faucet USDC is not mainnet cash. It is a research prototype, not a production investment product.",
 	},
 ];
 
@@ -236,21 +237,13 @@ export default function Landing() {
 							    The replacement says what actually happens, and lands on the
 							    part that is hardest to fake — the verdict is kept either way. */}
 							<p className="public-hero__lede">
-								Archimedes turns a plain-language brief into a strategy grounded in
-								named research, then spends the rest of its effort trying to reject
-								it. Four independent checks, one measured verdict — recorded
-								whichever way it lands.
+								Turn a brief into a research-grounded strategy. Challenge it
+								with four independent checks. Keep the evidence, whichever way
+								it lands.
 							</p>
 							<div className="public-actions">
-								<a
-									className="public-cta public-cta--primary"
-									href="/app/generate"
-								>
+								<a className="public-auth-link" href="/app/generate">
 									Generate a strategy
-									<span aria-hidden="true">↗</span>
-								</a>
-								<a className="public-cta public-cta--quiet" href="#product">
-									See the product
 								</a>
 							</div>
 						</div>
@@ -296,9 +289,9 @@ export default function Landing() {
 							<h3 id="rigor-title">Most candidates should fail here.</h3>
 							<p>
 								Four independent checks run outside the generator, on persisted
-								returns, so the thing being graded cannot influence its own grade.
-								Each one answers a different way a backtest can fool you — and
-								each one states, in the same card, what it does not prove.
+								returns, so the thing being graded cannot influence its own
+								grade. Each one checks a different way a backtest can fool you
+								and states, in the same card, what it does not prove.
 							</p>
 							<strong>Any failed check keeps the candidate unverified.</strong>
 						</div>
@@ -314,9 +307,7 @@ export default function Landing() {
 			>
 				<div className="public-shell">
 					<div className="public-path__intro">
-						<p className="public-overline">
-							One path. {visibleWorkflow.length} records.
-						</p>
+						<p className="public-overline">From brief to verdict</p>
 						<h2 id="capabilities-title">
 							Built for inspection, not spectacle.
 						</h2>
@@ -332,22 +323,14 @@ export default function Landing() {
 						aria-labelledby="workflow-title"
 					>
 						<div className="public-path__sequence-header">
-							<h3 id="workflow-title">From intent to accountable action.</h3>
-							<a href="/architecture">
-								Read system architecture
-								<span aria-hidden="true">↗</span>
-							</a>
+							<h3 id="workflow-title">A record at every step.</h3>
+							<a href="/architecture">Read system architecture</a>
 						</div>
 						<ol>
-							{visibleWorkflow.map((item, index) => (
+							{visibleWorkflow.map((item) => (
 								<li key={item.title}>
-									<span aria-hidden="true">
-										{String(index + 1).padStart(2, "0")}
-									</span>
-									<div>
-										<h4>{item.title}</h4>
-										<p>{item.body}</p>
-									</div>
+									<h4>{item.title}</h4>
+									<p>{item.body}</p>
 								</li>
 							))}
 						</ol>
@@ -360,7 +343,7 @@ export default function Landing() {
 				className="public-section public-context"
 				aria-labelledby="use-cases-title"
 			>
-				<div className="public-shell">
+				<div className="public-shell public-context__layout">
 					<div className="public-context__intro">
 						<h2 id="use-cases-title">Useful when trust needs evidence.</h2>
 						<p>
@@ -370,7 +353,7 @@ export default function Landing() {
 					</div>
 
 					<div className="public-use-case-scenes">
-						<article className="is-rigor">
+						<article>
 							<span>Measured admission</span>
 							<h3>Find out whether an idea survives its own backtest.</h3>
 							<p>
@@ -378,7 +361,7 @@ export default function Landing() {
 								persisted returns.
 							</p>
 						</article>
-						<article className="is-research">
+						<article>
 							<span>Legible evidence</span>
 							<h3>Run quant research without building a quant desk.</h3>
 							<p>
@@ -391,12 +374,12 @@ export default function Landing() {
 						    visitor here cannot reach — and "transaction evidence" is an
 						    execution claim this surface no longer makes. Narrowed to the
 						    record a generation run really does leave. */}
-						<article className="is-audit">
+						<article>
 							<span>Traceable reasoning</span>
 							<h3>Audit what was asked, what was cited, and what lost.</h3>
 							<p>
-								The brief, its sources, the rejected candidates, and the measured
-								verdict stay together.
+								The brief, its sources, the rejected candidates, and the
+								measured verdict stay together.
 							</p>
 						</article>
 					</div>
@@ -459,26 +442,7 @@ export default function Landing() {
 				</div>
 			</section>
 
-			<section className="public-final" aria-labelledby="final-title">
-				<div className="public-shell public-final__layout">
-					<div>
-						<p className="public-final__eyebrow">Start with a brief.</p>
-						<h2 id="final-title">Describe the portfolio you want to test.</h2>
-					</div>
-					<div>
-						<a className="public-cta public-cta--primary" href="/app/generate">
-							Generate a strategy
-							<span aria-hidden="true">↗</span>
-						</a>
-						<p>
-							Arc public testnet only. Past performance is not a promise. A
-							rigor gate can reject weak evidence; it cannot remove market risk.
-						</p>
-					</div>
-				</div>
-			</section>
-
-			<PublicFooter />
+			<PublicCallToAction />
 		</main>
 	);
 }
@@ -494,20 +458,22 @@ function ProductWorkspace({
 	return (
 		<figure id="product" className="public-product-frame">
 			<div className="public-product-frame__bar">
-				<span>Strategy workspace</span>
-				<span>Brief → debate → gate</span>
+				<span>Example brief · offline preview</span>
+				<span>No run submitted</span>
 			</div>
 			<img
 				src="/product-workspace.png"
-				width={1600}
-				height={1000}
+				width={725}
+				height={289}
 				fetchPriority="high"
-				alt="Archimedes Generate workspace with a strategy brief, model context, and visible path from brief to rigor gate."
+				alt="Current Archimedes brief editor with an example research prompt. Offline preview; no run submitted."
 			/>
 			<figcaption aria-live="polite">
 				{contractsError || poolsUnread ? (
 					<>
-						<strong className="census-state census-state--error">Live census unavailable</strong>
+						<strong className="census-state census-state--error">
+							Live census unavailable
+						</strong>
 						<span>
 							{contractsError
 								? "Contract API did not respond. No cached count substituted."
@@ -516,12 +482,16 @@ function ProductWorkspace({
 					</>
 				) : totalLive == null ? (
 					<>
-						<strong className="census-state">Reading Arc contract census</strong>
+						<strong className="census-state">
+							Reading Arc contract census
+						</strong>
 						<span>Waiting for live deployment data…</span>
 					</>
 				) : (
 					<>
-						<strong className="census-state census-state--live">Arc census live</strong>
+						<strong className="census-state census-state--live">
+							Arc census live
+						</strong>
 						<span>{`≥${totalLive} reported instances · ${coreCount}/${CORE_CONTRACT_FIELDS.length} core · ${synthCount} synths · ${poolCount} pools`}</span>
 					</>
 				)}
@@ -631,8 +601,7 @@ function RigorMatrix() {
 // to describe an owner/agent authority split over an on-chain execution path
 // that is not live — there are zero live user deployments of it. Every line
 // below describes a path that runs today: generation, the external rigor
-// gate, paper trading, and on-chain trace anchoring. Structure and class
-// names are unchanged so the section keeps its existing layout.
+// gate, paper trading, and on-chain trace anchoring.
 function AuthorityBoundary() {
 	return (
 		<section
@@ -640,18 +609,22 @@ function AuthorityBoundary() {
 			className="public-section authority-boundary"
 			aria-labelledby="authority-title"
 		>
-			<div className="public-shell">
-				<div className="public-section__intro">
-					<h2 id="authority-title">The gate decides admission. You decide what runs.</h2>
+			<div className="public-shell authority-boundary__layout">
+				<div className="authority-boundary__intro">
+					<p className="public-overline">Research controls</p>
+					<h2 id="authority-title">You choose what to test.</h2>
 					<p>
-						Account identity, wallet proof, and the research pipeline stay
-						separate. Nothing earns a verdict by asserting one.
+						Archimedes checks the evidence. You set the brief and decide whether
+						to keep or paper-trade a strategy. The verdict stays independent.
 					</p>
+					<a className="authority-boundary__link" href="/security">
+						Read security posture
+					</a>
 				</div>
-				<div className="authority-boundary__grid">
+				<div className="authority-boundary__content">
 					<div className="authority-boundary__side authority-boundary__side--agent">
-						<p className="authority-boundary__owner">Archimedes may</p>
-						<ul>
+						<h3 className="authority-boundary__owner">Archimedes</h3>
+						<ul role="list">
 							<li>Read market conditions and cited research</li>
 							<li>Propose, rank, and reject candidate strategies</li>
 							{/* The retired third bullet claimed a chain commitment ahead of
@@ -663,106 +636,37 @@ function AuthorityBoundary() {
 							<li>Grade a candidate outside the generator that produced it</li>
 						</ul>
 					</div>
-					<div className="authority-boundary__line" aria-hidden="true">
-						<span>admission boundary</span>
-					</div>
 					<div className="authority-boundary__side authority-boundary__side--user">
-						<p className="authority-boundary__owner">Only you may</p>
-						<ul>
+						<h3 className="authority-boundary__owner">You</h3>
+						<ul role="list">
 							<li>Set the brief, the assets, and the risk appetite</li>
 							<li>Keep or discard a strategy after reading its passport</li>
 							<li>Link a wallet, when you want proof of on-chain control</li>
 						</ul>
 					</div>
+					{/* The retired invariant claimed a failed gate could not be
+					    overridden. That is false, and the owner has overridden one
+					    himself — the exact retracted wording is pinned in
+					    ui/test/public-visuals.test.js. POST /api/paper/deployments
+					    (api/paper_routes.py:85-125) checks ownership of the source
+					    strategy and that its stored spec still validates — and nothing
+					    else. There is no rigor precondition on the act-on step a visitor
+					    can actually reach, and StrategyPassport.jsx:381-382 says so in
+					    the code. The invariant that IS true is narrower and better: the
+					    verdict is not yours to move. Running a failing idea in
+					    simulation is allowed; relabelling it is not, because `passes` is
+					    computed server-side on persisted returns and only "pass" is
+					    truthy (services/live_rigor_gate.py). */}
+					<div className="authority-boundary__verdict" role="note">
+						<strong>A failing strategy stays a failing strategy.</strong>
+						<p>
+							Paper-trading one is allowed. Relabelling one is not: the verdict
+							is measured server-side, and the measured reason stays on the
+							record.
+						</p>
+					</div>
 				</div>
-				{/* The retired invariant claimed a failed gate could not be
-				    overridden. That is false, and the owner has overridden one
-				    himself — the exact retracted wording is pinned in
-				    ui/test/public-visuals.test.js. POST /api/paper/deployments
-				    (api/paper_routes.py:85-125) checks ownership of the source
-				    strategy and that its stored spec still validates — and nothing
-				    else. There is no rigor precondition on the act-on step a visitor
-				    can actually reach, and StrategyPassport.jsx:381-382 says so in
-				    the code. The invariant that IS true is narrower and better: the
-				    verdict is not yours to move. Running a failing idea in
-				    simulation is allowed; relabelling it is not, because `passes` is
-				    computed server-side on persisted returns and only "pass" is
-				    truthy (services/live_rigor_gate.py). */}
-				<div className="authority-boundary__verdict" role="note">
-					<span>Admission invariant</span>
-					<strong>A failing strategy stays a failing strategy.</strong>
-					<span>
-						Paper-trading one is allowed. Relabelling one is not — the verdict is
-						measured server-side, and the measured reason stays on the record.
-					</span>
-				</div>
-				<a className="authority-boundary__link" href="/security">
-					Read security posture
-					<span aria-hidden="true">↗</span>
-				</a>
 			</div>
 		</section>
-	);
-}
-
-function PublicFooter() {
-	return (
-		<footer className="public-footer">
-			<div className="public-shell public-footer__grid">
-				<div className="public-footer__brand">
-					<strong>Archimedes</strong>
-					<p>Research-grounded strategy generation on Arc public testnet.</p>
-				</div>
-				<nav aria-label="Product links">
-					<strong>Product</strong>
-					<a href="/app/generate">Generate</a>
-					<a href="/app/explore">Explore</a>
-					<a href="/security">Security</a>
-					<a href="/architecture">Architecture</a>
-				</nav>
-				<nav aria-label="Resource links">
-					<strong>Resources</strong>
-					{/* docs.archimedes-arc.com — our own S3 + CloudFront, not GitHub
-					    Pages (#1634). The trailing slash is load-bearing: the docs
-					    site uses mkdocs directory URLs, and the CloudFront function
-					    in docs-site/infra/main.tf 301s the slashless form. Guarded by
-					    ui/test/docs-link.test.js. */}
-					<a
-						href="https://docs.archimedes-arc.com/"
-						target="_blank"
-						rel="noreferrer"
-					>
-						Docs
-					</a>
-					<a href="/llms.txt">Agent API</a>
-					<a href="/.well-known/agent.json">Agent manifest</a>
-					<a
-						href="https://github.com/aprin-labs/archimedes"
-						target="_blank"
-						rel="noreferrer"
-					>
-						GitHub
-					</a>
-				</nav>
-				<nav aria-label="Project links">
-					<strong>Project</strong>
-					<a
-						href="https://github.com/aprin-labs/archimedes/blob/main/LICENSE"
-						target="_blank"
-						rel="noreferrer"
-					>
-						Unlicense
-					</a>
-					<a href="https://faucet.circle.com/" target="_blank" rel="noreferrer">
-						Arc faucet
-					</a>
-					<span>No privacy or terms page published</span>
-				</nav>
-			</div>
-			<div className="public-shell public-footer__base">
-				<span>Research prototype. No mainnet money. Generation fee is real testnet USDC.</span>
-				<span>Past performance does not guarantee future results.</span>
-			</div>
-		</footer>
 	);
 }

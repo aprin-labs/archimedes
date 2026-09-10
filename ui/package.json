@@ -5,6 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "concept": "vite --config concept/vite.config.ts",
+    "concept:check": "tsc --noEmit -p concept/tsconfig.json",
+    "concept:build": "npm run concept:check && vite build --config concept/vite.config.ts",
+    "concept:preview": "vite preview --config concept/vite.config.ts",
     "build": "vite build",
     "lint": "eslint .",
     "test": "node --test",
@@ -15,6 +19,11 @@
   },
   "dependencies": {
     "@circle-fin/modular-wallets-core": "^1.0.15",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "motion": "13.2.0",
+    "radix-ui": "1.6.7",
+    "tailwind-merge": "3.6.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-force-graph-2d": "^1.29.1",
@@ -30,6 +39,8 @@
     "@iconify-json/lucide": "^1.2.126",
     "@iconify-json/simple-icons": "^1.2.93",
     "@iconify-json/token-branded": "^1.2.44",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "24.13.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^6.1.0",
@@ -39,6 +50,9 @@
     "eslint-plugin-react-refresh": "^0.5.5",
     "globals": "^17.11.0",
     "sass-embedded": "^1.102.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.69.0",
     "unocss": "^66.8.1",
     "vite": "^8.2.2"
   }

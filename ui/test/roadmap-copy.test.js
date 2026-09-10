@@ -53,6 +53,7 @@ function escapeRegExp(literal) {
 //: shrink and the guard would pass vacuously.
 const SURFACE_FILES = [
 	"src/components/Landing.jsx",
+	"src/components/PublicLayout.jsx",
 	"src/components/Architecture.jsx",
 	"src/components/Layout.jsx",
 	"src/components/Insights.jsx",
@@ -72,13 +73,21 @@ const SURFACE_FILES = [
 //: Phase 4"` (capital V). Both patterns are kept: deploy_as_vault still
 //: guards the lowercase phrasing used elsewhere.
 const OVERCLAIM_PATTERNS = [
-	["deploy_as_vault", new RegExp(escapeRegExp("Deploy as vault")), "Deploy as vault"],
+	[
+		"deploy_as_vault",
+		new RegExp(escapeRegExp("Deploy as vault")),
+		"Deploy as vault",
+	],
 	[
 		"non_custodial_vault_on_arc",
 		new RegExp(escapeRegExp("non-custodial vault on Arc")),
 		"strategy runs live in a non-custodial vault on Arc.",
 	],
-	["deployed_vault", new RegExp(escapeRegExp("Deployed Vault")), "vault_deployed: 'Deployed Vault'"],
+	[
+		"deployed_vault",
+		new RegExp(escapeRegExp("Deployed Vault")),
+		"vault_deployed: 'Deployed Vault'",
+	],
 	[
 		"pay_creators_not_the_house",
 		new RegExp(escapeRegExp("Pay creators, not the house")),
@@ -109,12 +118,12 @@ const OVERCLAIM_PATTERNS = [
 		/rigor\s*<span>→<\/span>\s*vault/,
 		"Research <span>→</span> rigor <span>→</span> vault",
 	],
-	["legend_is_user_vault", /is-user">Vault</, '<li className="is-user">Vault</li>'],
 	[
-		"deploy_as_vault_cta",
-		/Deploy as [Vv]ault/,
-		"Deploy as Vault",
+		"legend_is_user_vault",
+		/is-user">Vault</,
+		'<li className="is-user">Vault</li>',
 	],
+	["deploy_as_vault_cta", /Deploy as [Vv]ault/, "Deploy as Vault"],
 ];
 
 function findOverclaims(text) {
@@ -162,15 +171,15 @@ for (const rel of SURFACE_FILES) {
 // ── Guard 3: the surfaces that must carry NO execution claim at all ──────
 //
 // Owner decision, 2026-08-30. There are zero live user deployments of the
-// on-chain execution path, so the two surfaces a visitor reads as a promise
-// — the landing page and the public security-posture page — must not mention
-// it in ANY form, gated or not. /architecture keeps a single explicitly
+// on-chain execution path, so the public shell (header/footer), landing page,
+// and security-posture page must not mention it in ANY form, gated or not.
+// /architecture keeps a single explicitly
 // roadmap-framed mention and is therefore deliberately NOT in this list; it
 // is still covered by the OVERCLAIM_PATTERNS scan above.
 //
 // This is a stricter guard than guard 1 on purpose. Guard 1 forbids specific
 // marketing phrase-shapes and lets the words survive in incidental prose;
-// this one forbids the vocabulary outright, because on these two pages any
+// this one forbids the vocabulary outright, because on these surfaces any
 // occurrence is either a claim or reads as one. It is a raw source scan, so
 // it also applies to comments — the scrubbed files' own comments are written
 // around it rather than exempted, which keeps the guard free of carve-outs
@@ -181,6 +190,7 @@ for (const rel of SURFACE_FILES) {
 // claim retracted on the page but left in the share card is still shipped.
 const EXECUTION_CLAIM_FREE_SURFACES = [
 	"src/components/Landing.jsx",
+	"src/components/PublicLayout.jsx",
 	"src/components/Security.jsx",
 	"index.html",
 ];
@@ -379,7 +389,9 @@ const EXEMPT_SEGMENT_EXAMPLES = [
 ];
 
 test("every declared machine surface exists (#1650)", () => {
-	const missing = MACHINE_SURFACE_FILES.filter((rel) => !existsSync(repoFile(rel)));
+	const missing = MACHINE_SURFACE_FILES.filter(
+		(rel) => !existsSync(repoFile(rel)),
+	);
 	assert.deepEqual(
 		missing,
 		[],
@@ -399,7 +411,9 @@ test("the machine-surface guard catches every pre-#1650 claim", () => {
 });
 
 test("the identifier exemption cannot swallow a claim (#1650)", () => {
-	const swallowed = PRE_1650_MACHINE_CLAIMS.filter((c) => IDENTIFIER_SEGMENT.test(c));
+	const swallowed = PRE_1650_MACHINE_CLAIMS.filter((c) =>
+		IDENTIFIER_SEGMENT.test(c),
+	);
 	assert.deepEqual(
 		swallowed,
 		[],
@@ -415,7 +429,9 @@ test("the identifier exemption cannot swallow a claim (#1650)", () => {
 });
 
 test("the identifier exemption still matches the segments it exists for", () => {
-	const unmatched = EXEMPT_SEGMENT_EXAMPLES.filter((s) => !IDENTIFIER_SEGMENT.test(s));
+	const unmatched = EXEMPT_SEGMENT_EXAMPLES.filter(
+		(s) => !IDENTIFIER_SEGMENT.test(s),
+	);
 	assert.deepEqual(
 		unmatched,
 		[],
@@ -512,8 +528,13 @@ test("onboarding tour's paper card has no nav anchor — anon-bounce guard (#135
 		repoFile("src/components/OnboardingTour.jsx"),
 		"utf8",
 	);
-	const paperCard = onboardingTour.match(/id:\s*'paper',[\s\S]*?anchor:\s*(\S+),/);
-	assert.ok(paperCard, "could not find the 'paper' tour card in OnboardingTour.jsx");
+	const paperCard = onboardingTour.match(
+		/id:\s*'paper',[\s\S]*?anchor:\s*(\S+),/,
+	);
+	assert.ok(
+		paperCard,
+		"could not find the 'paper' tour card in OnboardingTour.jsx",
+	);
 	assert.equal(
 		paperCard[1],
 		"null",

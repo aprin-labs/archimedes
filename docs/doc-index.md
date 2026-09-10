@@ -31,14 +31,14 @@ Repo root: [`../README.md`](../README.md) · [`../SETUP.md`](../SETUP.md) · [`.
 ## The docs site itself
 
 | Doc | Status | Owner | Last verified | What it is |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | [`index.md`](index.md) | current | Dan Browne | 2026-09-02 | The public front door of `docs.archimedes-arc.com`: the identity line, the three reader doors, what ships today with the endpoint printed beside each number, what the product does **not** do, and the two honesty artifacts. Every number on it is a live read, printed with the date it was read — the docs build stays hermetic. |
 | [`doc-index.md`](doc-index.md) | current | Dan Browne | 2026-09-02 | This register. Enforced by `.github/scripts/docs_index.py`, which fails the docs gate when a `docs/**/*.md` file is listed neither here nor in a sub-index this file links to. |
 
 ## Architecture — start here
 
 | Doc | Status | Owner | Last verified | What it is |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | [`architecture.md`](architecture.md) | current | Dan Browne | 2026-09-01 | System architecture map. ECS Fargate + ALB + CloudFront + WAF, Aurora PostgreSQL 18.3, ElastiCache Redis 7.1. Every claim is a link to a file. Amended 2026-09-01: reveal is hash-only, no IPFS pin (#1526). |
 | [`reference/file-tree.md`](reference/file-tree.md) | reference | Dan Browne | 2026-07-14 | Repository map generated alongside the architecture map. |
 | [`reference/flow-diagram.mmd`](reference/flow-diagram.mmd) | reference | Dan Browne | 2026-07-14 | Request/generation flow, Mermaid source (`flow-diagram.svg`, `file-tree.svg` render it). |
@@ -52,7 +52,7 @@ Repo root: [`../README.md`](../README.md) · [`../SETUP.md`](../SETUP.md) · [`.
 ## API reference
 
 | Doc | Status | Owner | Last verified | What it is |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | [`api/README.md`](api/README.md) | current | Dan Browne | 2026-08-20 | Index of the API reference: per-surface docs, the auth-model overview table, and the `/docs` (Swagger) production-gate note. |
 | [`api/auth-and-accounts.md`](api/auth-and-accounts.md) | current | Dan Browne | 2026-08-20 | The Better Auth sidecar (`/api/auth/*`): email/password + OAuth, session lookup, email verification. Amended 2026-09-01 with `GET /api/auth/verification-status` — the delivery-state endpoint that replaced the resend button's eternal `200 {status:true}` (#1748). |
 | [`api/wallets.md`](api/wallets.md) | current | Dan Browne | 2026-08-20 | `/api/wallets/*` — EIP-4361 wallet-link challenge/verify. |
@@ -67,7 +67,7 @@ Repo root: [`../README.md`](../README.md) · [`../SETUP.md`](../SETUP.md) · [`.
 ## Product
 
 | Doc | Status | Owner | Last verified | What it is |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | [`user-stories.md`](user-stories.md) | current | Dan Browne | 2026-08-31 | The locked product spine. Canonical statement of what the product is. Re-verified against `/api/health` 2026-08-31; the Day-9 body carries dated inline corrections (fusion-preview surface, "GLM-backed", library size, KG demo claim) and reads vault execution in the present tense, which is roadmap (#1469). |
 | [`agent-api.md`](agent-api.md) | current | Dan Browne | — | Driving the full journey programmatically; the agent-native surface. |
 | [`specs/agent-native-onboarding-spec.md`](specs/agent-native-onboarding-spec.md) | draft | Dan Browne | 2026-08-31 | How a CLI / agent-skill / (possible) MCP caller creates an account, links a wallet, and pays — the **deltas** from `agent-quickstart.md`, not a second copy of it. Records the six deltas that make the agent path different, the classifier rule that makes logged-in agents unmeasurable as agents, the reconciliation with the 3-free-generation gate ([#1643](https://github.com/aprin-labs/archimedes/issues/1643)), and six owner decisions D1–D6 — **all closed 2026-08-31/09-01** (recorded as PR comments on #1653); doc updates to `current` when the decision rows are folded in. |
@@ -82,7 +82,7 @@ Repo root: [`../README.md`](../README.md) · [`../SETUP.md`](../SETUP.md) · [`.
 ## Quant and rigor — the math layer
 
 | Doc | Status | Owner | Last verified | What it is |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | [`quant/README.md`](quant/README.md) | current | Önder Akkaya | 2026-08-31 | Index for the quant docs. Read this before any strategy claim. Now indexes the four dated findings notes as well as the four living references — it previously described itself as "these four docs" while the directory held eight (#1598). |
 | [`quant/methodology.md`](quant/methodology.md) | current | Önder Akkaya | 2026-09-03 | The math layer end to end. DSR gate threshold is `0.95` and has exactly one definition, `rigor_profiles.DSR_P_BADGE_MIN` (#1794, 2026-09-03). |
 | [`quant/admission-criteria.md`](quant/admission-criteria.md) | current | Önder Akkaya | 2026-08-31 | Tier-1 admission. DSR badge threshold is 0.95 — stated as the level-1 row of the `rigor_profiles` strictness ladder, which is `DSR_P_BADGE_MIN` itself (#1794), and the promotion flow no longer passes the library's length as the trial count, a convention reversed on 2026-07-09 (#1598). |
@@ -102,7 +102,7 @@ Repo root: [`../README.md`](../README.md) · [`../SETUP.md`](../SETUP.md) · [`.
 ## Corpus and generation
 
 | Doc | Status | Owner | Last verified | What it is |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | [`generation-cost-instrumentation.md`](generation-cost-instrumentation.md) | current | Dan Browne | 2026-08-31 | What one generation actually consumes: per-job token counts, per-stage wall/CPU seconds, peak RSS, row writes — plus the measured `$/generation` those counts price to on the admin-only cost endpoint. The customer-facing quote seam stays `flat_v1`. |
 | [`corpus-architecture.md`](corpus-architecture.md) | target-state | Dan Browne | 2026-09-01 | arXiv preprints (not peer-reviewed), metadata + abstracts only. Live count: `GET /health` `corpus_papers` / `corpus_db_count` — do not freeze a number. **Describes embeddings/clusters/KG as built; in prod none of the three exist** (#778). Selection is a **keyword filter** and only that candidate set is re-scored at request time — nothing is precomputed; `/health` `paper_rag` names the live scorer, and the graph/KG endpoints 503 or return empty. |
 | [`specs/multi-agent-debate-spec.md`](specs/multi-agent-debate-spec.md) | shipped | Dan Browne | 2026-07-28 | The debate society — the sole generation pipeline. |
@@ -128,7 +128,7 @@ Repo root: [`../README.md`](../README.md) · [`../SETUP.md`](../SETUP.md) · [`.
 ## On-chain and Arc
 
 | Doc | Status | Owner | Last verified | What it is |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | [`arc-integration.md`](arc-integration.md) | current | Dan Browne | 2026-07-28 | Arc testnet reference and Circle integration. |
 | [`specs/vault-semantics-spec.md`](specs/vault-semantics-spec.md) | spec | Dan Browne | 2026-07-28 | Vault lifecycle and trade-window semantics. |
 | [`specs/commit-reveal-trace-spec.md`](specs/commit-reveal-trace-spec.md) | spec | Dan Browne | 2026-09-01 | Commit-before-trade reasoning-trace anchoring. Live `storagePointer` is empty (hash-only); IPFS pinning is not live ([ADR](adr/ipfs-pinning-not-live.md)). Contract review: Bogdan Sivochkin. |
@@ -139,14 +139,14 @@ Repo root: [`../README.md`](../README.md) · [`../SETUP.md`](../SETUP.md) · [`.
 ## Security
 
 | Doc | Status | Owner | Last verified | What it is |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | [`security/auth-model.md`](security/auth-model.md) | current — open gap | Dan Browne | — | What authentication is actually enforced and the known testnet gap. Read before exposing anything. |
 | [`runbooks/github-security-toggles.md`](runbooks/github-security-toggles.md) | runbook | Dan Browne | — | Repository security settings. |
 
 ## Runbooks and operations
 
 | Doc | Status | Owner | Last verified | What it is |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | [`runbooks/README.md`](runbooks/README.md) | current | Dan Browne | 2026-07-28 | Index of every runbook, and an explicit list of the runbooks that do **not** exist yet — including the missing Fargate break-glass procedure. |
 | [`runbooks/operations.md`](runbooks/operations.md) | current | Dan Browne | 2026-07-28 | Run the stack, RPC deep-dive, LLM backends, security notes. |
 | [`runbooks/arc-testnet-e2e.md`](runbooks/arc-testnet-e2e.md) | runbook | Dan Browne | — | End-to-end testnet smoke test. |
@@ -169,7 +169,7 @@ Repo root: [`../README.md`](../README.md) · [`../SETUP.md`](../SETUP.md) · [`.
 ## Decisions (ADRs)
 
 | Doc | Status | Owner | Last verified | What it is |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | [`adr/README.md`](adr/README.md) | current | Dan Browne | 2026-09-01 | ADR index and status vocabulary. All twenty-four records are listed there. |
 | [`adr/unlicense-public-domain.md`](adr/unlicense-public-domain.md) | accepted | Dan Browne | initial commit | The Unlicense as a public-domain dedication, and its ownership/contributor consequences. |
 | [`adr/arc-settlement-chain.md`](adr/arc-settlement-chain.md) | accepted | Dan Browne | 2026-05-13 | Arc testnet 5042002; USDC as settlement asset and native gas token. |
@@ -200,7 +200,7 @@ Repo root: [`../README.md`](../README.md) · [`../SETUP.md`](../SETUP.md) · [`.
 ## Plans and roadmaps (intent, not state)
 
 | Doc | Status | Owner | Last verified | What it is |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | [`account-authentication.md`](account-authentication.md) | runbook | Daniel Reis | 2026-08 | Better Auth deploy runbook: secrets, ECR, rollback (#1194); account linking, explicit link/unlink (#1420 follow-up; implicit auto-link stays off); account management — email/password change, session revocation, deletion (#1367). |
 | [`plans/2026-07-28-account-auth-app-boundary.md`](plans/2026-07-28-account-auth-app-boundary.md) | plan | Daniel Reis | 2026-07-28 | The #1194 account-auth boundary plan. |
 | [`plans/2026-08-15-core-app-visual-refresh.md`](plans/2026-08-15-core-app-visual-refresh.md) | plan | Daniel Reis | 2026-08-15 | Core-app visual refresh plan. |
@@ -226,7 +226,7 @@ Repo root: [`../README.md`](../README.md) · [`../SETUP.md`](../SETUP.md) · [`.
 ## Audits and findings
 
 | Doc | Status | Owner | Last verified | What it is |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | [`audits/2026-06-14-full-tree-audit.md`](audits/2026-06-14-full-tree-audit.md) | audit — lineage head | Dan Browne | 2026-06-14 | Full-repo audit. Carries the only resolution ledger; supersedes the earlier audit chain. |
 | [`audits/2026-06-14-gpt-oss-findings-verified.md`](audits/2026-06-14-gpt-oss-findings-verified.md) | audit | Dan Browne | 2026-07-28 | GPT-OSS findings, verified. |
 | [`audits/2026-06-13-Onder-findings.md`](audits/2026-06-13-Onder-findings.md) | audit | Önder Akkaya | 2026-06-13 | Resilience and stress-test report. |
@@ -237,7 +237,8 @@ Repo root: [`../README.md`](../README.md) · [`../SETUP.md`](../SETUP.md) · [`.
 ## Handovers and session logs (historical — not current state)
 
 | Doc | Status | Owner | Last verified | What it is |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
+| [`handovers/fulcro-production-ui.md`](handovers/fulcro-production-ui.md) | reference | Dan Browne | 2026-09-09 | Fulcro preview and first production identity/public-page slice; direct theme toggle, real-data/consent boundaries and integration gates. Full migration and deployment remain pending. |
 | [`handovers/2026-07-14-architecture-review.md`](handovers/2026-07-14-architecture-review.md) | historical log | Dan Browne | 2026-07-28 | Architecture-page redesign summary; evidence behind `architecture.md` §10. Its "what's stale" section describes a page that no longer exists — the redesign was **implemented in PR #1192**. |
 | [`handovers/second-wave-handover.md`](handovers/second-wave-handover.md) | historical log | Önder Akkaya | — | Second-wave brief. |
 | [`handovers/third-wave-handover.md`](handovers/third-wave-handover.md) | historical log | Önder Akkaya | — | Third-wave (fidelity) brief. |
@@ -247,7 +248,7 @@ Repo root: [`../README.md`](../README.md) · [`../SETUP.md`](../SETUP.md) · [`.
 ## Research and prompts
 
 | Doc | Status | Owner | Last verified | What it is |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | [`research/README.md`](research/README.md) | reference | Dan Browne | — | Research artifacts index. |
 | [`research/linus-archimedes-comparison.md`](research/linus-archimedes-comparison.md) | reference | Dan Browne | — | Bidirectional architecture comparison with Linus. |
 | [`research/archimedes-to-linus-portbacks.md`](research/archimedes-to-linus-portbacks.md) | reference | Dan Browne | — | What Archimedes sends back to Linus. |
@@ -259,7 +260,7 @@ Repo root: [`../README.md`](../README.md) · [`../SETUP.md`](../SETUP.md) · [`.
 ## Working with the repo and the team
 
 | Doc | Status | Owner | Last verified | What it is |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | [`CONVENTIONS.md`](CONVENTIONS.md) | current | Dan Browne | 2026-07-28 | Where a new doc goes, how it is named, its front-matter, and the ADR lifecycle. Read before adding any file. |
 | [`team.md`](team.md) | current | Dan Browne | 2026-07-28 | Roster, lanes, review coverage, timezones, sync window. Extracted from `CLAUDE.md`. |
 | [`agent-gotchas.md`](agent-gotchas.md) | current | Dan Browne | 2026-07-28 | Character-limited message surfaces (`wc -m`, not `wc -c`) and zsh quoting traps. Both were paid for. |

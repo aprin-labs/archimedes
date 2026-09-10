@@ -44,9 +44,9 @@ test("index.html head references an apple-touch-icon, PNG fallbacks, and a manif
 		/<link rel="apple-touch-icon" sizes="180x180" href="\/apple-touch-icon\.png" \/>/,
 	);
 	assert.match(head, /<link rel="manifest" href="\/site\.webmanifest" \/>/);
-	// Rebrand palette: the plain fallback meta and the manifest agree on the
-	// brand dark (#15131D); media-scoped light/dark variants sit beside it.
-	assert.match(head, /<meta name="theme-color" content="#15131D" \/>/);
+	// One application-owned color. OS media tags must not beat explicit Light/Dark.
+	assert.match(head, /<meta name="theme-color" content="#0d1917" \/>/);
+	assert.equal((head.match(/<meta\s+name="theme-color"/g) ?? []).length, 1);
 });
 
 test("apple-touch-icon.png is a real 180x180 PNG", () => {
@@ -72,6 +72,8 @@ test("site.webmanifest declares 192x192 and 512x512 icons that exist on disk at 
 		readFileSync(new URL("../public/site.webmanifest", import.meta.url)),
 	);
 	assert.equal(manifest.name, "Archimedes");
+	assert.equal(manifest.theme_color, "#0d1917");
+	assert.equal(manifest.background_color, "#0d1917");
 	assert.ok(Array.isArray(manifest.icons) && manifest.icons.length >= 2);
 
 	const sizesDeclared = manifest.icons.map((icon) => icon.sizes).sort();

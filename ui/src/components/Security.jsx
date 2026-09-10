@@ -1,4 +1,5 @@
 import StorageDisclosure from "./StorageDisclosure";
+import { PublicCallToAction } from "./PublicLayout";
 
 export default function Security() {
 	return (
@@ -12,10 +13,10 @@ export default function Security() {
 						</h1>
 						<p className="security-hero__lede">
 							Archimedes separates account identity, wallet proof, and the
-							service credentials its own agents run under. Generation is a
-							paid call on this testnet, and that boundary is described here
-							too. These controls describe current code—not a promise that
-							failure is impossible.
+							service credentials its own agents run under. Generation is a paid
+							call on this testnet, and that boundary is described here too.
+							These controls describe current code, not a promise that failure
+							is impossible.
 						</p>
 					</div>
 					<ul className="security-status" aria-label="Current product status">
@@ -33,7 +34,7 @@ export default function Security() {
 						</li>
 						<li>
 							<span>Paid surface</span>
-							<strong>Generation — quoted live</strong>
+							<strong>Generation (quoted live)</strong>
 						</li>
 					</ul>
 				</div>
@@ -114,8 +115,8 @@ export default function Security() {
 									Production session cookies are HttpOnly, Secure, and
 									SameSite=Lax. nginx, the UI route guard, and FastAPI
 									independently protect private surfaces. Two browse pages are
-									deliberately anonymous, and the edge and client halves of
-									that carve-out list are kept in lockstep.
+									deliberately anonymous, and the edge and client halves of that
+									carve-out list are kept in lockstep.
 								</p>
 							</div>
 						</li>
@@ -125,7 +126,7 @@ export default function Security() {
 								<h3>Private records follow the canonical user ID.</h3>
 								<p>
 									Profile, strategy, job, and linked-wallet reads resolve
-									through the authenticated Better Auth user—not a
+									through the authenticated Better Auth user, not a
 									client-supplied address.
 								</p>
 							</div>
@@ -143,12 +144,14 @@ export default function Security() {
 						<li>
 							<span>Payment</span>
 							<div>
-								<h3>Generation is a paid call, bound to the wallet you proved.</h3>
+								<h3>
+									Generation is a paid call, bound to the wallet you proved.
+								</h3>
 								<p>
 									Starting a generation without a signed payment returns HTTP
-									402 carrying the full x402 requirements, and the same terms —
-									price, asset, chain, recipient, and whether the rail is live
-									or dry — are published anonymously at GET /api/generate/quote,
+									402 carrying the full x402 requirements, and the same terms
+									(price, asset, chain, recipient, and whether the rail is live
+									or dry) are published anonymously at GET /api/generate/quote,
 									so they are readable before anything is signed. The payer
 									inside the signed authorization must be the wallet linked to
 									the account; a mismatch is refused before any settlement
@@ -166,7 +169,7 @@ export default function Security() {
 									bundles plus one hashed inline bootstrap, HSTS, framing denied
 									outright, and a permissions policy that turns off geolocation,
 									microphone, and camera. Two per-IP request-rate zones run at
-									the edge — the tighter one on the credential surface — with
+									the edge (the tighter one on the credential surface), with
 									tighter per-route limits on expensive endpoints behind them.
 								</p>
 							</div>
@@ -174,12 +177,14 @@ export default function Security() {
 						<li>
 							<span>Verdict</span>
 							<div>
-								<h3>A rigor verdict is computed server-side, never asserted.</h3>
+								<h3>
+									A rigor verdict is computed server-side, never asserted.
+								</h3>
 								<p>
 									The gate runs outside the generator, on persisted returns, so
-									the thing being graded cannot influence its own grade. A failed
-									or pending result cannot be relabelled as verified from the
-									client.
+									the thing being graded cannot influence its own grade. A
+									failed or pending result cannot be relabelled as verified from
+									the client.
 								</p>
 							</div>
 						</li>
@@ -193,7 +198,7 @@ export default function Security() {
 								<p>
 									A published trace can be re-hashed and compared against its
 									on-chain anchor. That proves the record was not rewritten
-									afterwards—it does not prove the reasoning was good. Two
+									afterwards. It does not prove the reasoning was good. Two
 									limits the sentence would otherwise hide: a generation run
 									computes the same kind of hash but will only be anchored in a
 									later version, and a decision that produced no transaction has
@@ -232,8 +237,8 @@ export default function Security() {
 						</li>
 						<li>
 							<strong>Live charge:</strong> the generation paywall is on and not
-							in dry-run, so a signed payment settles testnet USDC for real —
-							anyone can confirm that anonymously at GET /api/generate/quote. A
+							in dry-run, so a signed payment settles testnet USDC for real.
+							Anyone can confirm that anonymously at GET /api/generate/quote. A
 							settled fee lands in a platform-operated wallet Archimedes signs
 							for through its payment provider. It is a fee, not a balance held
 							for you, and there is nothing there to withdraw.
@@ -277,8 +282,8 @@ export default function Security() {
 						<h2 id="evidence-title">Read controls at source.</h2>
 						<p>
 							Security posture should be reviewable, not accepted from copy.
-							Every sentence above has a row in the claims ledger naming the file
-							that makes it true.
+							Every sentence above has a row in the claims ledger naming the
+							file that makes it true.
 						</p>
 					</div>
 					<ul>
@@ -347,6 +352,7 @@ export default function Security() {
 					</ul>
 				</div>
 			</section>
+			<PublicCallToAction />
 		</main>
 	);
 }

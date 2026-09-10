@@ -12,8 +12,19 @@ import { deriveWalletGateView } from "../freeGenerations";
 import { getAddress } from "../config";
 import { listLinkedWallets } from "../linked-wallets";
 import { GENERATION_QUOTE_ENABLED } from "../featureFlags";
-import { depositToGateway, getGatewayBalance, parseUsdcAmount, paymentPayerAddress, paymentWalletKind, signGatewayPayment, walletSupportsPayment } from "../x402";
-import { ensureSessionLinked, getOrCreateSessionAccount } from "../payment-session";
+import {
+	depositToGateway,
+	getGatewayBalance,
+	parseUsdcAmount,
+	paymentPayerAddress,
+	paymentWalletKind,
+	signGatewayPayment,
+	walletSupportsPayment,
+} from "../x402";
+import {
+	ensureSessionLinked,
+	getOrCreateSessionAccount,
+} from "../payment-session";
 import {
 	DEFAULT_DEPTH,
 	DEPTH_OPTIONS,
@@ -28,7 +39,8 @@ import {
 	startErrorMessage,
 } from "../generateQuote";
 
-const shortAddr = (addr) => (addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : "");
+const shortAddr = (addr) =>
+	addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : "";
 
 // Engine C (fusion) per-spec asset fan-out cap — mirrors `_MAX_ASSETS` in
 // backend/archimedes/services/fusion_market_data.py:53. Deeper selections are
@@ -105,7 +117,8 @@ const BRIEF_MAX_LEN = 600;
 
 // "$2.000000" reads like a debug dump — show money as money ("$2.00").
 // Server strings stay authoritative; this only trims display precision.
-const fmtUsd = (p) => (typeof p === "string" ? p.replace(/^(\$\d+\.\d{2})\d*$/, "$1") : p);
+const fmtUsd = (p) =>
+	typeof p === "string" ? p.replace(/^(\$\d+\.\d{2})\d*$/, "$1") : p;
 
 const RISK_PROFILES = [
 	{ id: "fixed_income", label: "Fixed income" },
@@ -275,7 +288,8 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 	// so the linked-wallets fetch, the Gateway-balance fetch, and the render
 	// branch below all agree on the same condition.
 	const paymentActive =
-		paymentStatus === PAYMENT_STATUS.DRY_RUN || paymentStatus === PAYMENT_STATUS.LIVE_UNAVAILABLE;
+		paymentStatus === PAYMENT_STATUS.DRY_RUN ||
+		paymentStatus === PAYMENT_STATUS.LIVE_UNAVAILABLE;
 
 	// Linked wallets: needed once EITHER the upfront quote reports payments
 	// required OR a 402 actually landed — the latter matters independently of
@@ -283,7 +297,11 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 	// submit just as easily as a quoted one, and the payer-mismatch note must
 	// still work in that path.
 	useEffect(() => {
-		if (!paymentActive && !(GENERATION_QUOTE_ENABLED && quote?.payment_required)) return;
+		if (
+			!paymentActive &&
+			!(GENERATION_QUOTE_ENABLED && quote?.payment_required)
+		)
+			return;
 		let cancelled = false;
 		listLinkedWallets()
 			.then((wallets) => {
@@ -303,7 +321,10 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 	// ASC) — so this is NOT necessarily the credit the next submit spends.
 	// That's fine: only its PRESENCE drives the notice, never its identity,
 	// and the notice must not name or price a specific credit for that reason.
-	const unspentCredit = useMemo(() => credits.find((c) => c.status === "available") ?? null, [credits]);
+	const unspentCredit = useMemo(
+		() => credits.find((c) => c.status === "available") ?? null,
+		[credits],
+	);
 
 	const quoteView = useMemo(() => deriveQuoteView(quote), [quote]);
 	// The price/asset/chain/dry_run to show in the payment step: the upfront
@@ -311,9 +332,14 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 	// shows a real price regardless of GENERATION_QUOTE_ENABLED. Both
 	// useMemo calls run unconditionally (Rules of Hooks) — only the
 	// resulting VALUES are chosen with `??`.
-	const paywallQuoteView = useMemo(() => deriveQuoteView(paywallQuoteRaw), [paywallQuoteRaw]);
+	const paywallQuoteView = useMemo(
+		() => deriveQuoteView(paywallQuoteRaw),
+		[paywallQuoteRaw],
+	);
 	const effectiveQuoteView = quoteView ?? paywallQuoteView;
-	const quoteReady = !GENERATION_QUOTE_ENABLED || (quoteStatus === "ready" && Boolean(quoteView));
+	const quoteReady =
+		!GENERATION_QUOTE_ENABLED ||
+		(quoteStatus === "ready" && Boolean(quoteView));
 	// The wallet actually active in the injected provider vs. the account's
 	// LINKED wallet — real signing uses the CONNECTED wallet (it's the only
 	// one this UI can produce a signature for), and the backend requires that
@@ -408,10 +434,14 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 	// caller mid-async-flow (handlePay) can branch on it immediately rather
 	// than reading stale state before the next render.
 	const submitStart = async (extraHeaders) => {
-		const { data, headers } = await apiPostWithMeta("/api/generate/start", buildBrief(), {
-			"Idempotency-Key": paymentAttemptKey(),
-			...extraHeaders,
-		});
+		const { data, headers } = await apiPostWithMeta(
+			"/api/generate/start",
+			buildBrief(),
+			{
+				"Idempotency-Key": paymentAttemptKey(),
+				...extraHeaders,
+			},
+		);
 		setLastJobId(data.job_id);
 		const settledReceipt = extractReceipt(headers);
 		setReceipt(settledReceipt);
@@ -475,12 +505,17 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 			if (state !== PAYMENT_STATUS.NONE) {
 				setPaymentStatus(state);
 				setPaywallQuoteRaw(e?.detail?.quote ?? null);
-				if (state === PAYMENT_STATUS.DRY_RUN || state === PAYMENT_STATUS.LIVE_UNAVAILABLE) {
+				if (
+					state === PAYMENT_STATUS.DRY_RUN ||
+					state === PAYMENT_STATUS.LIVE_UNAVAILABLE
+				) {
 					// The 402 detail.message is agent/curl guidance ("Sign the
 					// PAYMENT-REQUIRED requirements…") — the interactive panel below
 					// IS the human version of that instruction; rendering both was
 					// pure noise (Dan's 2026-08-21 field report).
-					setPaymentRequirements(derivePaymentRequirements(extractPaymentRequiredHeader(e.headers)));
+					setPaymentRequirements(
+						derivePaymentRequirements(extractPaymentRequiredHeader(e.headers)),
+					);
 					setPaymentRequirementsAt(Date.now());
 				} else {
 					// 409 wallet_link_required. Same anti-dump rule as 402: the
@@ -526,7 +561,9 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 			enterStartedJob(data);
 			return null;
 		} catch (e) {
-			const fresh = derivePaymentRequirements(extractPaymentRequiredHeader(e.headers));
+			const fresh = derivePaymentRequirements(
+				extractPaymentRequiredHeader(e.headers),
+			);
 			if (!fresh?.requirements) throw e;
 			setPaymentRequirements(fresh);
 			setPaymentRequirementsAt(Date.now());
@@ -564,7 +601,9 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 
 	const finishStart = async (header) => {
 		setPayStep("starting");
-		const { data, receipt: settledReceipt } = await submitStart({ "Payment-Signature": header });
+		const { data, receipt: settledReceipt } = await submitStart({
+			"Payment-Signature": header,
+		});
 		resetPaymentStepState();
 		setNoSettlementNotice(!settledReceipt);
 		if (GENERATION_QUOTE_ENABLED) fetchQuote();
@@ -591,7 +630,8 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 			// exists (Circle's facilitator verifies EOA signatures only).
 			if (paymentWalletKind() === "circle") {
 				setPayStep("refreshing");
-				const fresh = heldSignableRequirements() ?? (await refreshPaymentRequirements());
+				const fresh =
+					heldSignableRequirements() ?? (await refreshPaymentRequirements());
 				if (!fresh) return; // started without payment (paywall off)
 				const req = fresh.requirements;
 				const need = BigInt(req.amount);
@@ -601,7 +641,9 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 				if (bal == null || bal < need) {
 					const amountRaw = parseUsdcAmount(depositAmount || "20.00");
 					if (amountRaw < need) {
-						throw new Error("Deposit amount must at least cover the generation price.");
+						throw new Error(
+							"Deposit amount must at least cover the generation price.",
+						);
 					}
 					await depositToGateway(req, amountRaw, (step) =>
 						setPayStep(step === "approving" ? "approving" : "depositing"),
@@ -659,7 +701,9 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 			if (bal == null || bal < need) {
 				const amountRaw = parseUsdcAmount(depositAmount || "20.00");
 				if (amountRaw < need) {
-					throw new Error("Deposit amount must at least cover the generation price.");
+					throw new Error(
+						"Deposit amount must at least cover the generation price.",
+					);
 				}
 				await depositToGateway(req, amountRaw, (step) =>
 					setPayStep(step === "approving" ? "approving" : "depositing"),
@@ -696,7 +740,10 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 					setWalletGateView(gate);
 				} else {
 					setPaymentMessage(
-						paymentErrorMessage(e, e?.shortMessage || e?.message || "Payment failed — try again."),
+						paymentErrorMessage(
+							e,
+							e?.shortMessage || e?.message || "Payment failed — try again.",
+						),
 					);
 				}
 			}
@@ -705,8 +752,6 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 			setPayStep((s) => (s === "confirm" ? s : "idle"));
 		}
 	};
-
-
 
 	// ── Apply an example brief ──
 	const applyExample = (ex) => {
@@ -787,7 +832,7 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 					>
 						← Back to generations
 					</button>
-					<h2 className="serif text-[1.6rem] mb-1">Generation stream</h2>
+					<h1>Generation stream</h1>
 					<p className="caption" style={{ color: "var(--text-3)" }}>
 						Job {drillInJobId.slice(0, 10)}… — full history replayed from the
 						start. Navigate away and come back; the job continues running in the
@@ -812,12 +857,10 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 	return (
 		<div className="generate-page">
 			<header className="app-page-heading generate-page__heading">
-				<p className="app-eyebrow">Strategy synthesis</p>
 				<h1>Generate a strategy</h1>
 				<p>
-					Describe the outcome you want. Archimedes retrieves relevant q-fin
-					papers, debates candidate methods, sizes positions, and sends one
-					winner to the rigor gate.
+					Describe an idea. Inspect its sources, rejected alternatives, and
+					rigor verdict.
 				</p>
 			</header>
 
@@ -835,8 +878,11 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 					    reader announced the product's single most important control
 					    as an anonymous "edit, multiline" the moment the user typed
 					    the first character (3.3.2 / 4.1.2). */}
-					<div className="mb-3">
-						<label className="label mb-1 block" htmlFor="generate-strategy-name">
+					<div className="generate-brief-name">
+						<label
+							className="label mb-1 block"
+							htmlFor="generate-strategy-name"
+						>
 							Strategy name (optional)
 						</label>
 						<input
@@ -844,105 +890,97 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 							type="text"
 							value={strategyName}
 							onChange={(e) => setStrategyName(e.target.value)}
-							placeholder="Leave blank — backend auto-derives a name"
+							placeholder="An automatic name if you leave this blank"
 							maxLength={80}
 							className="chat-input w-full px-2.5 py-1.5"
 							disabled={starting}
 						/>
 						<p className="caption mt-1" style={{ color: "var(--text-3)" }}>
-							Short and memorable — leave blank to auto-name.{" "}
 							{strategyName.length}/80
 						</p>
 					</div>
 
-					<label className="label mb-1 block" htmlFor="generate-brief">
-						Your brief
-					</label>
-					{/* Short hint only. Tutorial prose lives in
-					    docs/writing-a-brief.md (#1642); the limits and what must
-					    NOT be in a brief in docs/brief-guidelines.md (#1801). */}
-					<p
-						className="caption mb-2"
-						id="generate-brief-help"
-						style={{ color: "var(--text-3)" }}
-					>
-						Name assets, a mechanism, and a goal.{" "}
-						<a
-							className="generate-brief-guide-link"
-							href="https://github.com/aprin-labs/archimedes/blob/main/docs/writing-a-brief.md"
-							target="_blank"
-							rel="noreferrer"
-						>
-							How to write a brief →
-						</a>{" "}
-						<a
-							className="generate-brief-guide-link"
-							href="https://github.com/aprin-labs/archimedes/blob/main/docs/brief-guidelines.md"
-							target="_blank"
-							rel="noreferrer"
-						>
-							What a brief may not contain →
-						</a>
-					</p>
-
-					{/* The browser cap is a courtesy (it stops a paste becoming
-					    an unexplained 422), NOT the guard — the request schema
-					    and services.brief_screen enforce it server-side. */}
-					<textarea
-						id="generate-brief"
-						aria-describedby="generate-brief-help generate-brief-count"
-						ref={briefRef}
-						value={intent}
-						onChange={(e) => setIntent(e.target.value)}
-						placeholder="e.g. blend momentum, quality and a gold hedge across major ETFs with volatility-managed sizing for idle USDC"
-						rows={3}
-						maxLength={BRIEF_MAX_LEN}
-						className="chat-input w-full p-2.5 leading-relaxed"
-						disabled={starting}
-					/>
-					<p
-						className="caption mt-1 mb-3"
-						id="generate-brief-count"
-						style={{
-							color:
-								intent.length >= BRIEF_MAX_LEN
-									? "var(--warn, var(--text-2))"
-									: "var(--text-3)",
-						}}
-					>
-						{intent.length}/{BRIEF_MAX_LEN}
-						{intent.length >= BRIEF_MAX_LEN
-							? " — at the limit; a brief works best at one or two sentences."
-							: ""}
-					</p>
-
-					{/* Surprise Me (#1642) — the ONLY example-related control on the
-					    page. No brief text renders here in any state: the pick goes
-					    into the textarea above, and this region announces only which
-					    one landed (a label, for the screen-reader user who cannot see
-					    the box repaint). Nothing renders before the first press. */}
-					<div className="generate-surprise mb-3">
-						<button
-							type="button"
-							onClick={handleSurprise}
-							disabled={starting}
-							className="generate-surprise-btn"
-						>
-							<span
-								className="i-lucide-shuffle w-4 h-4"
-								aria-hidden="true"
-							/>
-							Surprise me
-						</button>
-						<p
-							className="caption generate-surprise-hint mb-0"
-							role="status"
-							aria-live="polite"
-						>
-							{surpriseLabel
-								? `Filled in: ${surpriseLabel}. Press again for another.`
-								: "Fills the box with an example brief — a different one each press."}
+					<div className="generate-brief-editor">
+						<label className="label mb-1 block" htmlFor="generate-brief">
+							Your brief
+						</label>
+						{/* Tutorials and input constraints stay linked beside the field. */}
+						<p className="caption" id="generate-brief-help">
+							Name assets, a mechanism, and a goal.{" "}
+							<a
+								className="generate-brief-guide-link"
+								href="https://github.com/aprin-labs/archimedes/blob/main/docs/writing-a-brief.md"
+								target="_blank"
+								rel="noreferrer"
+							>
+								Writing guide ↗
+							</a>{" "}
+							<a
+								className="generate-brief-guide-link"
+								href="https://github.com/aprin-labs/archimedes/blob/main/docs/brief-guidelines.md"
+								target="_blank"
+								rel="noreferrer"
+							>
+								Brief limits ↗
+							</a>
 						</p>
+
+						{/* Browser cap is a courtesy, not the guard. The request schema
+						    and services.brief_screen enforce it server-side. */}
+						<textarea
+							id="generate-brief"
+							aria-describedby="generate-brief-help generate-brief-count"
+							ref={briefRef}
+							value={intent}
+							onChange={(e) => setIntent(e.target.value)}
+							placeholder="e.g. blend momentum, quality and a gold hedge across major ETFs with volatility-managed sizing for idle USDC"
+							rows={4}
+							maxLength={BRIEF_MAX_LEN}
+							className="chat-input generate-brief-input"
+							disabled={starting}
+						/>
+						<div className="generate-brief-editor__footer">
+							<p
+								className="caption"
+								id="generate-brief-count"
+								style={{
+									color:
+										intent.length >= BRIEF_MAX_LEN
+											? "var(--warn, var(--text-2))"
+											: "var(--text-3)",
+								}}
+							>
+								{intent.length}/{BRIEF_MAX_LEN}
+								{intent.length >= BRIEF_MAX_LEN
+									? " — at the limit; a brief works best at one or two sentences."
+									: ""}
+							</p>
+							{/* The only example control. The brief goes into the editor;
+							    the live region announces its label, not duplicate prose. */}
+							<div className="generate-surprise">
+								<button
+									type="button"
+									onClick={handleSurprise}
+									disabled={starting}
+									className="generate-surprise-btn"
+								>
+									<span
+										className="i-lucide-shuffle w-4 h-4"
+										aria-hidden="true"
+									/>
+									Surprise me
+								</button>
+								<p
+									className="caption generate-surprise-hint mb-0"
+									role="status"
+									aria-live="polite"
+								>
+									{surpriseLabel
+										? `Filled in: ${surpriseLabel}. Press again for another.`
+										: "Fill with an example brief."}
+								</p>
+							</div>
+						</div>
 					</div>
 
 					{/* Advanced options — collapsed by default */}
@@ -1146,7 +1184,9 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 										{quoteView.paymentRequired ? (
 											<span className="tag tag-info">testnet USDC</span>
 										) : (
-											<span className="tag tag-muted">payment not required yet</span>
+											<span className="tag tag-muted">
+												payment not required yet
+											</span>
 										)}
 										{quoteView.paymentRequired && quoteView.dryRun && (
 											<span className="tag tag-warning">
@@ -1158,7 +1198,10 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 										className="caption mb-0"
 										style={{ marginTop: 8, color: "var(--text-3)" }}
 									>
-										<span className="tag tag-positive" style={{ marginRight: 6 }}>
+										<span
+											className="tag tag-positive"
+											style={{ marginRight: 6 }}
+										>
 											free
 										</span>
 										Paper trading after generation costs nothing — this quote
@@ -1191,34 +1234,36 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 					    charge either way, and the sentence would imply the payer
 					    is being spared one — so the notice stays out of the way
 					    entirely rather than being softened into vagueness. */}
-					{unspentCredit && quote?.payment_required && !creditNoticeDismissed && (
-						<div
-							className="info-box mb-3 flex items-center justify-between gap-2"
-							role="status"
-							aria-live="polite"
-						>
-							<span>
-								You have a paid generation credit — this run will use
-								it, no new charge.
-							</span>
-							<button
-								type="button"
-								onClick={() => setCreditNoticeDismissed(true)}
-								className="caption"
-								aria-label="Dismiss credit notice"
-								style={{
-									background: "none",
-									border: "none",
-									cursor: "pointer",
-									color: "var(--text-3)",
-									padding: 0,
-									flexShrink: 0,
-								}}
+					{unspentCredit &&
+						quote?.payment_required &&
+						!creditNoticeDismissed && (
+							<div
+								className="info-box mb-3 flex items-center justify-between gap-2"
+								role="status"
+								aria-live="polite"
 							>
-								Dismiss
-							</button>
-						</div>
-					)}
+								<span>
+									You have a paid generation credit — this run will use it, no
+									new charge.
+								</span>
+								<button
+									type="button"
+									onClick={() => setCreditNoticeDismissed(true)}
+									className="caption"
+									aria-label="Dismiss credit notice"
+									style={{
+										background: "none",
+										border: "none",
+										cursor: "pointer",
+										color: "var(--text-3)",
+										padding: 0,
+										flexShrink: 0,
+									}}
+								>
+									Dismiss
+								</button>
+							</div>
+						)}
 
 					{/* Submit row */}
 					{/* ↑ That marker is load-bearing: ui/test/generation-credits.test.js
@@ -1258,215 +1303,251 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 							aria-atomic="true"
 							style={{ flex: 1, display: "flex" }}
 						>
-						{paymentStatus === PAYMENT_STATUS.WALLET_LINK_REQUIRED ? (
-							<div className="info-box warning" style={{ flex: 1 }}>
-								<strong>{walletGateView?.title ?? "Wallet link required"}.</strong>{" "}
-								{walletGateView?.message}
-								{payerMismatch && (
-									<p
-										className="caption mb-0"
-										style={{ marginTop: 6, color: "var(--text-3)" }}
+							{paymentStatus === PAYMENT_STATUS.WALLET_LINK_REQUIRED ? (
+								<div className="info-box warning" style={{ flex: 1 }}>
+									<strong>
+										{walletGateView?.title ?? "Wallet link required"}.
+									</strong>{" "}
+									{walletGateView?.message}
+									{payerMismatch && (
+										<p
+											className="caption mb-0"
+											style={{ marginTop: 6, color: "var(--text-3)" }}
+										>
+											Your connected wallet ({shortAddr(payerMismatch.active)})
+											isn't linked to your account — your linked wallet is{" "}
+											{shortAddr(payerMismatch.linked)}. Switch your wallet's
+											active account to that one, or link the connected one
+											below.
+										</p>
+									)}
+									{walletGateView?.offerResend && (
+										<ResendVerificationControl email={user?.email} />
+									)}{" "}
+									<button
+										type="button"
+										onClick={() =>
+											window.dispatchEvent(new Event("open-wallet-modal"))
+										}
+										className="caption"
+										style={{
+											background: "none",
+											border: "none",
+											cursor: "pointer",
+											color: "var(--accent)",
+											textDecoration: "underline",
+											padding: 0,
+										}}
 									>
-										Your connected wallet ({shortAddr(payerMismatch.active)})
-										isn't linked to your account — your linked wallet is{" "}
-										{shortAddr(payerMismatch.linked)}. Switch your wallet's
-										active account to that one, or link the connected one below.
-									</p>
-								)}
-								{walletGateView?.offerResend && (
-									<ResendVerificationControl email={user?.email} />
-								)}
-								{" "}
-								<button
-									type="button"
-									onClick={() =>
-										window.dispatchEvent(new Event("open-wallet-modal"))
-									}
-									className="caption"
-									style={{
-										background: "none",
-										border: "none",
-										cursor: "pointer",
-										color: "var(--accent)",
-										textDecoration: "underline",
-										padding: 0,
-									}}
-								>
-									Connect / link wallet →
-								</button>
-							</div>
-						) : paymentStatus === PAYMENT_STATUS.DRY_RUN || paymentStatus === PAYMENT_STATUS.LIVE_UNAVAILABLE ? (
-							<div className="info-box warning" style={{ flex: 1 }}>
-								<strong>Payment required.</strong>{" "}
-								{effectiveQuoteView && (
-									<>
-										Generating costs{" "}
-										<strong>
-											{effectiveQuoteView.price} {effectiveQuoteView.asset}
-										</strong>{" "}
-										on {effectiveQuoteView.chain}
-										{effectiveQuoteView.recipient ? <> to {shortAddr(effectiveQuoteView.recipient)}</> : null}
-										{walletAddr ? <> — paid from your connected wallet ({shortAddr(walletAddr)})</> : null}.{" "}
-									</>
-								)}
-								{effectiveQuoteView?.dryRun && (
-									<span className="tag tag-warning" style={{ marginRight: 6 }}>
-										test mode — server accepts payments unverified
-									</span>
-								)}
-								{paymentRequirements?.error ? (
-									<p className="caption mb-0" style={{ marginTop: 6 }}>
-										{paymentRequirements.error === "no_gateway_option"
-											? "This backend didn't offer a supported payment method (Circle Gateway) for this request — contact the team."
-											: "Could not read the payment requirements from the server response. Try again."}
-									</p>
-								) : !walletAddr ? (
-									<p className="caption mb-0" style={{ marginTop: 6 }}>
-										Connect your wallet to pay.{" "}
-										<button
-											type="button"
-											onClick={() => window.dispatchEvent(new Event("open-wallet-modal"))}
-											className="caption"
-											style={{
-												background: "none",
-												border: "none",
-												cursor: "pointer",
-												color: "var(--accent)",
-												textDecoration: "underline",
-												padding: 0,
-											}}
-										>
-											Connect wallet →
-										</button>
-									</p>
-								) : payerMismatch ? (
-									<p className="caption mb-0" style={{ marginTop: 6 }}>
-										Payments must be signed by your linked wallet (
-										{shortAddr(payerMismatch.linked)}) — switch your connected wallet (
-										{shortAddr(payerMismatch.active)}) to that one, or link the connected
-										one below.
-									</p>
-								) : !walletSupportsPayment() ? (
-									<div style={{ marginTop: 6 }}>
-										<p className="caption mb-1">
-											Connect the wallet you linked to pay — MetaMask, Coinbase, Brave,
-											Phantom, or your Circle passkey wallet.
-										</p>
-										<button
-											type="button"
-											className="btn btn-outline btn-sm"
-											onClick={() => window.dispatchEvent(new Event("open-wallet-modal"))}
-										>
-											Connect wallet →
-										</button>
-									</div>
-								) : (
-									<div style={{ marginTop: 6 }}>
-										<p className="caption mb-1">
-											{paymentWalletKind() === "circle" ? (
-												// Passkey wallets pay through a device payment key
-												// (see ../payment-session.js): Circle's nanopayments
-												// rail verifies EOA signatures only, so the passkey
-												// account funds a local key once and that key signs
-												// each payment silently. Copy states the custody
-												// bound plainly — the key lives in this browser and
-												// only ever controls its own deposited balance.
+										Connect / link wallet →
+									</button>
+								</div>
+							) : paymentStatus === PAYMENT_STATUS.DRY_RUN ||
+								paymentStatus === PAYMENT_STATUS.LIVE_UNAVAILABLE ? (
+								<div className="info-box warning" style={{ flex: 1 }}>
+									<strong>Payment required.</strong>{" "}
+									{effectiveQuoteView && (
+										<>
+											Generating costs{" "}
+											<strong>
+												{effectiveQuoteView.price} {effectiveQuoteView.asset}
+											</strong>{" "}
+											on {effectiveQuoteView.chain}
+											{effectiveQuoteView.recipient ? (
+												<> to {shortAddr(effectiveQuoteView.recipient)}</>
+											) : null}
+											{walletAddr ? (
 												<>
-													Payments run from a device payment key your passkey
-													wallet funds — one passkey approval to set it up,
-													then each generation settles with no prompts. The
-													key stays in this browser and only controls its own
-													deposited balance.
-													{gatewayBalance != null && (
-														<> Payment balance: ${(Number(gatewayBalance) / 1e6).toFixed(2)}.</>
-													)}
+													{" "}
+													— paid from your connected wallet (
+													{shortAddr(walletAddr)})
 												</>
-											) : (
-												<>
-													Payments run from your Circle Gateway balance — a one-time
-													deposit covers many generations; each one is then a single
-													wallet signature.
-													{gatewayBalance != null && (
-														<> Your balance: ${(Number(gatewayBalance) / 1e6).toFixed(2)}.</>
-													)}
-												</>
-											)}
-										</p>
-										<button
-											type="button"
-											className="btn btn-primary btn-sm"
-											onClick={handlePayAndGenerate}
-											disabled={paying}
+											) : null}
+											.{" "}
+										</>
+									)}
+									{effectiveQuoteView?.dryRun && (
+										<span
+											className="tag tag-warning"
+											style={{ marginRight: 6 }}
 										>
-											{payStep === "refreshing"
-												? "Checking price…"
-												: payStep === "approving"
-													? "Approve USDC in your wallet…"
-													: payStep === "depositing"
-														? "Depositing into Gateway…"
-														: payStep === "signing"
-															? "Sign the payment in your wallet…"
-															: payStep === "starting"
-																? "Starting generation…"
-																: payStep === "confirm"
-																	? `Tap to approve the ${fmtUsd(effectiveQuoteView?.price) ?? ""} payment →`
-																	: `Pay ${fmtUsd(effectiveQuoteView?.price) ?? ""} & generate →`}
-										</button>
-										{(gatewayBalance == null ||
-											(requiredAmountRaw != null && gatewayBalance < requiredAmountRaw)) && (
-											<details style={{ marginTop: 6 }}>
-												<summary className="caption" style={{ cursor: "pointer" }}>
-													First payment? A one-time deposit of {depositAmount || "20.00"}{" "}
-													USDC is included automatically (covers ~10 generations — edit)
-												</summary>
-												<input
-													type="text"
-													value={depositAmount}
-													onChange={(e) => setDepositAmount(e.target.value)}
-													aria-label="Deposit amount (USDC)"
-													className="chat-input"
-													style={{ width: 110, marginTop: 6 }}
-													disabled={paying}
-												/>
-											</details>
-										)}
-										{depositError && (
-											<p
+											test mode — server accepts payments unverified
+										</span>
+									)}
+									{paymentRequirements?.error ? (
+										<p className="caption mb-0" style={{ marginTop: 6 }}>
+											{paymentRequirements.error === "no_gateway_option"
+												? "This backend didn't offer a supported payment method (Circle Gateway) for this request — contact the team."
+												: "Could not read the payment requirements from the server response. Try again."}
+										</p>
+									) : !walletAddr ? (
+										<p className="caption mb-0" style={{ marginTop: 6 }}>
+											Connect your wallet to pay.{" "}
+											<button
+												type="button"
+												onClick={() =>
+													window.dispatchEvent(new Event("open-wallet-modal"))
+												}
 												className="caption"
-												style={{ color: "var(--negative, #ef4444)", marginTop: 4 }}
+												style={{
+													background: "none",
+													border: "none",
+													cursor: "pointer",
+													color: "var(--accent)",
+													textDecoration: "underline",
+													padding: 0,
+												}}
 											>
-												{depositError}
+												Connect wallet →
+											</button>
+										</p>
+									) : payerMismatch ? (
+										<p className="caption mb-0" style={{ marginTop: 6 }}>
+											Payments must be signed by your linked wallet (
+											{shortAddr(payerMismatch.linked)}) — switch your connected
+											wallet ({shortAddr(payerMismatch.active)}) to that one, or
+											link the connected one below.
+										</p>
+									) : !walletSupportsPayment() ? (
+										<div style={{ marginTop: 6 }}>
+											<p className="caption mb-1">
+												Connect the wallet you linked to pay — MetaMask,
+												Coinbase, Brave, Phantom, or your Circle passkey wallet.
 											</p>
-										)}
-									</div>
-								)}
-								{paymentMessage && (
-									<p className="caption mb-0" style={{ marginTop: 6 }}>
-										{paymentMessage}
-									</p>
-								)}
-							</div>
-						) : startError ? (
-							<div className="info-box warning" style={{ flex: 1 }}>
-								{startError}
-							</div>
-						) : noSettlementNotice ? (
-							<div className="info-box" style={{ flex: 1 }}>
-								<span className="tag tag-warning" style={{ marginRight: 6 }}>
-									test mode
-								</span>
-								Accepted without settlement (server test mode) — no funds moved.
-							</div>
-						) : receipt ? (
-							<div className="info-box" style={{ flex: 1 }}>
-								<span className="tag tag-positive" style={{ marginRight: 6 }}>
-									paid
-								</span>
-								Settlement receipt: <code>{receipt}</code>
-							</div>
-						) : (
-							<div />
-						)}
+											<button
+												type="button"
+												className="btn btn-outline btn-sm"
+												onClick={() =>
+													window.dispatchEvent(new Event("open-wallet-modal"))
+												}
+											>
+												Connect wallet →
+											</button>
+										</div>
+									) : (
+										<div style={{ marginTop: 6 }}>
+											<p className="caption mb-1">
+												{paymentWalletKind() === "circle" ? (
+													// Passkey wallets pay through a device payment key
+													// (see ../payment-session.js): Circle's nanopayments
+													// rail verifies EOA signatures only, so the passkey
+													// account funds a local key once and that key signs
+													// each payment silently. Copy states the custody
+													// bound plainly — the key lives in this browser and
+													// only ever controls its own deposited balance.
+													<>
+														Payments run from a device payment key your passkey
+														wallet funds — one passkey approval to set it up,
+														then each generation settles with no prompts. The
+														key stays in this browser and only controls its own
+														deposited balance.
+														{gatewayBalance != null && (
+															<>
+																{" "}
+																Payment balance: $
+																{(Number(gatewayBalance) / 1e6).toFixed(2)}.
+															</>
+														)}
+													</>
+												) : (
+													<>
+														Payments run from your Circle Gateway balance — a
+														one-time deposit covers many generations; each one
+														is then a single wallet signature.
+														{gatewayBalance != null && (
+															<>
+																{" "}
+																Your balance: $
+																{(Number(gatewayBalance) / 1e6).toFixed(2)}.
+															</>
+														)}
+													</>
+												)}
+											</p>
+											<button
+												type="button"
+												className="btn btn-primary btn-sm"
+												onClick={handlePayAndGenerate}
+												disabled={paying}
+											>
+												{payStep === "refreshing"
+													? "Checking price…"
+													: payStep === "approving"
+														? "Approve USDC in your wallet…"
+														: payStep === "depositing"
+															? "Depositing into Gateway…"
+															: payStep === "signing"
+																? "Sign the payment in your wallet…"
+																: payStep === "starting"
+																	? "Starting generation…"
+																	: payStep === "confirm"
+																		? `Tap to approve the ${fmtUsd(effectiveQuoteView?.price) ?? ""} payment →`
+																		: `Pay ${fmtUsd(effectiveQuoteView?.price) ?? ""} & generate →`}
+											</button>
+											{(gatewayBalance == null ||
+												(requiredAmountRaw != null &&
+													gatewayBalance < requiredAmountRaw)) && (
+												<details style={{ marginTop: 6 }}>
+													<summary
+														className="caption"
+														style={{ cursor: "pointer" }}
+													>
+														First payment? A one-time deposit of{" "}
+														{depositAmount || "20.00"} USDC is included
+														automatically (covers ~10 generations — edit)
+													</summary>
+													<input
+														type="text"
+														value={depositAmount}
+														onChange={(e) => setDepositAmount(e.target.value)}
+														aria-label="Deposit amount (USDC)"
+														className="chat-input"
+														style={{ width: 110, marginTop: 6 }}
+														disabled={paying}
+													/>
+												</details>
+											)}
+											{depositError && (
+												<p
+													className="caption"
+													style={{
+														color: "var(--negative, #ef4444)",
+														marginTop: 4,
+													}}
+												>
+													{depositError}
+												</p>
+											)}
+										</div>
+									)}
+									{paymentMessage && (
+										<p className="caption mb-0" style={{ marginTop: 6 }}>
+											{paymentMessage}
+										</p>
+									)}
+								</div>
+							) : startError ? (
+								<div className="info-box warning" style={{ flex: 1 }}>
+									{startError}
+								</div>
+							) : noSettlementNotice ? (
+								<div className="info-box" style={{ flex: 1 }}>
+									<span className="tag tag-warning" style={{ marginRight: 6 }}>
+										test mode
+									</span>
+									Accepted without settlement (server test mode) — no funds
+									moved.
+								</div>
+							) : receipt ? (
+								<div className="info-box" style={{ flex: 1 }}>
+									<span className="tag tag-positive" style={{ marginRight: 6 }}>
+										paid
+									</span>
+									Settlement receipt: <code>{receipt}</code>
+								</div>
+							) : (
+								<div />
+							)}
 						</div>
 						{!payPanelReady && (
 							<button
