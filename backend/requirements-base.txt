@@ -57,7 +57,7 @@ alembic>=1.19.1
 # environment.yml). Do not "fix a slow build" by putting -binary back.
 psycopg2>=2.9.12
 redis>=8.1.0
-pydantic>=2.13.4
+pydantic>=2.13.5
 # Declared because backend code IMPORTS IT DIRECTLY — `PydanticCustomError` in
 # `api/rigor_verify_routes.py`, which is how that route's refusals carry a stable
 # machine-readable `type` (#1803). pydantic exposes no public re-export of it
