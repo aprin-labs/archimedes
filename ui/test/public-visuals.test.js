@@ -304,6 +304,43 @@ test("landing consolidates proof into connected instrument sections", () => {
 	);
 });
 
+test("research controls pair an introduction with readable responsibility rows", () => {
+	const boundary = landing.slice(
+		landing.indexOf("function AuthorityBoundary()"),
+	);
+	assert.match(boundary, /className="public-shell authority-boundary__layout"/);
+	assert.match(boundary, /className="authority-boundary__intro"/);
+	assert.match(boundary, /You choose what to test\./);
+	assert.match(
+		boundary,
+		/<h3 className="authority-boundary__owner">Archimedes<\/h3>/,
+	);
+	assert.match(boundary, /<h3 className="authority-boundary__owner">You<\/h3>/);
+	assert.match(boundary, /className="authority-boundary__content"/);
+	assert.equal((boundary.match(/<ul role="list">/g) ?? []).length, 2);
+	assert.match(
+		boundary,
+		/className="authority-boundary__link" href="\/security"/,
+	);
+	assert.doesNotMatch(boundary, /authority-boundary__line|aria-hidden|↗/);
+});
+
+test("research controls have one layout without decorative rails or bullet icons", () => {
+	assert.equal((css.match(/\.authority-boundary\s*\{/g) ?? []).length, 1);
+	assert.match(
+		css,
+		/\.authority-boundary__layout\s*\{[^}]*grid-template-columns:\s*minmax\(0, 0\.8fr\) minmax\(0, 1\.2fr\);/s,
+	);
+	assert.match(
+		css,
+		/\.authority-boundary__side\s*\{[^}]*grid-template-columns:\s*minmax\(100px, 0\.35fr\) minmax\(0, 1fr\);/s,
+	);
+	assert.doesNotMatch(
+		css,
+		/\.authority-boundary__(?:line|footnote)|\.authority-boundary__side li::before/,
+	);
+});
+
 test("landing uses an uncropped editor capture with truthful preview labeling", () => {
 	const image = readFileSync(
 		new URL("../public/product-workspace.png", import.meta.url),
@@ -475,7 +512,7 @@ test("ownership verdict follows the active public theme", () => {
 	assert.match(tokens, /--public-theatre-contrast-muted:\s*var\(--muted\);/);
 	assert.match(
 		css,
-		/\.authority-boundary__verdict span\s*\{[^}]*color:\s*var\(--public-theatre-contrast-muted\);/s,
+		/\.authority-boundary__verdict p\s*\{[^}]*color:\s*var\(--public-theatre-contrast-muted\);/s,
 	);
 });
 
@@ -647,7 +684,7 @@ test("landing does not claim a failed gate is unoverridable, or that a generatio
 	);
 	assert.match(
 		landing,
-		/paper-trade a failing candidate — simulated, no capital/,
+		/paper-trade a failing candidate \(simulated, no capital\)/,
 	);
 
 	// Anti-vacuity: the exact pre-scrub literals must trip the predicates above,

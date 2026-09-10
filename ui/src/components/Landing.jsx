@@ -48,7 +48,7 @@ const RIGOR_CRITERIA = [
 		method:
 			"Deflates the Sharpe by how many candidates the search actually tried, and corrects for returns that are skewed or fat-tailed rather than normal.",
 		limit:
-			"The Verified bar is deflated-Sharpe evidence at the 95% one-sided level — real, not proof.",
+			"The Verified bar is deflated-Sharpe evidence at the 95% one-sided level, not proof.",
 	},
 	{
 		code: "PBO",
@@ -57,7 +57,7 @@ const RIGOR_CRITERIA = [
 		method:
 			"Re-cuts the history into many equal time partitions and counts how often the in-sample winner lands below the out-of-sample median.",
 		limit:
-			"A property of the whole selection set, not one strategy — read it as a library signal.",
+			"A property of the whole selection set, not one strategy. Read it as a library signal.",
 	},
 	{
 		code: "OOS",
@@ -73,9 +73,9 @@ const RIGOR_CRITERIA = [
 		name: "Look-ahead audit",
 		question: "Did information from the future reach a decision?",
 		method:
-			"Generated strategies are checked structurally, against a compiler proven to read only the current bar and earlier — not on the generator's own say-so.",
+			"Generated strategies are checked structurally, against a compiler proven to read only the current bar and earlier, not on the generator's own say-so.",
 		limit:
-			"The proof covers the strategy's decision path in our closed language — it cannot audit the market data itself for after-the-fact revisions.",
+			"The proof covers the strategy's decision path in our closed language. It cannot audit the market data itself for after-the-fact revisions.",
 	},
 ];
 
@@ -101,7 +101,7 @@ const BOARD_FDR = {
 	method:
 		"Benjamini–Hochberg corrects every ranked strategy's “true Sharpe is positive” claim together, at α = 0.05, recomputed over the exact cohort each response serves.",
 	limit:
-		"Advisory — it never flips a gate verdict. The count that clears it is reported as measured, zero included.",
+		"Advisory: it never flips a gate verdict. The count that clears it is reported as measured, zero included.",
 };
 
 // The gate's four states, verbatim from services/live_rigor_gate.py (PASS /
@@ -150,7 +150,7 @@ const WORKFLOW = [
 		// part that is true: nothing is thrown away, and a fail is kept as
 		// durably as a pass.
 		title: "Inspect",
-		body: "Nothing is discarded. The brief, the papers it cited, the candidates that lost, and the measured verdict are all kept with the strategy — a fail as durably as a pass.",
+		body: "Nothing is discarded. The brief, the papers it cited, the candidates that lost, and the measured verdict are all kept with the strategy. A fail is kept as durably as a pass.",
 	},
 ];
 
@@ -171,7 +171,7 @@ const FAQS = [
 		// running a failing idea is allowed, relabelling one is not.
 		question: "What happens when a strategy fails?",
 		answer:
-			"The failure stays visible with the measured reason, and a failed or pending strategy never receives the verified badge. The verdict is computed server-side on persisted returns, so it cannot be relabelled from the browser. You can still paper-trade a failing candidate — simulated, no capital — and its verdict does not change because you did.",
+			"The failure stays visible with the measured reason, and a failed or pending strategy never receives the verified badge. The verdict is computed server-side on persisted returns, so it cannot be relabelled from the browser. You can still paper-trade a failing candidate (simulated, no capital), and its verdict does not change because you did.",
 	},
 	{
 		question: "Do I need a wallet to explore Archimedes?",
@@ -186,7 +186,7 @@ const FAQS = [
 	{
 		question: "Is this running with real money?",
 		answer:
-			"No mainnet money. Archimedes runs on Arc public testnet. Generation settles real testnet USDC — read GET /api/generate/quote (prod answers dry_run: false). Faucet USDC is not mainnet cash. It is a research prototype, not a production investment product.",
+			"No mainnet money. Archimedes runs on Arc public testnet. Generation settles real testnet USDC. Read GET /api/generate/quote (prod answers dry_run: false). Faucet USDC is not mainnet cash. It is a research prototype, not a production investment product.",
 	},
 ];
 
@@ -290,8 +290,8 @@ export default function Landing() {
 							<p>
 								Four independent checks run outside the generator, on persisted
 								returns, so the thing being graded cannot influence its own
-								grade. Each one answers a different way a backtest can fool you
-								— and each one states, in the same card, what it does not prove.
+								grade. Each one checks a different way a backtest can fool you
+								and states, in the same card, what it does not prove.
 							</p>
 							<strong>Any failed check keeps the candidate unverified.</strong>
 						</div>
@@ -601,8 +601,7 @@ function RigorMatrix() {
 // to describe an owner/agent authority split over an on-chain execution path
 // that is not live — there are zero live user deployments of it. Every line
 // below describes a path that runs today: generation, the external rigor
-// gate, paper trading, and on-chain trace anchoring. Structure and class
-// names are unchanged so the section keeps its existing layout.
+// gate, paper trading, and on-chain trace anchoring.
 function AuthorityBoundary() {
 	return (
 		<section
@@ -610,20 +609,22 @@ function AuthorityBoundary() {
 			className="public-section authority-boundary"
 			aria-labelledby="authority-title"
 		>
-			<div className="public-shell">
-				<div className="public-section__intro">
-					<h2 id="authority-title">
-						The gate decides admission. You decide what runs.
-					</h2>
+			<div className="public-shell authority-boundary__layout">
+				<div className="authority-boundary__intro">
+					<p className="public-overline">Research controls</p>
+					<h2 id="authority-title">You choose what to test.</h2>
 					<p>
-						Account identity, wallet proof, and the research pipeline stay
-						separate. Nothing earns a verdict by asserting one.
+						Archimedes checks the evidence. You set the brief and decide whether
+						to keep or paper-trade a strategy. The verdict stays independent.
 					</p>
+					<a className="authority-boundary__link" href="/security">
+						Read security posture
+					</a>
 				</div>
-				<div className="authority-boundary__grid">
+				<div className="authority-boundary__content">
 					<div className="authority-boundary__side authority-boundary__side--agent">
-						<p className="authority-boundary__owner">Archimedes may</p>
-						<ul>
+						<h3 className="authority-boundary__owner">Archimedes</h3>
+						<ul role="list">
 							<li>Read market conditions and cited research</li>
 							<li>Propose, rank, and reject candidate strategies</li>
 							{/* The retired third bullet claimed a chain commitment ahead of
@@ -635,44 +636,36 @@ function AuthorityBoundary() {
 							<li>Grade a candidate outside the generator that produced it</li>
 						</ul>
 					</div>
-					<div className="authority-boundary__line" aria-hidden="true">
-						<span>admission boundary</span>
-					</div>
 					<div className="authority-boundary__side authority-boundary__side--user">
-						<p className="authority-boundary__owner">Only you may</p>
-						<ul>
+						<h3 className="authority-boundary__owner">You</h3>
+						<ul role="list">
 							<li>Set the brief, the assets, and the risk appetite</li>
 							<li>Keep or discard a strategy after reading its passport</li>
 							<li>Link a wallet, when you want proof of on-chain control</li>
 						</ul>
 					</div>
+					{/* The retired invariant claimed a failed gate could not be
+					    overridden. That is false, and the owner has overridden one
+					    himself — the exact retracted wording is pinned in
+					    ui/test/public-visuals.test.js. POST /api/paper/deployments
+					    (api/paper_routes.py:85-125) checks ownership of the source
+					    strategy and that its stored spec still validates — and nothing
+					    else. There is no rigor precondition on the act-on step a visitor
+					    can actually reach, and StrategyPassport.jsx:381-382 says so in
+					    the code. The invariant that IS true is narrower and better: the
+					    verdict is not yours to move. Running a failing idea in
+					    simulation is allowed; relabelling it is not, because `passes` is
+					    computed server-side on persisted returns and only "pass" is
+					    truthy (services/live_rigor_gate.py). */}
+					<div className="authority-boundary__verdict" role="note">
+						<strong>A failing strategy stays a failing strategy.</strong>
+						<p>
+							Paper-trading one is allowed. Relabelling one is not: the verdict
+							is measured server-side, and the measured reason stays on the
+							record.
+						</p>
+					</div>
 				</div>
-				{/* The retired invariant claimed a failed gate could not be
-				    overridden. That is false, and the owner has overridden one
-				    himself — the exact retracted wording is pinned in
-				    ui/test/public-visuals.test.js. POST /api/paper/deployments
-				    (api/paper_routes.py:85-125) checks ownership of the source
-				    strategy and that its stored spec still validates — and nothing
-				    else. There is no rigor precondition on the act-on step a visitor
-				    can actually reach, and StrategyPassport.jsx:381-382 says so in
-				    the code. The invariant that IS true is narrower and better: the
-				    verdict is not yours to move. Running a failing idea in
-				    simulation is allowed; relabelling it is not, because `passes` is
-				    computed server-side on persisted returns and only "pass" is
-				    truthy (services/live_rigor_gate.py). */}
-				<div className="authority-boundary__verdict" role="note">
-					<span>Admission invariant</span>
-					<strong>A failing strategy stays a failing strategy.</strong>
-					<span>
-						Paper-trading one is allowed. Relabelling one is not — the verdict
-						is measured server-side, and the measured reason stays on the
-						record.
-					</span>
-				</div>
-				<a className="authority-boundary__link" href="/security">
-					Read security posture
-					<span aria-hidden="true">↗</span>
-				</a>
 			</div>
 		</section>
 	);

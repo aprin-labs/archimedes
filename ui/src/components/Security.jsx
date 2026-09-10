@@ -15,8 +15,8 @@ export default function Security() {
 							Archimedes separates account identity, wallet proof, and the
 							service credentials its own agents run under. Generation is a paid
 							call on this testnet, and that boundary is described here too.
-							These controls describe current code—not a promise that failure is
-							impossible.
+							These controls describe current code, not a promise that failure
+							is impossible.
 						</p>
 					</div>
 					<ul className="security-status" aria-label="Current product status">
@@ -34,7 +34,7 @@ export default function Security() {
 						</li>
 						<li>
 							<span>Paid surface</span>
-							<strong>Generation — quoted live</strong>
+							<strong>Generation (quoted live)</strong>
 						</li>
 					</ul>
 				</div>
@@ -126,7 +126,7 @@ export default function Security() {
 								<h3>Private records follow the canonical user ID.</h3>
 								<p>
 									Profile, strategy, job, and linked-wallet reads resolve
-									through the authenticated Better Auth user—not a
+									through the authenticated Better Auth user, not a
 									client-supplied address.
 								</p>
 							</div>
@@ -149,9 +149,9 @@ export default function Security() {
 								</h3>
 								<p>
 									Starting a generation without a signed payment returns HTTP
-									402 carrying the full x402 requirements, and the same terms —
-									price, asset, chain, recipient, and whether the rail is live
-									or dry — are published anonymously at GET /api/generate/quote,
+									402 carrying the full x402 requirements, and the same terms
+									(price, asset, chain, recipient, and whether the rail is live
+									or dry) are published anonymously at GET /api/generate/quote,
 									so they are readable before anything is signed. The payer
 									inside the signed authorization must be the wallet linked to
 									the account; a mismatch is refused before any settlement
@@ -169,7 +169,7 @@ export default function Security() {
 									bundles plus one hashed inline bootstrap, HSTS, framing denied
 									outright, and a permissions policy that turns off geolocation,
 									microphone, and camera. Two per-IP request-rate zones run at
-									the edge — the tighter one on the credential surface — with
+									the edge (the tighter one on the credential surface), with
 									tighter per-route limits on expensive endpoints behind them.
 								</p>
 							</div>
@@ -198,7 +198,7 @@ export default function Security() {
 								<p>
 									A published trace can be re-hashed and compared against its
 									on-chain anchor. That proves the record was not rewritten
-									afterwards—it does not prove the reasoning was good. Two
+									afterwards. It does not prove the reasoning was good. Two
 									limits the sentence would otherwise hide: a generation run
 									computes the same kind of hash but will only be anchored in a
 									later version, and a decision that produced no transaction has
@@ -237,8 +237,8 @@ export default function Security() {
 						</li>
 						<li>
 							<strong>Live charge:</strong> the generation paywall is on and not
-							in dry-run, so a signed payment settles testnet USDC for real —
-							anyone can confirm that anonymously at GET /api/generate/quote. A
+							in dry-run, so a signed payment settles testnet USDC for real.
+							Anyone can confirm that anonymously at GET /api/generate/quote. A
 							settled fee lands in a platform-operated wallet Archimedes signs
 							for through its payment provider. It is a fee, not a balance held
 							for you, and there is nothing there to withdraw.

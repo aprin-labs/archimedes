@@ -31,7 +31,8 @@ export default function ConsentBanner() {
 	const rejectOptional = () => decide({ functional: false, analytics: false });
 
 	const optionalCount = STORAGE_INVENTORY.filter(
-		(entry) => entry.category === "functional" || entry.category === "analytics",
+		(entry) =>
+			entry.category === "functional" || entry.category === "analytics",
 	).length;
 	const necessaryCount = STORAGE_INVENTORY.filter(
 		(entry) => entry.category === "necessary",
@@ -47,11 +48,11 @@ export default function ConsentBanner() {
 				<div className="consent-banner__copy">
 					<h2 className="consent-banner__title">What this site stores</h2>
 					<p>
-						{necessaryCount} cookies and keys are strictly necessary — sign-in,
-						wallet proof, and the checks that keep them correct. {optionalCount}{" "}
-						more are optional: preferences, progress markers, and one anonymous
-						drop-off counter. Until you choose, the optional ones are{" "}
-						<strong>off</strong> and nothing optional is written.
+						{necessaryCount} cookies and keys are strictly necessary for
+						sign-in, wallet proof, and the checks that keep them correct.{" "}
+						{optionalCount} more are optional: preferences, progress markers,
+						and one anonymous drop-off counter. Until you choose, the optional
+						ones are <strong>off</strong> and nothing optional is written.
 					</p>
 					<p className="consent-banner__note">
 						No third-party trackers, no advertising, no consent SDK. Every key
@@ -67,7 +68,11 @@ export default function ConsentBanner() {
 					>
 						Accept all
 					</button>
-					<button type="button" className="consent-btn" onClick={rejectOptional}>
+					<button
+						type="button"
+						className="consent-btn"
+						onClick={rejectOptional}
+					>
 						Reject optional
 					</button>
 					<button

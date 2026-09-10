@@ -8,7 +8,7 @@ export default function ThemeSwitcher() {
 	const label = `Switch to ${nextTheme} theme`;
 	let storageMessage = saved
 		? "Saved on this device."
-		: "Not saved — this visit only. Functional storage must be allowed and available to remember it.";
+		: "Not saved. This visit only. Functional storage must be allowed and available to remember it.";
 	if (choice === "system")
 		storageMessage =
 			"Following your device appearance until you choose a theme.";

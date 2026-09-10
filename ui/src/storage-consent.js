@@ -64,7 +64,7 @@ export const CATEGORY_LABELS = {
 
 export const CATEGORY_SUMMARIES = {
 	[NECESSARY]:
-		"Sign-in, wallet proof, and the markers those flows need to stay correct. These cannot be switched off — without them you cannot sign in or sign a transaction.",
+		"Sign-in, wallet proof, and the markers those flows need to stay correct. These cannot be switched off: without them you cannot sign in or sign a transaction.",
 	[FUNCTIONAL]:
 		"Preferences and progress markers. Switching these off costs you nothing but convenience; each row below says exactly what happens instead.",
 	[ANALYTICS]:
@@ -94,7 +94,7 @@ export const STORAGE_INVENTORY = [
 			"Better Auth account session. Issued by the Node auth service on sign-in; 7-day expiry (auth/auth.js session.expiresIn).",
 		reveals:
 			"An opaque session id. The server maps it to your account row; the page's own JavaScript cannot read it (HttpOnly), and it carries no email or wallet in the value itself.",
-		onReject: "Strictly necessary — rejecting it would be signing out.",
+		onReject: "Strictly necessary: rejecting it would be signing out.",
 	},
 	{
 		name: "better-auth.state",
@@ -106,7 +106,7 @@ export const STORAGE_INVENTORY = [
 		reveals:
 			"A random handshake token for one OAuth attempt. Nothing about you.",
 		onReject:
-			"Strictly necessary — without it a social sign-in cannot be verified as yours.",
+			"Strictly necessary: without it a social sign-in cannot be verified as yours.",
 	},
 	{
 		name: "archimedes_session",
@@ -118,7 +118,7 @@ export const STORAGE_INVENTORY = [
 		reveals:
 			"Your wallet address, signed by the server. It is the proof that this browser controls that address.",
 		onReject:
-			"Strictly necessary — rejecting it would break every wallet-gated action.",
+			"Strictly necessary: rejecting it would break every wallet-gated action.",
 	},
 	{
 		name: "archimedes_vid",
@@ -128,7 +128,7 @@ export const STORAGE_INVENTORY = [
 		purpose:
 			"Anonymous funnel id: 16 random bytes, 180-day max-age, HttpOnly. Exists so drop-off between landing, generating, connecting a wallet and deploying can be counted per browser instead of per request.",
 		reveals:
-			"A random opaque token — no name, email or address in the value. Honest caveat: it stays anonymous only until you prove a wallet. At SIWE verify the server writes an identity_events row carrying both this id and the wallet (auth_siwe.verify_signature), which links the two from that moment on.",
+			"A random opaque token with no name, email or address in the value. Honest caveat: it stays anonymous only until you prove a wallet. At SIWE verify the server writes an identity_events row carrying both this id and the wallet (auth_siwe.verify_signature), which links the two from that moment on.",
 		onReject:
 			"The cookie itself is set by the server on the first response and this page cannot delete it. What rejecting DOES stop is the browser-side reporting: the client stops sending funnel events (App.jsx) and stops writing the archimedes_landed marker.",
 	},
@@ -143,7 +143,7 @@ export const STORAGE_INVENTORY = [
 			"Which wallet provider you connected and at what address, so a reload reconnects the same wallet rather than dropping you to the picker mid-flow.",
 		reveals: "Your wallet address and the provider id you chose.",
 		onReject:
-			"Strictly necessary — reconnect is part of the signing path (#1647 anti-goal 1).",
+			"Strictly necessary: reconnect is part of the signing path (#1647 anti-goal 1).",
 	},
 	{
 		name: "archimedes_wallet_names",
@@ -175,11 +175,11 @@ export const STORAGE_INVENTORY = [
 		category: NECESSARY,
 		source: "ui/src/payment-session.js",
 		purpose:
-			"The device payment key for a Circle passkey wallet — a locally generated secp256k1 key that signs $2 burn authorizations without a WebAuthn prompt per payment.",
+			"The device payment key for a Circle passkey wallet: a locally generated secp256k1 key that signs $2 burn authorizations without a WebAuthn prompt per payment.",
 		reveals:
-			"A private key, in the clear, bounded to whatever you deposited to it. This is a deliberate, disclosed v1 trade-off documented at the top of payment-session.js — not a preference.",
+			"A private key, in the clear, bounded to whatever you deposited to it. This is a deliberate, disclosed v1 trade-off documented at the top of payment-session.js. It is not a preference.",
 		onReject:
-			"Strictly necessary — it is the payment rail's signing credential (#1647 anti-goal 1).",
+			"Strictly necessary: it is the payment rail's signing credential (#1647 anti-goal 1).",
 	},
 	{
 		name: "archimedes.onboarding.v1",
@@ -200,7 +200,7 @@ export const STORAGE_INVENTORY = [
 		reveals:
 			"A credential id and public-key material for your passkey wallet. The passkey's private half never leaves the device enclave.",
 		onReject:
-			"Strictly necessary — without it the passkey wallet cannot be reconnected or used to sign.",
+			"Strictly necessary: without it the passkey wallet cannot be reconnected or used to sign.",
 	},
 	{
 		name: "archimedes_deposit_",
@@ -237,9 +237,9 @@ export const STORAGE_INVENTORY = [
 		purpose:
 			"Your personal deploy-strictness level, 1–5. It never moves the global Archimedes Verified bar, which is always evaluated at the strictest level server-side.",
 		reveals:
-			"A single digit, 1 to 5 — how strict you asked your own deploy gate to be. Nothing about what you generated or deployed.",
+			"A single digit, 1 to 5: how strict you asked your own deploy gate to be. Nothing about what you generated or deployed.",
 		onReject:
-			"Not stored. Every load starts at level 1 — the strictest setting, which is the fail-safe direction.",
+			"Not stored. Every load starts at level 1, the strictest setting, which is the fail-safe direction.",
 	},
 	{
 		name: CONSENT_STORAGE_KEY,
@@ -249,7 +249,7 @@ export const STORAGE_INVENTORY = [
 		purpose:
 			"The choice you make in the consent banner, plus the version of the disclosure you were shown.",
 		reveals:
-			"Two booleans and a timestamp. Written whatever you choose — including when you reject everything optional, because otherwise the banner could not remember not to ask again.",
+			"Two booleans and a timestamp. Written whatever you choose, including when you reject everything optional, because otherwise the banner could not remember not to ask again.",
 		onReject:
 			"Exempt by necessity: consent-recording has to precede consent enforcement.",
 	},
@@ -264,7 +264,7 @@ export const STORAGE_INVENTORY = [
 			"A per-tab marker so the anonymous 'landed' funnel event is reported once per session instead of on every route change.",
 		reveals: "That this tab already reported one landing. The value is '1'.",
 		onReject:
-			"Not stored — and the landing event is not reported at all. This is the write the analytics toggle actually controls.",
+			"Not stored, and the landing event is not reported at all. This is the write the analytics toggle actually controls.",
 	},
 	{
 		name: "archimedes:pending-link",
@@ -276,7 +276,7 @@ export const STORAGE_INVENTORY = [
 		reveals:
 			"A provider name ('google' or 'github') for the length of one redirect.",
 		onReject:
-			"Strictly necessary — it is an anti-replay check on the account-linking flow.",
+			"Strictly necessary: it is an anti-replay check on the account-linking flow.",
 	},
 	{
 		name: "archimedes_circle_credential_tab_seen_id",
@@ -287,7 +287,7 @@ export const STORAGE_INVENTORY = [
 			"The passkey credential id this tab last used. localStorage is shared across tabs, so without a tab-scoped stamp this tab would silently rehydrate as a wallet another tab swapped in.",
 		reveals: "A credential id, for this tab, until it closes.",
 		onReject:
-			"Strictly necessary — it is the guard against signing as the wrong wallet.",
+			"Strictly necessary: it is the guard against signing as the wrong wallet.",
 	},
 
 	// ── Legacy: current code only removes these ─────────────────────────
