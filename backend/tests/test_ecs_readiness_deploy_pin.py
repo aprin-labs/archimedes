@@ -157,10 +157,13 @@ class TestTheRewritePointsTheContainerCheckAtReadiness:
         assert "/health/ready" in command[1]
         assert command != PRE_P3_COMMAND
 
-    def test_the_timing_of_the_live_revision_is_preserved_not_reset(self):
-        """What the check ASKS is this file's decision; how often and how
-        patiently it asks belongs to the registered revision. A deploy that
-        meant to change a URL must not silently re-time a running fleet.
+    def test_the_timing_of_the_live_revision_is_preserved_except_start_period(self):
+        """What the check ASKS is this file's decision; interval / timeout /
+        retries belong to the registered revision. startPeriod is also this
+        file's decision: 90s so the #1713 warmup budget fits inside ECS's
+        ignored-failure window. A deploy that meant to change a URL must not
+        silently re-time interval/timeout/retries, but it MUST overwrite a
+        cloned startPeriod 30 (or any other value) to 90.
         """
         out = _rewrite(
             _last_good_task_def(
@@ -174,7 +177,8 @@ class TestTheRewritePointsTheContainerCheckAtReadiness:
             )
         )
         check = _container(out, "backend")["healthCheck"]
-        assert (check["interval"], check["timeout"], check["retries"], check["startPeriod"]) == (45, 9, 5, 120)
+        assert (check["interval"], check["timeout"], check["retries"]) == (45, 9, 5)
+        assert check["startPeriod"] == 90
         assert "/health/ready" in check["command"][1]
 
     def test_a_clone_with_no_health_check_at_all_gets_the_whole_block(self):
@@ -192,10 +196,12 @@ class TestTheRewritePointsTheContainerCheckAtReadiness:
         assert check["interval"] == 30
         assert check["timeout"] == 5
         assert check["retries"] == 3
-        assert check["startPeriod"] == 30
+        assert check["startPeriod"] == 90
 
-    def test_rewriting_an_already_readied_clone_changes_nothing(self):
-        """Every deploy after the first. Idempotence, not luck."""
+    def test_rewriting_an_already_readied_clone_still_pins_start_period(self):
+        """Every deploy after the first. Command/interval/timeout/retries are
+        idempotent; a leftover startPeriod 30 is overwritten to 90.
+        """
         mod = _load_rewrite()
         already = {
             "command": list(mod.READINESS_HEALTH_CHECK_COMMAND),
@@ -205,7 +211,12 @@ class TestTheRewritePointsTheContainerCheckAtReadiness:
             "startPeriod": 30,
         }
         out = _rewrite(_last_good_task_def(health_check=dict(already)))
-        assert _container(out, "backend")["healthCheck"] == already
+        check = _container(out, "backend")["healthCheck"]
+        assert check["command"] == already["command"]
+        assert check["interval"] == 30
+        assert check["timeout"] == 5
+        assert check["retries"] == 3
+        assert check["startPeriod"] == 90
 
     def test_unknown_health_check_fields_survive(self):
         """A field ECS grows later, or one an operator set on the live revision,
@@ -258,7 +269,11 @@ class TestTheRewritePinsTheThreshold:
     def test_nginx_and_auth_are_not_given_the_threshold(self):
         out = _rewrite(_last_good_task_def())
         assert _container(out, "nginx")["environment"] == [{"name": "FOO", "value": "1"}]
-        assert "environment" not in _container(out, "auth")
+        # The auth container gains exactly its own pin (#1804,
+        # test_ecs_auth_ses_config_set_pin.py) and nothing of the backend's.
+        auth_names = [e["name"] for e in _container(out, "auth").get("environment") or []]
+        assert "HEALTH_STALE_UNREADY_S" not in auth_names
+        assert "PAPER_ADVANCE_ENABLED" not in auth_names
 
 
 class TestOwnershipStaysInsideContainerDefinitions:

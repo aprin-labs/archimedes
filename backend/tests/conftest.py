@@ -169,6 +169,22 @@ def _legacy_siwe_test_adapter(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _clear_cohort_returns_cache():
+    """Reset the process-level cohort-returns memo (#1713).
+
+    Same hazard as ``_clear_rigor_cache``: several files reuse the SAME
+    strategy ids against DIFFERENT per-test SQLite databases. A cached
+    series from test A served to test B would make a live-read assertion
+    pass against yesterday's rows. Cleared before and after.
+    """
+    from archimedes.services.backtest_repository import clear_cohort_returns_cache
+
+    clear_cohort_returns_cache()
+    yield
+    clear_cohort_returns_cache()
+
+
+@pytest.fixture(autouse=True)
 def _clear_rigor_cache():
     """Reset the process-level live-rigor-gate cache (services/rigor_cache.py)
     around every test.
