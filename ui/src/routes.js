@@ -3,6 +3,7 @@ import { ROADMAP_PAGES, ROADMAP_SURFACES_ENABLED } from './featureFlags.js'
 const PUBLIC_PATHS = {
   '/': 'landing',
   '/architecture': 'architecture',
+  '/security': 'security',
 }
 
 const AUTH_PATHS = {
@@ -30,19 +31,54 @@ const APP_PATHS = {
   '/app/subscriptions': 'subscriptions',
 }
 
-// Pages under /app an anonymous visitor may browse (#1194 revision d, Dan's
-// explicit product call): Explore, Leaderboard, Corpus and the strategy
-// detail page stay login-free; auth is required only to generate, pay, or
-// paper-deploy. DELIBERATELY a marker set, not a carve-out from APP_PATHS —
-// PAGE_PATHS and LEGACY_PATHS are both derived from APP_PATHS, so removing
-// entries there silently breaks pageToPath (corpus/leaderboard nav clicks
-// would fall through to '/app' and land on Explore). Keep the paths where
-// they are; mark them anonymous-OK instead. Must stay in lockstep with the
-// nginx carve-outs in nginx/nginx.conf (the server-side half of this gate).
-const ANON_APP_PAGES = new Set(['explore', 'leaderboard', 'corpus', 'strategy'])
+// Pages under /app an anonymous visitor may browse (#1753, the owner's
+// product call, narrowing #1194 revision d): Explore and Corpus
+// only. Library, the leaderboard and the strategy passport are gated — an
+// anonymous visitor who opens one is sent to /sign-in with `next=` carrying
+// the deep link (App.jsx's redirect effect for an in-app navigation, nginx's
+// @sign_in 302 for a cold load). #1194 rev d had 'leaderboard' and
+// 'strategy' in this set; both were removed here, deliberately.
+// DELIBERATELY a marker set, not a carve-out from APP_PATHS — PAGE_PATHS and
+// LEGACY_PATHS are both derived from APP_PATHS, so removing entries there
+// silently breaks pageToPath (corpus/leaderboard nav clicks would fall
+// through to '/app' and land on Explore). Keep the paths where they are;
+// mark them anonymous-OK instead. Must stay in lockstep with the nginx
+// carve-outs in nginx/nginx.conf (the server-side half of this gate) —
+// enforced by backend/tests/test_nginx_anonymous_carve_outs.py, which reads
+// both files and derives one side from the other.
+const ANON_APP_PAGES = new Set(['explore', 'corpus'])
 
 export function isAnonymousAppPage(page) {
   return ANON_APP_PAGES.has(page)
+}
+
+// Where the strategy passport's "Back to Library" control should resolve
+// (#1370). `library` is wallet-gated (not in ANON_APP_PAGES), so a visitor
+// with no session hitting `onNavigate('library')` unconditionally tripped
+// App.jsx's anonymous-page redirect and bounced them to /sign-in, signing
+// out a visitor who was never signed in.
+//
+// Since #1753 the passport itself is gated (`strategy` left ANON_APP_PAGES,
+// and nginx dropped its `^~ /app/strategy` carve-out), so the `user == null`
+// branch is no longer a reachable product state: App.jsx holds a non-anon
+// route on "Loading account…" until auth resolves and redirects to
+// /sign-in?next= if it resolves to nobody. It is kept as a FAIL-SAFE, not as
+// a described flow — a control must not be able to eject a sessionless
+// render, whoever produced it (a test harness, a future re-opening of the
+// carve-out, a partial hydration). It must therefore keep returning a page
+// isAnonymousAppPage() actually allows.
+export function passportBackPage(user) {
+  return user == null ? 'explore' : 'library'
+}
+
+// The back button's own label must track passportBackPage(user) — a control
+// that reads "Back to Library" while it actually lands on Explore is a
+// mislabeled affordance, the same defect class #1370 fixed for the routing
+// itself. Keep this as a pure sibling function (not folded into
+// passportBackPage's return shape) so callers that only need the page still
+// get a plain string.
+export function passportBackLabel(user) {
+  return user == null ? '← Back to Explore' : '← Back to Library'
 }
 
 // True when `user` may navigate to `page` — signed in, always; anonymous,
@@ -150,6 +186,7 @@ export function resolveRoute(pathname = '/', search = '', features = { quant: tr
 export function pageToPath(page, options = {}) {
   if (page === 'landing') return '/'
   if (page === 'architecture') return '/architecture'
+  if (page === 'security') return '/security'
   if (page === 'vault-detail' && options.vaultAddress) return `/app/portfolio/vaults/${options.vaultAddress}`
   if (page === 'strategy' && options.strategyId) return `/app/strategy/${encodeURIComponent(options.strategyId)}`
   if (page === 'market-strategy' && options.strategyId) return `/app/marketplace/strategy/${encodeURIComponent(options.strategyId)}`
@@ -188,7 +225,18 @@ export function postAuthPath(search = '') {
 // which is the conversion path (clicking it routes to sign-in). Everything
 // else — portfolio, learnings, marketplace, account and friends — reads the
 // signed-in user's own state and is noise on a logged-out screen.
-const ANON_NAV_IDS = new Set(['landing', 'explore', 'corpus', 'architecture', 'leaderboard', 'generate'])
+// 'leaderboard' was dropped (#1753): it left ANON_APP_PAGES with the same
+// owner call, and an anon nav entry for a page canNavigateTo() now refuses
+// is an affordance that only ejects the visitor. 'architecture'
+// was dropped (#1370 item 4): Architecture is no longer a shell NAV item (see
+// Layout.jsx), so this entry has been unreachable dead config the same way the
+// CRUMB_MAP 'architecture' key was before this PR removed that one too.
+// 'landing' was dropped the same way (#1641): the marketing-site sidebar entry
+// is gone from navConfig.js, so no nav item carries that id any more. It stays
+// a real page id — PUBLIC_PATHS['/'] and pageToPath('landing') are untouched —
+// it just isn't a NAV id, and this set is only ever consulted with NAV ids
+// (visibleNavigation, called from Layout.jsx over NAV's groups).
+const ANON_NAV_IDS = new Set(['explore', 'corpus', 'generate'])
 
 export function visibleNavigation(items, features, user = null) {
   return items.filter(

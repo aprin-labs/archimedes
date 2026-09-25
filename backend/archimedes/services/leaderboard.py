@@ -20,6 +20,15 @@ backtest carry a strategy that has traded forward for four days. Every row
 either function emits carries ``performance_basis`` naming which of the two it
 is.
 
+THE CROSS-STRATEGY SURFACE (#1564). Owner decision (Dan, 2026-08-31): the
+strategy passport carries only information about the strategy itself, and this
+board is the one place a strategy is placed against the field. So the
+board-level Benjamini-Hochberg FDR correction (#1185) lives here — it used to
+ride ``GET /api/selection-bias/gate``'s per-strategy result, where a
+strategy's own numbers moved because unrelated strategies joined the library.
+It is ADVISORY: it is not an input to ``compute_conviction`` and it never
+changes ``passes_rigor_gate``.
+
 This module is pure: it takes ``StrategyResponse`` objects (or, for the
 forward board, already-loaded ``LivePaperLedger`` values) and returns schema
 objects. No DB, no network — trivially unit-testable.
@@ -33,6 +42,7 @@ from datetime import date, datetime
 from archimedes.api.leaderboard_schemas import (
     BASIS_BACKTEST,
     BASIS_LIVE_PAPER,
+    BoardLevelFdr,
     LeaderboardEntry,
     LeaderboardForwardAxis,
     LeaderboardResponse,
@@ -43,6 +53,18 @@ from archimedes.api.leaderboard_schemas import (
     StockBenchGlobalContext,
 )
 from archimedes.api.schemas import StrategyResponse
+from archimedes.services.rigor_evaluator import DEFAULT_BOARD_FDR_LEVEL, compute_board_level_fdr
+
+# ── Board-level BH-FDR (#1185, relocated onto this board by #1564) ───────────
+# The one-line statement of what the correction did, echoed on the response so
+# the board never restates the math by hand (same rule as the conviction
+# `methodology` string below). `{alpha}` is filled from the α actually used.
+BOARD_FDR_METHODOLOGY = (
+    "Benjamini-Hochberg FDR at α={alpha} over the classical p-values (1 − DSR confidence) of "
+    "every strategy on this board with a finite DSR — the multiple-testing correction for "
+    "picking one strategy out of the field. Advisory: it never changes the rigor-gate badge "
+    "or the conviction score."
+)
 
 # ── Scoring weights (explicit + echoed in the response) ──────────────────────
 # Rationale: passing the selection-bias gate is the single biggest *honest*
@@ -231,6 +253,49 @@ def build_leaderboard(
 
     entries = [_entry(r) for r in responses]
 
+    # ── Board-level BH-FDR over this board's cohort (#1185 → #1564) ─────────
+    #
+    # Placement: this is the ONE cross-strategy surface (owner decision, Dan
+    # 2026-08-31), so the correction rides this response and no longer rides
+    # the per-strategy gate.
+    #
+    # Cache: none of its own, deliberately. Every `dsr_p_value` here arrives on
+    # an already-built `StrategyResponse` — since #1746 / PR-B those are read
+    # off the stored grade on `strategy_passports` (one batched query per
+    # request, no gate run at all), and the BH itself is pure numpy over at most
+    # a few hundred floats. So the correction always matches the cohort actually
+    # being served rather than a cache-write-time one. Note what this makes
+    # true: every p-value in the cohort was produced by a gate run whose version
+    # the row records, so a board mixing two gate vintages is now VISIBLE
+    # (`gate_version`) rather than silently averaged over.
+    #
+    # Cohort = ALL entries, BEFORE the regime/min_rigor filters and BEFORE
+    # `limit`. This is load-bearing, not incidental: BH's adjusted p-value is
+    # p_(k) × m/k, so a SMALLER m makes every row MORE significant. If m
+    # tracked the filtered/paged view, a reader could narrow a filter or drop
+    # `limit` until a row went significant — manufacturing exactly the
+    # selection effect this correction exists to price in. The multiple-testing
+    # burden is a property of how many strategies were graded, not of what the
+    # viewer chose to look at, so a row's correction is invariant to both
+    # controls (pinned by test_leaderboard_board_fdr.py).
+    board_fdr = compute_board_level_fdr({e.id: e.dsr_p_value for e in entries}, fdr_level=DEFAULT_BOARD_FDR_LEVEL)
+    for e in entries:
+        # A row absent from `board_fdr` had no finite dsr_p_value to correct.
+        # It keeps the schema default (None) — an honest "not corrected", never
+        # a fabricated False.
+        corrected = board_fdr.get(e.id)
+        if corrected is None:
+            continue
+        e.board_fdr_significant = bool(corrected["board_fdr_significant"])
+        e.board_fdr_adjusted_p = float(corrected["board_fdr_adjusted_p"])
+        e.board_fdr_confidence = float(corrected["board_fdr_confidence"])
+    board_level_fdr = BoardLevelFdr(
+        fdr_level=DEFAULT_BOARD_FDR_LEVEL,
+        n_tested=len(board_fdr),
+        n_significant=sum(1 for v in board_fdr.values() if v["board_fdr_significant"]),
+        methodology=BOARD_FDR_METHODOLOGY.format(alpha=DEFAULT_BOARD_FDR_LEVEL),
+    )
+
     if regime_tag:
         entries = [e for e in entries if e.regime_tag == regime_tag]
     if min_rigor:
@@ -272,6 +337,7 @@ def build_leaderboard(
         order=order,
         scope=scope,
         scoring_engine=engine,
+        board_level_fdr=board_level_fdr,
         degraded=degraded,
         degraded_reason=degraded_reason,
     )
@@ -316,6 +382,43 @@ class LivePaperLedger:
     returns: list[tuple[date, float]] = field(default_factory=list)
     last_appended_at: datetime | None = None
     drift_detected: bool = False
+    # The STORED rigor verdict for this deployment's strategy, as the four
+    # JSON-ready fields `passport_loader.stored_rigor_verdicts` produces
+    # (#1764). Loaded by the caller — this module does no I/O — and `None`
+    # means "none was loaded", which the builder renders as the ungraded
+    # verdict rather than as silence. There is no arm here that omits the
+    # verdict from a row: a forward return without the verdict that qualifies
+    # it is the exact claim this board must not make.
+    verdict: dict | None = None
+
+
+#: The verdict fields a forward row carries, and what they say when no verdict
+#: was loaded for it (#1764).
+#:
+#: A LABEL plus its provenance — deliberately NOT ``passes_rigor_gate``: a bare
+#: boolean beside a forward return is the field a consumer would blend or sort
+#: on, which is exactly what the two-board split exists to prevent, while a
+#: dated four-state reads as the statement about the BACKTEST that it is. The
+#: three values are byte-identical to ``passport_loader.UNGRADED_RIGOR_VERDICT``'s
+#: — pinned by test rather than imported, because this module is deliberately
+#: I/O-free and importing the passport loader would drag the ORM into the pure
+#: layer.
+UNGRADED_ENTRY_VERDICT: dict = {
+    "rigor_gate_status": "pending",
+    "graded_at": None,
+    "gate_version": None,
+}
+
+
+def _verdict_or_ungraded(verdict: dict | None) -> dict:
+    """One row's verdict fields — never fewer, and never a pass by default.
+
+    Takes the ``passport_loader`` verdict dict (which also carries the derived
+    ``passes_rigor_gate``) and keeps only what this board serves.
+    """
+    if not verdict:
+        return dict(UNGRADED_ENTRY_VERDICT)
+    return {key: verdict.get(key, UNGRADED_ENTRY_VERDICT[key]) for key in UNGRADED_ENTRY_VERDICT}
 
 
 def _cumulative_return(returns: list[tuple[date, float]]) -> float:
@@ -368,6 +471,12 @@ def build_live_paper_leaderboard(
                 as_of=observations[-1][0].isoformat(),
                 last_updated=led.last_appended_at.isoformat() if led.last_appended_at else None,
                 drift_detected=led.drift_detected,
+                # Unconditional, exactly like `cumulative_return` beside it. A
+                # ledger that arrived with no verdict loaded falls back to the
+                # ungraded four-state ("pending") — an explicit "no gate has
+                # answered", never an omitted field the UI would have to guess
+                # about and never a pass.
+                **_verdict_or_ungraded(led.verdict),
             )
         )
 

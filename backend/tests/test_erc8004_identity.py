@@ -13,6 +13,12 @@ Four surfaces describe this agent's on-chain identity:
 against a hand-kept list: the served manifest and the static card drifted for over a
 month because nothing connected them.
 
+Since #1527's identity leg landed there is a fifth thing to check, and it is the one that
+makes the word "registered" mean anything: ``GET /api/agent/manifest`` →
+``erc8004_verification``, the record of the live ``ownerOf()`` read the served status was
+derived from. The status is no longer a constant somebody could edit — it is a reading —
+so the tests below check the reading and the claim against each other.
+
 The load-bearing property here is narrower than consistency, though. **Registration is
 an owner-signed on-chain transaction this repo cannot perform.** Until it lands there is
 no agentId and no tokenURI, and the honest word is ``registration_pending``. The
@@ -107,20 +113,64 @@ async def test_manifest_chain_is_derived_from_the_configured_arc_chain_id():
 # ── cross-surface agreement ──────────────────────────────────────────────────
 
 
-async def test_every_surface_publishes_the_identical_identity_block():
-    """Manifest, agent card, registration file and domain variant must agree byte-for-byte.
+async def test_the_three_committed_surfaces_are_byte_for_byte_identical():
+    """Agent card, registration file and domain variant must carry the SAME block.
 
     Two discovery documents that disagree about whether an agent is registered are worse
-    than one — a consumer has no way to tell which is stale.
+    than one — a consumer has no way to tell which is stale. These three are all committed
+    JSON, so there is no legitimate reason for any daylight between them.
     """
-    served = (await _manifest())["erc8004"]
-    for name, block in _all_identity_blocks().items():
-        assert block == served, (
-            f"{name} carries an erc8004 block that differs from the served manifest.\n"
-            f"  static: {json.dumps(block, sort_keys=True)}\n"
-            f"  served: {json.dumps(served, sort_keys=True)}\n"
-            "Regenerate the static block from agent_manifest_routes.erc8004_identity()."
+    blocks = _all_identity_blocks()
+    reference_name, reference = next(iter(blocks.items()))
+    for name, block in blocks.items():
+        assert block == reference, (
+            f"{name} disagrees with {reference_name}.\n"
+            f"  {name}: {json.dumps(block, sort_keys=True)}\n"
+            f"  {reference_name}: {json.dumps(reference, sort_keys=True)}\n"
+            "Regenerate both from agent_manifest_routes.erc8004_identity()."
         )
+
+
+async def test_the_served_manifest_never_claims_more_than_the_committed_surfaces():
+    """The manifest may be WEAKER than the committed files, never stronger (#1527).
+
+    This is the one deliberate asymmetry in the four-surface agreement, and it arrived with
+    the live read. ``status`` / ``agentId`` / ``tokenURI`` on the manifest come from an
+    ``ownerOf()`` call made while serving the request; a committed JSON file cannot make a
+    call. So when that read does not complete — CI has no RPC, and neither does a VPC with
+    a dark endpoint — the served block drops to ``registration_pending`` while the
+    committed files keep publishing the registration that really happened.
+
+    That divergence is a refusal to claim, and a refusal to claim is not the #1448 drift:
+    the direction is what matters. Configuration fields still have to match exactly (a
+    manifest advertising a different registry than the card is drift in the old sense), and
+    the manifest is never permitted to assert a registration the committed record does not
+    carry.
+    """
+    manifest = await _manifest()
+    served = manifest["erc8004"]
+    verification = manifest["erc8004_verification"]
+    committed = _json(AGENT_CARD)["erc8004"]
+
+    for field in ("chain", "identityRegistry", "registrationUri"):
+        assert served[field] == committed[field], (
+            f"{field} differs between the served manifest ({served[field]!r}) and the agent "
+            f"card ({committed[field]!r}). These are configuration, not readings — they must match."
+        )
+
+    if served["status"] == "registered":
+        # Stronger than the committed record is never allowed: the id we serve has to be
+        # the id we published, and the committed files carry the registrations entry.
+        assert committed["status"] == "registered", (
+            "the served manifest claims a registration the committed agent card does not. "
+            "Land the registrations entries and the regenerated card in the same commit."
+        )
+        assert served["agentId"] == committed["agentId"]
+    else:
+        # Weaker is allowed, and must be explained by the verification record rather than
+        # being silent — a pending status with no reason attached is the fail-soft shape.
+        assert verification["source"] in {"onchain", "unconfigured", "unavailable"}, verification
+        assert verification["detail"], "a pending status must say what produced it"
 
 
 def test_registration_uri_points_at_the_file_this_repo_actually_publishes():
@@ -284,6 +334,31 @@ def test_x402_support_true_is_backed_by_prose_citing_the_runtime_it_was_read_fro
 # ── the honesty invariants (these survive a real registration) ───────────────
 
 
+async def test_the_served_status_is_registered_only_when_a_live_read_says_so():
+    """The claim and the evidence must be the same fact, not two fields that can drift.
+
+    ``erc8004.status`` is what a consumer acts on; ``erc8004_verification`` is why. If the
+    two can ever disagree — status "registered" beside a source of "unavailable" — then the
+    verification record is decoration and the status is back to being an assertion.
+    """
+    manifest = await _manifest()
+    served = manifest["erc8004"]
+    verification = manifest["erc8004_verification"]
+
+    assert (served["status"] == "registered") == (verification["status"] == "registered"), (
+        f"the block says {served['status']!r} and the verification says {verification['status']!r}"
+    )
+    if served["status"] != "registered":
+        return
+    assert verification["source"] == "onchain", (
+        f"status is 'registered' but the evidence source is {verification['source']!r} — "
+        "only a completed registry read may produce that claim."
+    )
+    assert verification["owner"] and verification["expectedOwner"]
+    assert verification["owner"].lower() == verification["expectedOwner"].lower(), verification
+    assert served["agentId"] == verification["agentId"]
+
+
 async def test_no_surface_says_registered_while_the_agent_id_is_absent():
     """The anti-goal, enforced: agentId absent ⇒ status pending, everywhere.
 
@@ -307,8 +382,11 @@ async def test_no_surface_says_registered_while_the_agent_id_is_absent():
 async def test_a_registered_status_requires_a_real_id_a_uri_and_a_registrations_entry():
     """The mirror implication: claiming registered obliges every other surface to prove it.
 
-    This is what makes flipping ``_ERC8004_AGENT_ID`` a whole-commit act — the manifest,
-    both registration files, and the agent card have to move together or CI fails.
+    This is what makes a real registration a whole-commit act — the manifest, both
+    registration files, and the agent card have to move together or CI fails. Setting
+    ``ERC8004_AGENT_ID`` in a deployment is not enough on its own and is not supposed to
+    be: the env var points the verifier at a token, and this test is what obliges the
+    committed record to catch up.
     """
     served = (await _manifest())["erc8004"]
     if served["status"] != "registered":

@@ -131,6 +131,31 @@ def test_local_mode_never_calls_ssm_even_with_prod_shaped_prefix():
     assert _run(env) == 0
 
 
+def test_ambient_aws_credentials_do_not_promote_a_local_run():
+    """The #1044 leak exactly as onboarding produces it: a developer whose
+    shell already has working AWS credentials (our own setup docs tell people
+    to configure them) runs a plain local `docker compose up`.
+
+    Distinct from the test above, which varies only the prefix. This one adds
+    the credentials, because the tempting wrong fix is to gate on credential
+    *presence* — "no creds, no SSM" — which is exactly the gate that fails on
+    the machine it matters on. The observable must stay zero as a function of
+    PUBLIC_DOMAIN alone, with credentials in hand.
+
+    The credential values are deliberately NOT AWS-shaped: a literal matching
+    detect-secrets' access-key pattern (AKIA + 16 chars) would trip the
+    pre-commit scan for a string that is not a credential. boto3 is spied here
+    and never parses them — only their presence in the subprocess env matters.
+    The real-credential version of this run is in the PR body."""
+    env = _base_env()
+    env.pop("PUBLIC_DOMAIN", None)
+    env["AWS_SSM_PATH_PREFIX"] = "/archimedes/prod/"
+    env["AWS_REGION"] = "us-east-1"
+    env["AWS_ACCESS_KEY_ID"] = "not-a-real-access-key-id"
+    env["AWS_SECRET_ACCESS_KEY"] = "not-a-real-secret-access-key"
+    assert _run(env) == 0
+
+
 def test_production_mode_does_call_ssm():
     """PUBLIC_DOMAIN set (production mode) — the SSM load path still runs.
     Guards against the fix over-correcting into never loading secrets in prod."""

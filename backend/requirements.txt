@@ -1,110 +1,26 @@
-# Archimedes backend — pinned from environment.yml
-# This file is used by Docker; conda env is for local dev.
-
-# Web backend
-fastapi>=0.141.1
-# Pinned directly to close PYSEC-2026-161 (Host-header validation bypass);
-# FastAPI's transitive range can resolve to vulnerable starlette 1.0.0
-# without this floor. Floor raised to 1.3.1 to close CVE-2026-54282 /
-# CVE-2026-54283 (CVE bump 2026-06-25). FastAPI's requires-dist is
-# starlette>=0.46.0 with no upper bound, so this floor resolves cleanly.
-# 1.4.1 -> 1.6.0 is a Dependabot floor raise, not a CVE bump: 1.5.0-1.6.0
-# change GZipMiddleware defaults, FileResponse range handling, and add
-# max_body_size. We use none of them - compression is nginx-side and the
-# backend imports neither GZipMiddleware nor FileResponse (checked 2026-08-30).
-starlette>=1.6.0
-uvicorn[standard]>=0.52.4
-sqlalchemy>=2.0.52
-# Schema migration tool (issue #1028) — replaces the hand-rolled idempotent
-# `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` patches in db.py for retrofitting
-# the already-populated prod Postgres DB. MIT license, maintained by the
-# SQLAlchemy project itself.
-alembic>=1.19.1
-psycopg2-binary>=2.9.12
-redis>=8.1.0
-pydantic>=2.13.4
-pydantic-settings>=2.14.2
-python-dotenv>=1.2.3
-
-# Data + numerics
-numpy>=2.5.2,<3.0
-# 3.0.4 was yanked from PyPI after the dependabot bump (#798) merged, so
-# `pandas>=3.0.4` became unsatisfiable and broke every fresh CI install +
-# Docker build (latest available is 3.0.3). Floor lowered to the newest
-# non-yanked release. (NB: environment.yml still floors pandas>=2.2 — a
-# pre-existing local-vs-prod major drift to reconcile separately.)
-pandas>=3.0.5
-scipy>=1.18.0
-scikit-learn>=1.9.0  # GaussianMixture + StandardScaler for the data-driven GmmRegimeDetector (issue #661); BSD-3-Clause
-
-# Market data
-yfinance>=1.7.0
-# Do NOT bump to >=2.34: arxiv (incl. 4.0.0) pins requests<2.34, so a fresh
-# `pip install -r requirements.txt` resolve fails and the Docker deploy breaks
-# (regression from Dependabot #702, caught on deploy 2026-06-25). Keep <2.34
-# until arxiv relaxes its pin. environment.yml uses the same floor.
-requests>=2.32,<2.34
-# Bumped from 3.13.5 to close CVE-2026-34993 / CVE-2026-47265 (HTTP parser
-# DoS/smuggling).
-aiohttp>=3.14.3
-# httpx is directly imported by services/corpus_service.py (arXiv intake) and
-# services/llm_backend.py (OpenAI-compatible + Ollama backends). Pinned directly
-# so we don't rely on it arriving transitively via anthropic/fastapi.
-httpx>=0.28.1
-# urllib3 is transitive (requests / boto3 / arxiv). Pinned directly to close
-# PYSEC-2026-141 / PYSEC-2026-142 so a fresh resolve can't regress to a
-# vulnerable version (CVE bump 2026-06-25).
-urllib3>=2.7.0
-
-# Backtesting
-backtrader>=1.9.78.123
-
-# x402 micropayments via Circle Gateway (D1)
-# pip-audit flags PYSEC-2023-142 / PYSEC-2025-33 against the transitive vyper
-# pull-in (via titanoboa). Both are false positives here: PYSEC-2023-142 is a
-# @nonreentrant compiler bug fixed in vyper 0.3.1 (the OSV record's malformed
-# range with no "fixed" event over-sweeps every later release incl. 0.4.3);
-# PYSEC-2025-33 is a precompile-return-check bug fixed in 0.4.1. Our resolved
-# vyper (0.4.3, latest on PyPI; titanoboa pins >=0.4.2) already has both fixes.
-# Also moot in practice: these are compiled-bytecode bugs requiring compiling
-# Vyper source, and the only boa.loads/boa.load calls in this repo (backend/
-# tests/contracts/conftest.py) compile our own hardcoded trusted mock source,
-# never untrusted input. Re-verify with `pip-audit -r backend/requirements.txt`
-# before assuming this is stale (investigated 2026-07-14).
-circle-titanoboa-sdk[x402,wallets] @ git+https://github.com/vyperlang/circle-titanoboa-sdk.git@09828f399731dd3250fb402f7f511046fb202355
-
-# LLM
-anthropic>=0.120.2
-
-# On-chain / Web3
-web3>=7.16.0
-eth-account>=0.13.7
-eth-utils>=6.0.0
-cryptography>=50.0.0
-# direct import in marketplace/encoding.py (derive_pool_id); do not rely on web3 transitive.
-# Cap <6: eth-account declares `eth-abi>=4.0.0-b.2`, whose pre-release specifier lets pip
-# resolve the 6.0.0b1 BETA on a fresh build (observed 2026-07-13 in the Docker image) —
-# no betas on the funds-path ABI codec. Lift the cap deliberately once 6.x is stable.
-eth-abi>=5.2.0,<6
-
-## Rate limiting
-slowapi>=0.1.10
-
-# Paper ingestion
-arxiv>=4.0.1
-# Floor raised to 6.13.3 to close 8 CVEs incl GHSA-jm82-fx9c-mx94 (CVE bump 2026-06-25).
-pypdf>=6.16.0
+# Archimedes backend — the Docker / CI install set.
+#
+# The 33 shared floors live in `requirements-base.txt` and are included below,
+# so `environment.yml` can include the same file instead of restating them
+# (issue #1522). Everything spelled out in *this* file is here because the
+# CPU-only torch wheel must not reach local dev.
+#
+# `backend/Dockerfile` COPYs both files; pip resolves `-r` relative to the
+# including file, so the include works from the image root and from `backend/`.
+-r requirements-base.txt
 
 # Semantic retrieval — MiniLM embeddings for paper_rag.py (issue #874).
 # CPU-only torch wheel: the extra-index-url below resolves torch to the
 # lightweight CPU variant (~250 MB) rather than the CUDA build (~2.5 GB).
 # sentence-transformers brings torch transitively; pinning torch here forces
 # the CPU wheel so the Docker image stays within budget.
+#
+# This block is deliberately NOT in requirements-base.txt: environment.yml
+# includes that file, and the extra-index-url would drag the CPU wheel onto
+# dev machines and lose MPS on Apple Silicon. environment.yml therefore keeps
+# its own native-wheel torch / sentence-transformers floors, and
+# backend/tests/test_env_requirements_alignment.py holds the two in lockstep —
+# they are the only floors still written down twice.
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch>=2.13.0,<3.0  # CPU-only wheel via pytorch whl index (see extra-index-url above); no +cpu here, pip rejects a local version label on a >= specifier
-sentence-transformers>=5.6.1  # all-MiniLM-L6-v2 semantic retrieval; baked at Docker build time
-
-# AWS / S3
-boto3>=1.43.71
-# Imported directly for AWS exceptions/config; boto3 constrains compatibility.
-botocore>=1.43.81
+sentence-transformers>=6.0.1  # all-MiniLM-L6-v2 semantic retrieval; baked at Docker build time

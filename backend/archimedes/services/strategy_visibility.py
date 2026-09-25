@@ -57,9 +57,13 @@ Where the line was drawn, route by route, and why — the deliberate calls:
     marketplace would license, not give away. There is no licensing flow yet,
     so this fails closed; it can be reopened deliberately when one exists.
   * ``GET /api/strategies/{id}`` — MIXED. Stays card-public (a 404 here would
-    take the public detail page down for published strategies); the one
-    reasoning field on the response, ``brief_intent``, is stripped for
-    non-owners via ``owns_strategy`` (#1547).
+    take the public detail page down for published strategies); its two
+    reasoning fields are stripped for non-owners instead. ``brief_intent``
+    takes ``owns_strategy`` (#1547) — a curated house row has no owner and no
+    brief, so "public for is_example" would be meaningless there.
+    ``strategy_spec`` (#1646) takes ``is_strategy_reasoning_visible``, because
+    curated rows DO carry specs and are public demo content. Two fields, two
+    predicates, the difference deliberate — do not "unify" them.
   * ``GET /api/selection-bias/gate/{id}`` — CARD, deliberately. Every number it
     returns (``dsr_p_value`` / ``pbo_score`` / ``out_of_sample_sharpe`` /
     ``deflated_sharpe_ratio`` / ``passes_rigor_gate``) is ALREADY served

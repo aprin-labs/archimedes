@@ -38,7 +38,7 @@ Architecture page, and it is the only defensible form — docs match the app, no
 way round:
 
 > Over 20+ years of backtested returns net of realistic commission, a strategy's excess Sharpe
-> must be positive at 90% one-sided confidence under standard errors robust to non-normality
+> must be positive at 95% one-sided confidence under standard errors robust to non-normality
 > and autocorrelation, and must stay positive on a 30% chronological holdout. On the generated
 > path, the Sharpe is additionally deflated against that strategy's own candidate pool.
 >
@@ -55,9 +55,12 @@ expected best-of-`N` under the null.
 
 **What the number means:**
 - DSR is displayed as the **p-value** of the test (range 0–1).
-- A p-value ≥ 0.90 clears the bar: the excess Sharpe is positive at 90% one-sided
-  confidence under non-normality- and autocorrelation-robust standard errors.
-- Below 0.90 means the strategy has not cleared the bar — it may still be a good
+- A p-value ≥ 0.95 clears the bar: the excess Sharpe is positive at 95% one-sided
+  confidence under non-normality- and autocorrelation-robust standard errors. That
+  threshold has one definition in the codebase — `DSR_P_BADGE_MIN` in
+  `backend/archimedes/services/rigor_profiles.py` — and the four-primitive table below
+  quotes it, not a second copy (#1794).
+- Below 0.95 means the strategy has not cleared the bar — it may still be a good
   strategy, but we cannot distinguish it from noise with this sample.
 
 **Where the deflation does and does not apply.** On the **generated** path the Sharpe is
@@ -79,7 +82,19 @@ deliberately **ADVISORY/annotation only**, not wired into `RigorGateResult.passe
 any strictness threshold (see that function's own docstring for the scope rationale). So
 the correction above still holds for the thing it was written about — no per-strategy
 `passes_all` verdict moves because of a board-level FDR adjustment — but "zero non-test
-callers" is no longer accurate as a blanket statement; correct as of 2026-08-21 (this PR).
+callers" is no longer accurate as a blanket statement; correct as of 2026-08-21.
+
+**Where the correction is served, as of #1564 (2026-08-31).** On `GET /api/leaderboard`,
+and nowhere else. It used to ride the per-strategy gate response
+(`StrategyRigorResult.board_fdr_*` + a top-level `board_level_fdr`); the owner decision is
+that the strategy passport carries only information about the strategy itself, and the
+leaderboard is the one cross-strategy surface. `GET /api/selection-bias/gate*` now carries
+no `board_fdr` key at all — guarded by
+`test_selection_bias_routes.py::TestBoardFdrStaysOffThePerStrategyGate`, which fails if one
+reappears. The board renders it: a per-row column plus the honest board-level line ("not
+yet distinguishable from selection noise at board level" when nothing clears, which is the
+state prod is in). An uncorrected row — no finite `dsr_p_value` — renders an em-dash, never
+a verdict.
 
 **Why it's better than raw Sharpe:** The standard Sharpe assumes returns are normally
 distributed, serially independent, and that you only ran one backtest. None of those is

@@ -1,7 +1,8 @@
 # Docs gate — enforces the documentation contract phases 1-5 established.
 #
-# Phases 1-5 got link breakage to 0.0% across ~1,180 links, made docs/README.md
-# a complete index that opens "A doc not listed here does not exist", landed 18
+# Phases 1-5 got link breakage to 0.0% across ~1,180 links, made the doc register
+# (docs/doc-index.md, docs/README.md until 2026-09-02) a complete index that opens
+# "A doc not listed here does not exist", landed 18
 # ADRs, and wrote docs/CONVENTIONS.md. None of that was enforced by anything.
 # The reorganisation proposal that started this work diagnosed "a fresh
 # teammate can't navigate it" four weeks before it began, and eleven files
@@ -13,7 +14,7 @@
 #            resolves. Paths under submodules/ and contracts/lib/ are skipped:
 #            they are gitlinks, empty in a non-recursive checkout, so treating
 #            them as broken would make this gate permanently red.
-#   index  — every docs/**/*.md appears in docs/README.md or in a sub-index it
+#   index  — every docs/**/*.md appears in docs/doc-index.md or in a sub-index it
 #            links to (adr/, archive/, quant/, research/, runbooks/).
 #
 # Informational (continue-on-error, reported in the PR comment only):
@@ -132,7 +133,7 @@ jobs:
                 ? details('Broken relative links', tail(links, 40))
                 : `Links: ${tail(links, 1)}`,
               indexOutcome !== 'success'
-                ? details('Docs missing from the index — add a row to `docs/README.md` or a sub-index', tail(index, 40))
+                ? details('Docs missing from the register — add a row to `docs/doc-index.md` or a sub-index', tail(index, 40))
                 : `Index: ${tail(index, 1)}`,
               '',
               staleness || '_Staleness report unavailable._',

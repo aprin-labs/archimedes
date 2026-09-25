@@ -16,7 +16,7 @@
 >
 > **Lineage to read together:**
 > - [`docs/user-stories.md`](../user-stories.md) — the locked product spine (execute → monitor is this society's lane)
-> - [issue #760](https://github.com/a-apin/archimedes/issues/760) — the "blueprint" concept this spec formalizes (Type‑2 Agent Readiness Dependency Map)
+> - [issue #760](https://github.com/aprin-labs/archimedes/issues/760) — the "blueprint" concept this spec formalizes (Type‑2 Agent Readiness Dependency Map)
 > - [`docs/specs/strategy-lifecycle-spec.md`](./strategy-lifecycle-spec.md) — `Deployed → Active → Completed`; this society drives those transitions
 > - [`docs/specs/vault-semantics-spec.md`](./vault-semantics-spec.md) + [`docs/specs/commit-reveal-trace-spec.md`](./commit-reveal-trace-spec.md) — the on-chain settlement + provenance contracts
 > - [`docs/specs/selection-bias-corrections-spec.md`](./selection-bias-corrections-spec.md) + [`docs/specs/xia-2026-protocols.md`](./xia-2026-protocols.md) — `V_check`, Source Tracking, Hierarchy of Truth (consumed here, enforced upstream)
@@ -200,7 +200,7 @@ EVERY AGENT_INTERVAL_SECONDS (default 300):
          └─ fail → SKIP trace "v_check_failed", no trade
        _commit_trace(...)   (COMMIT hash on-chain, claimedExecutionTime)  ◀── #589
        execute_trades(...)  (real swaps; InsufficientLiquidityError → SKIP+retry)
-       _reveal_trace(...)   (pin IPFS provenance → reveal SAME committed trace)  ◀── agent #4
+       _reveal_trace(...)   (hash-only reveal of the SAME committed trace; empty storagePointer)  ◀── agent #4
   7. save_heartbeat()
 ```
 
@@ -280,7 +280,7 @@ direct router swap that bypasses the registry check.
 | **Regime read** | `services/gmm_regime_detector.py` → `classify` / `get_current_regime` / `gmm_regime_health` | live regime; degrades to `VixRegimeDetector` |
 | **Risk guardrail (agent #3)** | `chain/v_check.py` → `VCheck.run`; `chain/executor.py` → `_validate_trade_liquidity` | deterministic weight validity + fail-closed liquidity preflight |
 | **Execution build (agent #4)** | `chain/executor.py` → `ChainExecutor.execute_trades` / `read_portfolio` / `create_vault` | builds + submits the `Vault.rebalance` tx (Circle signer or raw key); revert-aware via `_confirm_receipt` |
-| **Trace commit/reveal** | `chain/agent_runner.py` → `_commit_trace` / `_reveal_trace`; `chain/trace_publisher.py` | commit-before-trade + IPFS provenance reveal |
+| **Trace commit/reveal** | `chain/agent_runner.py` → `_commit_trace` / `_reveal_trace`; `chain/trace_publisher.py` | commit-before-trade + hash-only reveal (empty `storagePointer`; no IPFS pin) |
 | **Vault contract** | `contracts/src/Vault.sol` → `rebalance` (`onlyManager`), owner-only setters | the custody-enforcing settlement contract |
 | **State / heartbeat** | `services/redis_state.py` → `AgentStateStore` | regime, ensemble consensus, heartbeat, per-vault last-rebalance, trace index |
 | **Per-vault scope** | `models/chat.py:VaultMetadata` + `agent_runner._get_vault_strategy_ids` | restricts a vault to its owner-selected strategies |
@@ -294,7 +294,7 @@ operational independence in §0.
 ## §6. Metered‑compute / nanopayment tie‑in
 
 Each **rebalance run is a discrete, attributable unit of compute** — exactly the
-shape the nanopayment marketplace ([issue #713](https://github.com/a-apin/archimedes/issues/713),
+shape the nanopayment marketplace ([issue #713](https://github.com/aprin-labs/archimedes/issues/713),
 x402 + Circle Gateway, sub-cent USDC) prices. This society is the natural metering
 boundary.
 

@@ -12,8 +12,10 @@ Covers spec §9 Phase-1 tests:
   4. DebateUnavailable on empty pool → honest fallback signal (subclass)
   5. pool_size → num_trials (fix A1): evaluate_fusion_spec called with pool_size
   6. model threading (fix A3): FusionProposal.model reflects the user pick
-  7. DSL conformance (fix A5): realized_vol_N dropped, no DSLError escapes
-  8. flag-OFF byte-identical (fix A2): _pick_pipeline never returns "debate" OFF
+  7. DSL conformance (fix A5): non-interpretable indicator stems dropped, no
+     DSLError escapes
+  8. the retired ARCHIMEDES_DEBATE_ENABLED flag (fix A2, #880): setting it to
+     "false" cannot route _pick_pipeline off the society
   9. cited-paper union non-empty; transcript in fixed role order (R3 determinism)
 """
 
@@ -27,6 +29,8 @@ import pytest
 from archimedes.agents import debate_engine as de
 from archimedes.agents.strategy_fusion import FusionBrief, StrategyFusion, load_corpus, select_candidates
 from archimedes.api.generate_schemas import GenerateBrief
+from archimedes.services.dsl_lookahead_audit import PASS as LOOK_AHEAD_PASS
+from archimedes.services.dsl_lookahead_audit import DslLookAheadAudit
 
 # ── Fixture corpus: 3 momentum-flavored + 3 defensive-flavored + 1 noise ──────
 
@@ -80,9 +84,15 @@ def corpus(tmp_path):
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
-    """Every test starts with both flags explicitly cleared."""
-    monkeypatch.delenv("ARCHIMEDES_DEBATE_ENABLED", raising=False)
-    monkeypatch.delenv("ARCHIMEDES_FUSION_ENABLED", raising=False)
+    """Every test starts with the live flags explicitly cleared.
+
+    ``ARCHIMEDES_DEBATE_ENABLED`` used to be cleared here too. It was retired by
+    #880 and has had no reader since, so clearing it cleared nothing — removed
+    2026-08-31 (#834). ``test_pick_pipeline_is_debate_unconditionally`` now
+    *sets* it instead, which is the assertion the delenv only looked like.
+    ``ARCHIMEDES_FUSION_ENABLED`` went the same way on 2026-09-02 (deck Q4):
+    fusion is unconditional, so there is no switch left to clear.
+    """
     monkeypatch.delenv("ARCHIMEDES_CORPUS_MANIFEST", raising=False)
     monkeypatch.delenv("DEBATE_POOL_MAX", raising=False)
 
@@ -100,11 +110,17 @@ _CONFORMANT_SPEC = {
     "parameter_variants": {"momentum": [10, 20, 40]},
 }
 
+# The A5 trap: an indicator stem the LLM can plausibly emit that
+# ``dsl_to_backtrader._make_indicator`` cannot build. It used to be
+# ``realized_vol_5`` — that one is now implemented, so the example moved to a
+# stem that is genuinely absent from ``SUPPORTED_INDICATORS``. The guard's job
+# is unchanged: keep an un-interpretable spec out of C-rigor, where a DSLError
+# would take down the whole leaderboard build.
 _NONCONFORMANT_SPEC = {
-    "name": "Realized-vol trap",
+    "name": "MACD trap",
     "asset_universe": ["SPY"],
     "rebalance_frequency": "monthly",
-    "entry": {"gt": ["realized_vol_5", 0.2]},  # validates but raises DSLError at interpret
+    "entry": {"gt": ["macd_12", 0]},  # no macd in SUPPORTED_INDICATORS
     "exit": {"lt": ["close", "sma_200"]},
     "position_sizing": {"type": "full_invested_when_in_market"},
     "look_ahead_safe": True,
@@ -144,6 +160,16 @@ class _CannedFusionBackend:
 
 # ── Fake FusionEvalResult-shaped objects (deterministic critic inputs) ────────
 
+#: A real look-ahead audit in its clean state, used to fill the rigor double's
+#: look-ahead fields. Built from the production dataclass so a change to the
+#: status vocabulary or the label text shows up here instead of leaving a stale
+#: hand-typed string that no longer matches anything the gate produces.
+_CLEAN_LOOK_AHEAD = DslLookAheadAudit(
+    status=LOOK_AHEAD_PASS,
+    interpreter_verified=True,
+    broker_cheat_check=True,
+)
+
 
 def _fake_ev(*, cagr, dsr=1.5, passing=True, oos=1.2, num_trials=5):
     rigor = SimpleNamespace(
@@ -152,8 +178,14 @@ def _fake_ev(*, cagr, dsr=1.5, passing=True, oos=1.2, num_trials=5):
         pbo_score=0.1,
         oos_sharpe=oos,
         in_sample_sharpe=1.3,
-        look_ahead_clean=True,
-        look_ahead_label="clean",
+        # Mirrors a RigorVerdict that cleared the real structural look-ahead
+        # audit (services/dsl_lookahead_audit.py). The fields are read off an
+        # actual DslLookAheadAudit rather than typed as literals, so this double
+        # cannot drift into a state the production verdict never produces.
+        look_ahead_clean=_CLEAN_LOOK_AHEAD.passed,
+        look_ahead_status=_CLEAN_LOOK_AHEAD.status,
+        look_ahead_label=_CLEAN_LOOK_AHEAD.label,
+        look_ahead_reason=_CLEAN_LOOK_AHEAD.reason,
         num_trials=num_trials,
         passing=passing,
         data_source="synthetic",
@@ -169,6 +201,13 @@ def _fake_ev(*, cagr, dsr=1.5, passing=True, oos=1.2, num_trials=5):
         total_trades=42,
     )
     return SimpleNamespace(rigor=rigor, backtest=bt, success=True, admissible=False, error=None, spec={})
+
+
+#: The evidence surface the fixture corpus's proposers would have read — the
+#: `{arxiv_id: {"title", "published"}}` map `_propose_pool` now returns (#1636).
+#: It is the debate's attribution whitelist: an id outside it is a
+#: hallucination and gets stripped from the claim that named it.
+_EVIDENCE_BY_ID = {r["arxiv_id"]: {"title": r["title"], "published": r["published"]} for r in _ALL_ROWS}
 
 
 def _fake_proposal(name, ids, spec=None):
@@ -255,7 +294,7 @@ async def test_empty_pool_raises_debate_unavailable(monkeypatch):
     from archimedes.agents.generation_pipeline import FusionUnavailable
 
     async def _empty_pool(*a, **k):
-        return []
+        return [], {}
 
     monkeypatch.setattr(de, "_propose_pool", _empty_pool)
     monkeypatch.setattr(de.asyncio, "to_thread", _passthrough_to_thread)
@@ -298,7 +337,6 @@ async def test_critic_rigor_threads_pool_size_as_num_trials(monkeypatch):
 
 
 def test_model_pick_threads_into_served_model(monkeypatch, corpus):
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
     captured = {}
 
     def _fake_make(model=None, **kw):
@@ -319,7 +357,10 @@ def test_model_pick_threads_into_served_model(monkeypatch, corpus):
 # ── Test 7 — DSL conformance (fix A5) ─────────────────────────────────────────
 
 
-def test_dsl_conformance_guard_rejects_realized_vol():
+def test_dsl_conformance_guard_rejects_uninterpretable_indicators():
+    # realized_vol is now implemented by the interpreter, so it must PASS the
+    # guard — the guard tracks SUPPORTED_INDICATORS in both directions.
+    assert "realized_vol" in de._CONFORMANT_INDICATORS
     assert de._dsl_conformance_ok(_CONFORMANT_SPEC) is True
     assert de._dsl_conformance_ok(_NONCONFORMANT_SPEC) is False
     assert de._dsl_conformance_ok(None) is False
@@ -327,7 +368,6 @@ def test_dsl_conformance_guard_rejects_realized_vol():
 
 
 async def test_propose_pool_drops_nonconformant_specs(monkeypatch, corpus):
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
 
     def _fake_make(model=None, **kw):
         return _CannedFusionBackend(model=model, spec=_NONCONFORMANT_SPEC)
@@ -336,9 +376,14 @@ async def test_propose_pool_drops_nonconformant_specs(monkeypatch, corpus):
     monkeypatch.setattr(de.asyncio, "to_thread", _passthrough_to_thread)
 
     brief = GenerateBrief(intent="momentum equities", max_papers=4)
-    pool = await de._propose_pool(brief, "m", corpus)
-    # Every proposal emitted realized_vol_5 → all dropped by the A5 guard; no DSLError.
+    pool, evidence_by_id = await de._propose_pool(brief, "m", corpus)
+    # Every proposal emitted macd_12 → all dropped by the A5 guard; no DSLError.
     assert pool == []
+    # ... but the papers those dropped proposers READ are still real evidence
+    # (#1636): the debate's attribution whitelist is the union over attempted
+    # proposals, not just the ones whose spec survived.
+    assert evidence_by_id
+    assert all(set(v) == {"title", "published"} for v in evidence_by_id.values())
 
 
 # ── Test #893 — proposer pool dedup ────────────────────────────────────────────
@@ -414,7 +459,6 @@ async def test_propose_pool_dedupes_identical_specs_across_steers(monkeypatch, c
     trading logic — but with a different LLM-picked marketing name and
     citation order each time — must collapse to one pool entry, not be
     counted as independent trials."""
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
     monkeypatch.setenv("DEBATE_POOL_MAX", "4")
 
     # A conformant spec that also survives the full validate_strategy_spec pass
@@ -439,7 +483,7 @@ async def test_propose_pool_dedupes_identical_specs_across_steers(monkeypatch, c
     monkeypatch.setattr(de.asyncio, "to_thread", _passthrough_to_thread)
 
     brief = GenerateBrief(intent="momentum equities", max_papers=4)
-    pool = await de._propose_pool(brief, "m", corpus)
+    pool, _evidence_by_id = await de._propose_pool(brief, "m", corpus)
 
     # Sanity: the backend really did emit >1 distinct marketing name across
     # steers (i.e. this test exercises the actual #893 failure mode, not an
@@ -454,15 +498,22 @@ async def test_propose_pool_dedupes_identical_specs_across_steers(monkeypatch, c
     assert len(hashes) == len(pool)
 
 
-# ── Test 8 — flag-OFF byte-identical (fix A2) ─────────────────────────────────
+# ── Test 8 — the retired flag cannot re-route the pipeline (fix A2) ───────────
 
 
 def test_pick_pipeline_is_debate_unconditionally(monkeypatch):
     """T1.1 Phase-3 cutover: the society IS the pipeline — no flag, no legacy
-    decision tree, and client mode overrides are accepted-but-ignored."""
+    decision tree, and client mode overrides are accepted-but-ignored.
+
+    The retired flag is *set to the value that used to disable the society*
+    rather than deleted. A ``delenv`` for a name nothing reads asserts nothing;
+    a ``setenv`` proves the retirement actually holds — someone who finds
+    ``ARCHIMEDES_DEBATE_ENABLED=false`` in an old runbook and exports it cannot
+    route generation off the debate society (#834, 2026-08-31).
+    """
     from archimedes.agents.generation_pipeline import _pick_pipeline
 
-    monkeypatch.delenv("ARCHIMEDES_DEBATE_ENABLED", raising=False)
+    monkeypatch.setenv("ARCHIMEDES_DEBATE_ENABLED", "false")
     for override in (None, "fusion", "architect", "agent", "debate"):
         name, reason = _pick_pipeline(mode_override=override)
         assert name == "debate", f"override {override!r} must not route off the society"
@@ -561,7 +612,7 @@ async def test_run_debate_leaderboard_attaches_transcript_to_every_entry(monkeyp
     ]
 
     async def _fake_propose_pool(brief, model, corpus_arg):
-        return pool
+        return pool, _EVIDENCE_BY_ID
 
     monkeypatch.setattr(de, "_propose_pool", _fake_propose_pool)
 
@@ -607,7 +658,7 @@ async def test_run_debate_leaderboard_abstain_entry_still_carries_transcript(mon
     pool = [_fake_proposal("A", ["2401.00001", "2402.00001"])]
 
     async def _fake_propose_pool(brief, model, corpus_arg):
-        return pool
+        return pool, _EVIDENCE_BY_ID
 
     monkeypatch.setattr(de, "_propose_pool", _fake_propose_pool)
     monkeypatch.setattr(
@@ -780,3 +831,224 @@ def test_leaderboard_entries_carry_return_series_for_live_gate():
         base_id="c2",
     )
     assert board2[0].return_series is None
+
+
+# ── #1636 — the papers go INTO the debate ─────────────────────────────────────
+#
+# `_debate_round` used to send a `"; "`-joined list of strategy NAMES as the
+# entire user message for all four paid turns. A judge reading "multi-agent
+# debate over 10,000 papers" was being told something the live path did not do.
+# The turns now argue over per-candidate evidence cards, every claim names the
+# arXiv ids it rests on, and an id nobody was shown is stripped rather than
+# recorded.
+
+
+class _AttributingDebateBackend:
+    """Emits structured, paper-attributed claims. `bad_ids` lets a test inject
+    an id that never entered any proposer prompt — the hallucination probe."""
+
+    model_id = "x"
+    served_model = "x"
+    available = True
+
+    def __init__(self, *, claim_ids=("2401.00001",), discard_ids=("2402.00003",)):
+        self.prompts: list[str] = []
+        self.user_messages: list[str] = []
+        self._claim_ids = list(claim_ids)
+        self._discard_ids = list(discard_ids)
+
+    def complete(self, system, user):
+        self.prompts.append(system)
+        self.user_messages.append(user)
+        role = "bull" if "bull researcher" in system else "bear"
+        return json.dumps(
+            {
+                "verdict": "act" if role == "bull" else "decline",
+                "confidence": 0.7,
+                "key_claims": [
+                    {
+                        "claim": f"{role}-claim",
+                        "candidate_id": "C1",
+                        "arxiv_ids": self._claim_ids,
+                    }
+                ],
+                "discard": [{"arxiv_id": a, "reason": "no distinct mechanism"} for a in self._discard_ids],
+            }
+        )
+
+
+async def test_debate_prompt_carries_arxiv_ids(monkeypatch):
+    """The user message must be evidence cards, not a name list: every turn
+    sees `[C1] Name — cites arXiv:xxxx "Title"`."""
+    backend = _AttributingDebateBackend()
+    monkeypatch.setattr("archimedes.services.llm_backend.make_llm_backend", lambda model=None, **k: backend)
+    monkeypatch.setattr(de.asyncio, "to_thread", _passthrough_to_thread)
+
+    pool = [_fake_proposal("Momentum/vol fusion", ["2401.00001", "2402.00001"])]
+    await de._debate_round(pool, "m", _FakeEmit(), "cand_1", _EVIDENCE_BY_ID)
+
+    assert backend.user_messages, "the debate must have run"
+    for msg in backend.user_messages:
+        assert "arXiv:2401.00001" in msg
+        assert "arXiv:2402.00001" in msg
+        # The TITLE too — an id with no title is not evidence a researcher can weigh.
+        assert _EVIDENCE_BY_ID["2401.00001"]["title"] in msg
+        assert "[C1]" in msg
+    # The system prompt tells them the id vocabulary is closed.
+    assert all("arxiv_ids" in p for p in backend.prompts)
+
+
+async def test_debate_claim_with_unknown_arxiv_id_is_stripped_not_rendered(monkeypatch):
+    """The anti-hallucination guard, mirroring strategy_fusion's valid_ids
+    filter. An id that entered no proposer prompt is dropped — but the CLAIM
+    survives with an empty `arxiv_ids`, so an unattributed claim is recorded
+    as unattributed rather than deleted (which would shrink the transcript) or
+    kept with its invented citation (which would launder it)."""
+    backend = _AttributingDebateBackend(claim_ids=("9999.99999", "2401.00002"), discard_ids=("9999.99998",))
+    monkeypatch.setattr("archimedes.services.llm_backend.make_llm_backend", lambda model=None, **k: backend)
+    monkeypatch.setattr(de.asyncio, "to_thread", _passthrough_to_thread)
+
+    pool = [_fake_proposal("A", ["2401.00001", "2402.00001"])]
+    transcript = await de._debate_round(pool, "m", _FakeEmit(), "cand_1", _EVIDENCE_BY_ID)
+
+    assert len(transcript) == 4
+    for turn in transcript:
+        assert len(turn["claims"]) == 1, "the claim itself must survive"
+        claim = turn["claims"][0]
+        assert claim["claim"] in {"bull-claim", "bear-claim"}
+        assert claim["arxiv_ids"] == ["2401.00002"]  # the real id kept, 9999.* gone
+        assert "9999.99999" not in json.dumps(turn)
+        # A discard naming an id nobody was shown carries no prose worth
+        # keeping, so it is dropped outright.
+        assert turn["discard"] == []
+
+
+async def test_debate_claim_with_only_unknown_ids_is_recorded_unattributed(monkeypatch):
+    """The stronger half: when EVERY cited id is invented, the claim is kept
+    with `arxiv_ids: []`. Dropping it would hide that the researcher argued
+    something it could not ground."""
+    backend = _AttributingDebateBackend(claim_ids=("9999.99999",), discard_ids=())
+    monkeypatch.setattr("archimedes.services.llm_backend.make_llm_backend", lambda model=None, **k: backend)
+    monkeypatch.setattr(de.asyncio, "to_thread", _passthrough_to_thread)
+
+    transcript = await de._debate_round(
+        [_fake_proposal("A", ["2401.00001", "2402.00001"])], "m", _FakeEmit(), "cand_1", _EVIDENCE_BY_ID
+    )
+    for turn in transcript:
+        assert turn["claims"][0]["arxiv_ids"] == []
+        assert turn["claims"][0]["claim"]
+
+
+async def test_debate_paper_verdicts_written(monkeypatch, corpus):
+    """The deterministic tally (0 tokens) that makes "the papers were debated"
+    checkable: per paper, who cited it, who discarded it, and which retrieved
+    papers nobody touched."""
+    from archimedes.models.regime import Regime
+
+    _patch_regime(monkeypatch, Regime.RISK_ON)
+    monkeypatch.setattr(de.asyncio, "to_thread", _passthrough_to_thread)
+    monkeypatch.setattr("archimedes.agents.strategy_fusion.load_corpus", lambda *a, **k: corpus)
+    monkeypatch.setattr(
+        "archimedes.services.llm_backend.make_llm_backend",
+        lambda model=None, **k: _AttributingDebateBackend(),
+    )
+
+    pool = [_fake_proposal("A", ["2401.00001", "2402.00001"])]
+
+    async def _fake_propose_pool(brief, model, corpus_arg):
+        return pool, _EVIDENCE_BY_ID
+
+    monkeypatch.setattr(de, "_propose_pool", _fake_propose_pool)
+    monkeypatch.setattr(
+        "archimedes.services.fusion_evaluator.evaluate_fusion_spec",
+        lambda spec, *, num_trials=None, **kw: _fake_ev(cagr=0.2, num_trials=num_trials),
+    )
+
+    brief = GenerateBrief(intent="momentum equities", max_papers=4)
+    board = await de._run_debate_leaderboard(candidate_id="cand_1", brief=brief, emit=_FakeEmit())
+
+    verdicts = board[0].debate_paper_verdicts
+    assert verdicts is not None, "every leaderboard entry must carry the tally"
+    by_id = {v["arxiv_id"]: v for v in verdicts}
+    # Every retrieved paper is listed — including the untouched ones, which is
+    # the interesting part when only a few were argued over.
+    assert set(by_id) == set(_EVIDENCE_BY_ID)
+    assert [v["arxiv_id"] for v in verdicts] == sorted(by_id), "deterministic order"
+
+    cited = by_id["2401.00001"]
+    assert cited["verdict"] == "cited"
+    assert sorted(cited["cited_by"]) == ["bear", "bull"]
+    assert cited["citations"] == 4  # 4 turns × 1 claim each
+    assert cited["title"] == _EVIDENCE_BY_ID["2401.00001"]["title"]
+
+    discarded = by_id["2402.00003"]
+    assert discarded["verdict"] == "discarded"
+    assert discarded["discard_reasons"] == ["no distinct mechanism"]
+
+    assert by_id["2401.00003"]["verdict"] == "unused"
+
+
+def test_debate_pool_order_is_deterministic_not_the_steer_order():
+    """`pool[:5]` used to take whichever five steers finished first. The order
+    is now (-cited-paper-count, name, spec-hash) — total, stable, and about
+    evidence rather than enumeration order. It is NOT a quality ranking:
+    nothing is backtested at debate time."""
+    thin = _fake_proposal("Zeta", ["2401.00001", "2402.00001"])
+    thick = _fake_proposal("Alpha", ["2401.00001", "2402.00001", "2401.00002"])
+    also_thin = _fake_proposal("Alpha2", ["2401.00002", "2402.00002"])
+
+    ordered = de._debate_pool_order([thin, also_thin, thick])
+    assert [p.strategy_name for p in ordered] == ["Alpha", "Alpha2", "Zeta"]
+    # Same members in a different input order → same output order.
+    assert de._debate_pool_order([thick, thin, also_thin]) == ordered
+
+
+def test_debate_cards_name_the_papers_not_just_the_strategies():
+    cards = de._candidate_cards([_fake_proposal("Momentum fusion", ["2401.00001"])], _EVIDENCE_BY_ID)
+    assert cards.startswith("[C1] Momentum fusion — cites arXiv:2401.00001")
+    assert _EVIDENCE_BY_ID["2401.00001"]["title"] in cards
+    # A pre-#1636 build's whole message was just the name; that must not be
+    # what a card degrades to.
+    assert cards != "Momentum fusion"
+
+
+def test_debate_cards_degrade_honestly_without_an_evidence_map():
+    """No evidence map (a caller that never ran the proposer pool) ⇒ ids with
+    no titles, and — critically — no claim can be attributed at all, rather
+    than every claim being trusted."""
+    cards = de._candidate_cards([_fake_proposal("A", ["2401.00001"])], {})
+    assert "arXiv:2401.00001" in cards
+    assert de._normalize_claim({"claim": "c", "arxiv_ids": ["2401.00001"]}, set())["arxiv_ids"] == []
+
+
+async def test_no_backend_means_no_paper_verdicts_not_an_all_unused_table(monkeypatch, corpus):
+    """Fail-soft, honestly (CLAUDE.md § fail-soft). With no LLM backend the
+    debate never runs, so there is nothing to tally — and a table of
+    all-`unused` rows would read as "the researchers saw 6 papers and engaged
+    with none" rather than as the absence it is."""
+    from archimedes.models.regime import Regime
+
+    class _Down:
+        available = False
+
+    _patch_regime(monkeypatch, Regime.RISK_ON)
+    monkeypatch.setattr(de.asyncio, "to_thread", _passthrough_to_thread)
+    monkeypatch.setattr("archimedes.agents.strategy_fusion.load_corpus", lambda *a, **k: corpus)
+    monkeypatch.setattr("archimedes.services.llm_backend.make_llm_backend", lambda model=None, **k: _Down())
+
+    pool = [_fake_proposal("A", ["2401.00001", "2402.00001"])]
+
+    async def _fake_propose_pool(brief, model, corpus_arg):
+        return pool, _EVIDENCE_BY_ID
+
+    monkeypatch.setattr(de, "_propose_pool", _fake_propose_pool)
+    monkeypatch.setattr(
+        "archimedes.services.fusion_evaluator.evaluate_fusion_spec",
+        lambda spec, *, num_trials=None, **kw: _fake_ev(cagr=0.2, num_trials=num_trials),
+    )
+
+    board = await de._run_debate_leaderboard(
+        candidate_id="cand_1", brief=GenerateBrief(intent="momentum equities", max_papers=4), emit=_FakeEmit()
+    )
+    assert board[0].debate_transcript is None
+    assert board[0].debate_paper_verdicts is None

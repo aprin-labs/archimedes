@@ -1,15 +1,15 @@
 {
   "schema": "a2a-agent-card (informal, simplified)",
   "name": "Archimedes",
-  "description": "Agentic trading, grounded in research — settled on Arc. Turns a natural-language investment intent into a research-grounded, rigor-gated portfolio strategy, executed in a non-custodial USDC vault on the Arc testnet (chain ID 5042002).",
+  "description": "Turns a natural-language investment intent into a research-grounded, rigor-gated portfolio strategy on Arc public testnet (chain ID 5042002). Generation is not anchored on-chain. Simulated paper deployments are live: paper_daily_returns is the graded track record the rigor gate sees. paper_agent_trades (PR #1704, not on main) is not a live path. Neither is on-chain execution proof. Executing strategies in non-custodial USDC vaults on Arc is roadmap, not shipped.",
   "url": "https://archimedes-arc.com",
   "version": "0.1.0",
   "provider": {
     "organization": "Archimedes",
     "url": "https://archimedes-arc.com"
   },
-  "documentationUrl": "https://github.com/a-apin/archimedes/blob/main/docs/agent-api.md",
-  "quickstartUrl": "https://github.com/a-apin/archimedes/blob/main/docs/agent-quickstart.md",
+  "documentationUrl": "https://github.com/aprin-labs/archimedes/blob/main/docs/agent-api.md",
+  "quickstartUrl": "https://github.com/aprin-labs/archimedes/blob/main/docs/agent-quickstart.md",
   "service": {
     "endpoint": "https://archimedes-arc.com/api",
     "manifest": "https://archimedes-arc.com/api/agent/manifest",
@@ -26,7 +26,7 @@
     "tokenURI": null,
     "status": "registration_pending",
     "registrationUri": "https://archimedes-arc.com/.well-known/agent-registration.json",
-    "note": "Not registered on-chain: no register() transaction has been sent, so agentId and tokenURI are null and NO ERC-8004 identity, reputation, or validation claim is made. Publishing a spec-typed registration file at registrationUri is not the same as being registered. Plan the call with scripts/register_erc8004_identity.py --plan."
+    "note": "Not registered on-chain: no register() transaction has been confirmed for this deployment's wallet, so agentId and tokenURI are null and NO ERC-8004 identity, reputation, or validation claim is made. Publishing a spec-typed registration file at registrationUri is not the same as being registered. This status is re-derived from a live registry read on every request; the sibling erc8004_verification block says which reading produced it. Plan the call with scripts/register_erc8004_identity.py --plan."
   },
   "authentication": {
     "schemes": ["Better Auth session"],
@@ -100,7 +100,7 @@
       "routes": {
         "verify": "POST /api/rigor/verify"
       },
-      "note": "Runs the gate's admission checks over a bare returns series you submit. DSR and walk-forward OOS are evaluable; PBO and the look-ahead audit report not_evaluable rather than a silent pass. `passes` is a QUORUM over the two runnable legs -- true only when DSR and OOS both ran and passed -- and because PBO and look-ahead can never run here the verdict is CAPPED, not equivalent to the strategy passport gate. Read legs_evaluated / legs_runnable / legs_total / verdict_capped alongside it. Backs the CLI's `verify`. Rate limited 5/minute."
+      "note": "Runs the gate's admission checks over a bare returns series you submit. DSR and walk-forward OOS are evaluable; PBO and the look-ahead audit report not_evaluable rather than a silent pass. `passes` is a QUORUM over the two runnable legs -- true only when DSR and OOS both ran and passed -- and because PBO and look-ahead can never run here the verdict is CAPPED, not equivalent to the strategy passport gate. Read legs_evaluated / legs_runnable / legs_total / verdict_capped alongside it. Minimum evaluation window is 250 daily bars (one trading year): under it the route answers 422 with reason window_too_short and bars_received/bars_required, never a verdict. Dates must be strict YYYY-MM-DD, unique and ascending; returns finite with |r| <= 1.0. Backs the CLI's `verify`. Rate limited 5/minute."
     },
     "paper": {
       "status": "live",
@@ -111,31 +111,32 @@
         "read": "GET /api/paper/deployments/{deployment_id}",
         "stop": "POST /api/paper/deployments/{deployment_id}/stop"
       },
-      "note": "Simulated: no chain, no funds. deploy is also live and puts real capital on-chain \u2014 choosing between them trades simulation for capital at risk, not working for not working."
+      "note": "Simulated paper deployments (POST /api/paper/deployments) are live: no chain, no funds. status live names that path. The graded book is paper_daily_returns \u2014 the track record the rigor gate sees, not on-chain execution proof. paper_agent_trades is an executor ledger / signal-state index from PR #1704 and is not on main; it is not what this group advertises. Do not round this up into paper trading validating a vault \u2014 vault execution is roadmap, not shipped. The deploy group's route resolves, but putting a strategy into an on-chain vault is roadmap, not shipped, and no user vault has ever been created. Arc is a testnet whose USDC comes from a faucet in any case."
     },
     "deploy": {
-      "status": "live",
+      "status": "roadmap",
       "authRequired": true,
       "routes": {
         "createVault": "POST /api/vaults/create"
       },
-      "note": "Creates a real, non-custodial vault on Arc: the caller's linked wallet owns it and the agent holds rebalance authority only, never withdraw-to-platform."
+      "note": "The deploy-a-vault journey is roadmap, not shipped: it is gated off every shipped surface (the UI's ROADMAP_SURFACES_ENABLED build flag, off by default) and no user vault has ever been created. `status: \"roadmap\"` above describes reachability for a user, not whether the route string 404s — the path resolves and the contracts behind it are deployed, but do not tell anyone Archimedes executes strategies on-chain today. The roadmap shape is non-custodial: when it ships, the caller's linked wallet will own the vault and the agent will hold rebalance authority only, never withdraw-to-platform."
     },
     "marketplace": {
-      "status": "live",
+      "status": "roadmap",
       "authRequired": true,
       "routes": {
         "publish": "POST /api/marketplace/publish",
         "subscribe": "POST /api/marketplace/subscribe"
       },
-      "note": "live describes the routes: publish/subscribe are wired to the redeployed contracts. It does not assert that a subscription's recurring USDC charge settles for real \u2014 that rides PAYMENTS_DRY_RUN, a DIFFERENT switch from the one the generation paywall reports (GENERATION_PAYMENTS_DRY_RUN was split off precisely so the generation rail could go live without un-drying marketplace settlement). No public endpoint publishes the marketplace switch's runtime value, so this card makes no claim about it \u2014 unlike endpoints.generate, whose price is quotable and real."
+      "note": "Marketplace is not a public surface. `status: \"roadmap\"` means do not present publish/subscribe as a shipped journey. The route strings exist and are wired, but they are not a product a visitor can use. This card also does not assert that a subscription's recurring USDC charge settles for real \u2014 that rides PAYMENTS_DRY_RUN, a DIFFERENT switch from the one the generation paywall reports."
     },
     "monitor": {
-      "status": "live",
+      "status": "roadmap",
       "authRequired": false,
       "routes": {
         "vaultHealth": "GET /api/vaults/{address}/health"
-      }
+      },
+      "note": "Monitoring a live position is roadmap, not shipped: `GET /api/vaults/{address}/health` resolves, but no user vault has ever been created, so there is no live position of a user's to read."
     }
   },
   "skills": [
@@ -148,32 +149,32 @@
     {
       "id": "paper-trade",
       "name": "Paper trade",
-      "description": "Deploy a rigor-passing strategy to a simulated paper portfolio and read its running performance. No chain, no funds.",
+      "description": "Simulated paper deployments (POST /api/paper/deployments) are live. The graded book is paper_daily_returns; it is not on-chain execution proof. paper_agent_trades (PR #1704) is not on main and is not this skill. Vault execution is roadmap, not shipped.",
       "status": "live"
     },
     {
       "id": "deploy-vault",
-      "name": "Deploy vault",
-      "description": "Execute a generated, rigor-passing strategy into a non-custodial USDC vault on Arc.",
-      "status": "live"
+      "name": "Deploy vault (roadmap)",
+      "description": "Executing a rigor-passing strategy in a non-custodial USDC vault on Arc is roadmap, not shipped. `POST /api/vaults/create` resolves and the contracts behind it are deployed, but the journey is roadmap-gated off every shipped surface and no user vault has ever been created.",
+      "status": "roadmap"
     },
     {
       "id": "monitor",
-      "name": "Monitor",
-      "description": "Read a deployed vault's live health, allocations, and performance.",
-      "status": "live"
+      "name": "Monitor a live position (roadmap)",
+      "description": "`GET /api/vaults/{address}/health` is live and answers for any address given to it, but with no user vault ever created there is no live position of a user's to read — so monitoring one is roadmap, not shipped.",
+      "status": "roadmap"
     },
     {
       "id": "publish",
-      "name": "Publish",
-      "description": "Publish a strategy to the nanopayment marketplace for other agents or users to subscribe to.",
-      "status": "live"
+      "name": "Publish (roadmap)",
+      "description": "Publishing a strategy to a nanopayment marketplace is roadmap, not shipped. Marketplace is not a public surface.",
+      "status": "roadmap"
     },
     {
       "id": "subscribe",
-      "name": "Subscribe",
-      "description": "Subscribe to a published strategy via sub-cent USDC nanopayments (x402 / Circle Gateway).",
-      "status": "live"
+      "name": "Subscribe (roadmap)",
+      "description": "Subscribing to a published strategy via sub-cent USDC nanopayments is roadmap, not shipped. Marketplace is not a public surface.",
+      "status": "roadmap"
     }
   ]
 }

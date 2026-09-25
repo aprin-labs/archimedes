@@ -18,22 +18,21 @@ const leaderboard = src("components/Leaderboard.jsx");
 
 // ── Item 2: /api/config/contracts null-vs-loading-vs-zero ────────────────
 
-test("Architecture.jsx treats a null vaults read as failed, not loading and not zero", () => {
-	// contracts.vaults === null (the fetch resolved, but the on-chain read
-	// failed) must flip the "Live user vaults" tile to failed — distinct from
-	// contractsLoading (contracts itself still null, i.e. fetch pending).
-	assert.match(
-		architecture,
-		/const vaultsUnread = contracts != null && contracts\.vaults == null;/,
-	);
-	assert.match(architecture, /failed=\{contractsError \|\| vaultsUnread\}/);
-});
+// The "Live user vaults on Arc" hero tile that #1356's `vaultsUnread` guard
+// protected was REMOVED in the 2026-08-30 claim scrub (owner decision:
+// on-chain execution is roadmap, so the architecture page states that in one
+// place and counts nothing). Its null-vs-loading-vs-zero test is deleted
+// rather than kept passing against a surface that no longer renders — a
+// guard for a deleted tile guards nothing, and leaving it would have to be
+// weakened to keep passing, which is worse. The sibling guards below and in
+// Landing.jsx (poolsUnread) still cover the same #1356 principle on the
+// surfaces that DO still render a live count.
 
 test("Architecture.jsx treats a degraded leaderboard as failed, not a measured zero", () => {
 	// leaderboard?.degraded is a 200 (the provider raised, or the curated
 	// cohort came back empty for a reason other than a legitimate filter —
 	// #1356), not a rejected fetch, so leaderboardError alone (set only by
-	// .catch()) never catches it. Mirrors the vaultsUnread line above.
+	// .catch()) never catches it. Mirrors Landing.jsx's poolsUnread line.
 	assert.match(architecture, /failed=\{leaderboardError \|\| leaderboard\?\.degraded\}/);
 });
 
@@ -104,11 +103,17 @@ test("Strategies.jsx's Examples panel is gated on !loadError so it never renders
 });
 
 test("Strategies.jsx's generated panel has the same loading guard Examples/Published already have", () => {
-	// Examples/Published: `{loading && <div className="caption mb-4">Loading…</div>}`
-	// then a separate `{!loading && (...)}` block. Generated now uses a
-	// ternary with the identical loading branch inside the same activeTab
-	// block, so this must appear a third time (once per tab).
-	const loadingGuardCount = (strategies.match(/<div className="caption mb-4">Loading…<\/div>/g) || []).length;
+	// Examples/Published: `{loading && <StrategyListSkeleton />}` then a separate
+	// `{!loading && (...)}` block. Generated uses a ternary with the identical
+	// loading branch inside the same activeTab block, so this must appear a
+	// third time (once per tab).
+	//
+	// #1645 replaced the `<div className="caption mb-4">Loading…</div>` this
+	// used to count with a real skeleton. The INVARIANT is unchanged and is
+	// what this test is for — every tab has a loading guard, none paints its
+	// empty state while the fetch is still in flight — so the count moved to
+	// the new construct rather than the test being deleted.
+	const loadingGuardCount = (strategies.match(/<StrategyListSkeleton \/>/g) || []).length;
 	assert.equal(loadingGuardCount, 3, "expected one loading guard each for generated, examples, and published");
 });
 

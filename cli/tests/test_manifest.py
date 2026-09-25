@@ -57,8 +57,24 @@ def test_manifest_flags_match_the_real_commands_both_directions():
 
 
 def test_manifest_exit_codes_match_exits_module():
-    assert MANIFEST["exit_codes"].keys() == {"0", "1", "2", "3"}
-    assert exits.OK == 0 and exits.GATE_FAILED == 1 and exits.AUTH == 2 and exits.NOT_IMPLEMENTED == 3
+    """Every code `exits.py` defines must appear in the manifest, and vice versa.
+
+    Rewritten in 0.2.0 from a hardcoded ``{"0","1","2","3"}`` literal, which had
+    already drifted: ``INCOMPLETE = 4`` shipped with #1481 and the manifest never
+    learned about it, so an agent branching on this contract read 4 as undefined.
+    Deriving the expected set from the module makes that drift impossible to
+    repeat — adding a code to `exits.py` without documenting it now fails here.
+    """
+    declared = {
+        str(getattr(exits, name))
+        for name in exits.__all__
+        # AUTH deliberately shares USAGE's value 2; a set collapses them, which
+        # is correct — the manifest documents numbers, not names.
+    }
+    assert MANIFEST["exit_codes"].keys() == declared
+    assert (exits.OK, exits.GATE_FAILED, exits.AUTH, exits.NOT_IMPLEMENTED) == (0, 1, 2, 3)
+    assert (exits.INCOMPLETE, exits.PAYMENT_REQUIRED) == (4, 5)
+    assert (exits.ACCOUNT_ACTION_REQUIRED, exits.JOB_FAILED, exits.STILL_RUNNING) == (6, 7, 8)
 
 
 def test_manifest_version_matches_package():

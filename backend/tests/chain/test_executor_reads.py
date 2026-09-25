@@ -327,10 +327,12 @@ class TestBackendSignerAddressConfirmed:
     """``backend_signer_address`` surfaces WALLET_ADDRESS on the Circle path —
     an operator-maintained mirror of the real signer, not a derivation of it
     (signing itself is keyed on the separate WALLET_ID, circle_signer.py).
-    ``backend_signer_address_confirmed`` must return None whenever the answer
-    isn't cryptographically certain, so a stale mirror can never be mistaken
-    for a confirmed signer identity by a caller that acts irreversibly on it
-    (the reveal-reconciliation signer pre-check, agent_runner.py)."""
+    ``backend_signer_address_confirmed`` must never return that mirror: on the
+    Circle path it asks Circle what WALLET_ID signs with (#1412), and returns
+    None whenever the answer cannot be established — so a stale mirror can
+    never be mistaken for a confirmed signer identity by a caller that acts
+    irreversibly on it (the reveal-reconciliation signer pre-check,
+    agent_runner.py)."""
 
     def test_raw_key_path_is_confirmed(self, executor):
         account = MagicMock()
@@ -339,7 +341,7 @@ class TestBackendSignerAddressConfirmed:
         with patch("archimedes.chain.executor.circle_signer") as signer:
             signer.is_configured = False
             addr = executor.backend_signer_address()
-            confirmed = executor.backend_signer_address_confirmed()
+            confirmed = asyncio.run(executor.backend_signer_address_confirmed())
         assert addr == account.address
         assert confirmed == account.address  # raw key IS the signer — always confirmed
 
@@ -348,25 +350,57 @@ class TestBackendSignerAddressConfirmed:
         with patch("archimedes.chain.executor.circle_signer") as signer:
             signer.is_configured = False
             assert executor.backend_signer_address() is None
-            assert executor.backend_signer_address_confirmed() is None
+            assert asyncio.run(executor.backend_signer_address_confirmed()) is None
 
-    def test_circle_path_confirmed_is_none_even_though_the_mirror_has_a_value(self, executor, monkeypatch):
-        """The exact drift the review flagged: WALLET_ADDRESS is set (and
-        would be returned by ``backend_signer_address``) but signing on the
-        Circle path is keyed on WALLET_ID, a separate env var — so the
-        confirmed variant must refuse to vouch for it."""
+    def test_circle_path_confirmed_comes_from_circle_not_the_mirror(self, executor, monkeypatch):
+        """#1412: the confirmed answer is what Circle says WALLET_ID signs
+        with. WALLET_ADDRESS is set to something else entirely here; the
+        confirmed variant must ignore it completely."""
         monkeypatch.setenv("WALLET_ADDRESS", "0xPOSSIBLYSTALE00000000000000000000000000")
         with patch("archimedes.chain.executor.circle_signer") as signer:
             signer.is_configured = True
-            assert executor.backend_signer_address() == "0xPOSSIBLYSTALE00000000000000000000000000"
-            assert executor.backend_signer_address_confirmed() is None
+            signer.get_wallet_address = AsyncMock(return_value="0xCIRCLETRUTH000000000000000000000000000a")
+            addr = executor.backend_signer_address()
+            confirmed = asyncio.run(executor.backend_signer_address_confirmed())
+        assert addr == "0xPOSSIBLYSTALE00000000000000000000000000"  # the mirror, unchanged
+        assert confirmed == "0xCIRCLETRUTH000000000000000000000000000a"
+        assert confirmed != addr  # the two are genuinely different sources
 
-    def test_circle_path_confirmed_is_none_even_when_the_mirror_is_unset(self, executor, monkeypatch):
+    def test_circle_path_confirmed_works_when_the_mirror_is_unset(self, executor, monkeypatch):
+        """WALLET_ADDRESS is optional to the confirmed path — it is never read
+        there. With the mirror entirely absent the confirmation still lands."""
         monkeypatch.delenv("WALLET_ADDRESS", raising=False)
         with patch("archimedes.chain.executor.circle_signer") as signer:
             signer.is_configured = True
+            signer.get_wallet_address = AsyncMock(return_value="0xCIRCLETRUTH000000000000000000000000000a")
             assert executor.backend_signer_address() is None
-            assert executor.backend_signer_address_confirmed() is None
+            assert asyncio.run(executor.backend_signer_address_confirmed()) == (
+                "0xCIRCLETRUTH000000000000000000000000000a"
+            )
+
+    def test_circle_path_returns_the_mismatching_address_not_none(self, executor, monkeypatch):
+        """When Circle reports an address that differs from the committer the
+        caller is comparing against, the MISMATCHING address must come back —
+        None would silently disarm the pre-check, and the reconciler needs the
+        actual value to log which key it is now signing with."""
+        monkeypatch.setenv("WALLET_ADDRESS", "0xOLDKEY000000000000000000000000000000000")
+        with patch("archimedes.chain.executor.circle_signer") as signer:
+            signer.is_configured = True
+            signer.get_wallet_address = AsyncMock(return_value="0xROTATEDKEY0000000000000000000000000000b")
+            confirmed = asyncio.run(executor.backend_signer_address_confirmed())
+        assert confirmed == "0xROTATEDKEY0000000000000000000000000000b"
+
+    def test_circle_path_lookup_failure_is_none_never_a_guess(self, executor, monkeypatch):
+        """Anti-goal guard (#1412): when the Circle lookup itself fails,
+        ``get_wallet_address`` returns None and the confirmed answer must stay
+        None — NOT fall back to the WALLET_ADDRESS mirror, which is set here
+        precisely so a fallback would be visible."""
+        monkeypatch.setenv("WALLET_ADDRESS", "0xPOSSIBLYSTALE00000000000000000000000000")
+        with patch("archimedes.chain.executor.circle_signer") as signer:
+            signer.is_configured = True
+            signer.get_wallet_address = AsyncMock(return_value=None)
+            confirmed = asyncio.run(executor.backend_signer_address_confirmed())
+        assert confirmed is None
 
 
 # ── helpers: token symbol / decimals / value / parse ──────────

@@ -25,7 +25,7 @@ from circlekit.server import GatewayMiddleware
 from circlekit.wallets import CircleWalletSigner
 from circlekit.x402 import create_payment_header, get_payment_required
 
-from archimedes.marketplace.config import gateway_chain
+from archimedes.marketplace.config import gateway_chain, payments_halted
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +119,23 @@ async def charge(
     *wallet_id* is the subscriber's Circle Developer-Controlled Wallet UUID.
     *wallet_address* is the subscriber's Circle wallet 0x address.
     """
+    if payments_halted():
+        # #1240 backstop, NOT the policy gate. The tick rail's gate is
+        # MarketService._charge_one, which short-circuits before ever calling
+        # this function and returns charge_suppressed=True so the tick ledger
+        # records charged=False without deferring the subscriber. Reaching
+        # HERE while halted therefore means a caller went around that gate —
+        # a bug, logged at ERROR so it is visible, and answered in the only
+        # safe direction: False, meaning "no charge was made". That is the
+        # honest answer for any caller (bool is all this primitive can say),
+        # and it fails closed rather than moving USDC.
+        logger.error(
+            "[%s] payments.charge reached while PAYMENTS_HALT is set — a caller bypassed the "
+            "MarketService._charge_one gate. Refusing to charge sub %s.",
+            tick_id,
+            sub_id,
+        )
+        return False
     try:
         middleware = get_gateway_middleware(seller_address)
         price = fee_to_price(action_count, flat_fee_raw)

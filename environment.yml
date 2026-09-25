@@ -12,6 +12,23 @@ dependencies:
                 # have to install Node separately and CI-vs-local parity
                 # breaks (the ESLint gate runs in CI only).
 
+  # Postgres client library — needed to BUILD, not just to run (issue #1632).
+  # backend/requirements-base.txt now asks for source-built `psycopg2` instead
+  # of `psycopg2-binary`, so pip compiles it during `conda env create` and needs
+  # `pg_config` + the libpq headers on PATH. conda-forge's libpq supplies both,
+  # and it is linked against the SAME conda-forge openssl as the env's Python —
+  # so a dev machine gets the same one-OpenSSL-per-process property production
+  # gets, which is the point of the swap. (A C compiler is also required:
+  # Xcode Command Line Tools on macOS, build-essential on Linux. Deliberately
+  # not pulled from conda-forge — `c-compiler` is a large download that tends to
+  # fight the system toolchain, and every dev already has one.)
+  #
+  # This is a conda-level entry on purpose. It is a shared LIBRARY, not a pip
+  # floor, so it is invisible to backend/tests/test_env_requirements_alignment.py
+  # and creates no second home for a version (the psycopg2 floor still lives
+  # only in backend/requirements-base.txt, which the pip block below includes).
+  - libpq
+
   # Infra / cloud CLI tooling — conda-forge binaries, pinned so the whole team
   # (and a from-scratch setup) gets one consistent version for IaC + AWS work.
   - terraform>=1.10   # IaC for the AWS stack (infra/*.tf). >=1.10 required for S3-native
@@ -24,74 +41,32 @@ dependencies:
 
   # Python deps installed via pip — pinned loosely; tighten in pyproject.toml as the project firms up.
   - pip:
-      # --- Web backend ---
-      - fastapi>=0.141.1
-      - "starlette>=1.6.0"            # Pinned directly to close PYSEC-2026-161 (Host-header validation bypass); FastAPI's range can resolve to vulnerable 1.0.0 without this floor. Floor raised to 1.3.1 to close CVE-2026-54282 / CVE-2026-54283 (CVE bump 2026-06-25), then to 1.4.1 and 1.6.0 to match backend/requirements.txt (the 1.6.0 move is a Dependabot floor raise, not a CVE bump - see the block comment there); FastAPI's requires-dist is starlette>=0.46.0 with no upper bound, so this resolves cleanly.
-      - "uvicorn[standard]>=0.52.4"
-      - sqlalchemy>=2.0.52
-      - alembic>=1.19.1               # Schema migration tool (issue #1028) — replaces the hand-rolled idempotent ADD-COLUMN patches in db.py. MIT license, maintained by the SQLAlchemy project. Aligned with backend/requirements.txt.
-      - psycopg2-binary>=2.9.12       # PostgreSQL driver (binary wheel; no system pq needed). Floor aligned with backend/requirements.txt via dependabot PR #247.
-      - redis>=8.1.0                  # Redis client for live regime/state cache (aligned with backend/requirements.txt)
-      - pydantic>=2.13.4
-      - pydantic-settings>=2.14.2     # Floor aligned with backend/requirements.txt (dependabot batch 2026-07-13).
-      - python-dotenv>=1.2.3
-      - "slowapi>=0.1.10"             # FastAPI rate-limiter — required by api/limiter.py + user_routes.py. CI installs from backend/requirements.txt; this keeps local dev parity.
+      # --- Shared backend floors ---
+      # Included, not restated. backend/requirements-base.txt owns the 33
+      # floors that local dev and Docker/CI both need, so a Dependabot bump
+      # lands in one file instead of being mirrored here by hand (issue #1522;
+      # when the guard in #1493 landed, 18 of 34 shared floors had already
+      # drifted, every one of them low). pip resolves this path relative to the
+      # directory holding environment.yml, which is where `conda env create`
+      # runs pip from.
+      #
+      # NOT included: the `--extra-index-url .../whl/cpu` + torch +
+      # sentence-transformers block, which stays in backend/requirements.txt.
+      # Pulling the CPU wheel index in here would install the CPU build on dev
+      # machines and lose MPS on Apple Silicon. The native floors are restated
+      # below instead, and backend/tests/test_env_requirements_alignment.py
+      # holds them in lockstep with the deployed ones.
+      - -r backend/requirements-base.txt
 
-      # --- Data + numerics ---
-      - numpy>=2.5.2,<3.0             # numpy 2 verified against backtrader 1.9.78.123 on 2026-06-12: full analytics-engine suite (170 tests) + backend backtrader tests + e2e Faber SMA200 run all green. Aligned with backend/requirements.txt (dependabot #489).
-      - pandas>=3.0.5
-      - scipy>=1.18.0
-      - scikit-learn>=1.9.0          # GaussianMixture + StandardScaler for the GmmRegimeDetector (issue #661); BSD-3-Clause. Aligned with backend/requirements.txt (dependabot batch 2026-07-13).
+      # --- Plotting (environment.yml-only) ---
+      # Exploratory/notebook use; no counterpart in backend/requirements.txt
+      # because no backend runtime module imports either.
       - matplotlib>=3.8
       - seaborn>=0.13
 
-      # --- Market data ---
-      - yfinance>=1.7.0              # Historical + live equity/ETF/crypto data; for backtesting
-      - requests>=2.32,<2.34          # arxiv pins requests<2.34; keep aligned with backend/requirements.txt (Dependabot #702 broke the deploy 2026-06-25)
-      - aiohttp>=3.14.3                # Bumped from 3.13.5 to close CVE-2026-34993 / CVE-2026-47265 (HTTP parser DoS/smuggling). Floor aligned with backend/requirements.txt via dependabot PR #1165.
-      - httpx>=0.28.1                 # Directly imported by services/corpus_service.py (arXiv intake) and services/llm_backend.py (OpenAI-compatible + Ollama). Pinned so we don't rely on transitive resolution.
-      - urllib3>=2.7.0                # Transitive (requests / boto3 / arxiv). Pinned directly to close PYSEC-2026-141 / PYSEC-2026-142 so a fresh resolve can't regress (CVE bump 2026-06-25). Aligned with backend/requirements.txt.
-
-      # --- Backtesting (per backtrader-vs-vectorbt decision memo) ---
-      - backtrader>=1.9.78.123        # Decision: v1 default. See docs/specs/backtrader-vs-vectorbt-decision-memo.md. Floor aligned with backend/requirements.txt via dependabot PR #249.
-
-      # --- x402 micropayments / Circle marketplace ---
-      # circle-titanoboa-sdk provides circlekit — imported by marketplace_routes.py,
-      # wallet_provisioner.py, and settlement.py. Pinned to the same commit as
-      # backend/requirements.txt; pinned to a forked commit (not on PyPI) so the
-      # git URL form is required. Evaluate vendoring if the upstream fork disappears.
-      # pip-audit flags PYSEC-2023-142 / PYSEC-2025-33 against the transitive vyper
-      # pull-in (via titanoboa) — both false positives against our resolved 0.4.3
-      # (fixed upstream in 0.3.1 / 0.4.1 respectively; also moot since we never
-      # compile untrusted Vyper source). Full analysis: backend/requirements.txt
-      # comment above the same pin (investigated 2026-07-14).
-      - "circle-titanoboa-sdk[x402,wallets] @ git+https://github.com/vyperlang/circle-titanoboa-sdk.git@09828f399731dd3250fb402f7f511046fb202355"
-
-      # --- LLM ---
-      - anthropic>=0.120.2            # Claude / GLM-compatible client for strategy extraction + reasoning trace generation + chat. Floor aligned with backend/requirements.txt via dependabot PR #1166; this closes a large pre-existing drift (was still pinned at 0.104.1, 13 releases behind requirements.txt's 0.117.0).
-
-      # --- On-chain / Web3 ---
-      # Floors kept in lockstep with backend/requirements.txt (audit 2026-06-14):
-      # the two had drifted (web3 7.0 vs 7.16.0, eth-utils 5.0 vs 6.0.0), which is
-      # the documented #1 cause of "works locally, breaks in CI". eth-utils 5→6
-      # was an API-breaking bump, so the floors must agree.
-      - web3>=7.16.0                  # Python EVM client; works with Arc (EVM-compatible)
-      - eth-account>=0.13.7           # Local key management for testnet wallets
-      - eth-abi>=5.2.0,<6             # ABI codec (direct import in marketplace/encoding.py). Cap <6: eth-account's pre-release specifier (`eth-abi>=4.0.0-b.2`) otherwise lets pip resolve the 6.0.0b1 beta — no betas on the funds path. Aligned with backend/requirements.txt.
-      - eth-utils>=6.0.0
-      - cryptography>=50.0.0          # RSA sign/serialize for the oracle signer (backend/archimedes/chain/oracle_updater.py); mirrors backend/requirements.txt
-
-      # --- AWS / S3 ---
-      - boto3>=1.43.71                 # S3 artifact reads for KB pipeline output (embeddings, KG). Floor aligned with backend/requirements.txt via dependabot PR #1162.
-      - botocore>=1.43.81              # Direct imports for AWS exceptions/config. boto3 constrains compatible versions; aligned with backend/requirements.txt.
-
-      # --- Paper ingestion (Q-fin corpus) ---
-      - arxiv>=4.0.1                  # arxiv API client. Floor aligned with backend/requirements.txt (was still pinned at 2.1, a pre-existing drift with no open Dependabot PR to attach the fix to).
-      - pypdf>=6.16.0                 # PDF text extraction. Floor 6.13.3 closed 8 CVEs incl GHSA-jm82-fx9c-mx94 (CVE bump 2026-06-25). Aligned with backend/requirements.txt (dependabot batch 2026-07-13).
-
       # --- Semantic retrieval (paper_rag MiniLM embeddings, issue #874) ---
       - torch>=2.13.0,<3.0             # PyTorch CPU (local dev: pip picks the native/MPS wheel; Docker uses the CPU-only wheel via --extra-index-url in requirements.txt). Floor aligned with backend/requirements.txt via dependabot PR #1163.
-      - sentence-transformers>=5.6.1  # all-MiniLM-L6-v2 zero-cost semantic retrieval for paper_rag.py. Floor aligned with backend/requirements.txt via dependabot PR #1167; this closes a large pre-existing drift (was still pinned at 2.7, several major versions behind requirements.txt's 5.6.0).
+      - sentence-transformers>=6.0.1  # all-MiniLM-L6-v2 zero-cost semantic retrieval for paper_rag.py. Floor aligned with backend/requirements.txt via dependabot PR #1858 (6.0.0 -> 6.0.1, patch).
 
       # --- Quality + tests ---
       - ruff>=0.6                     # Linter + formatter; configured at line length 120
@@ -99,6 +74,7 @@ dependencies:
       - pytest-asyncio>=0.24
       - pytest-cov>=5.0
       - "fakeredis[lua]>=2.26.0"         # Test double for Redis in marketplace unit tests (test_state.py); dev-only, not in prod requirements.txt
+      - pathspec>=0.12                # gitignore-style matching, the library mkdocs compiles `exclude_docs`/`not_in_nav` with. Required by the docs publication guards (test_docs_default_deny.py, test_mkdocs_exclude_docs_matches.py) so they assert what the site build actually does; dev/test-only, not in prod requirements.txt. Mirrored in .github/workflows/quality-gate.yml's two pip install lines.
       - mypy>=1.11
       - "pip-audit>=2.7"              # Supply-chain CVE scanner — run `pip-audit` to check installed deps against the PyPI vulnerability DB. Not yet a CI gate; advisory only.
 

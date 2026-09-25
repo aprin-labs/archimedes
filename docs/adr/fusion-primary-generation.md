@@ -29,7 +29,7 @@
 ## Decision
 
 **Fusion-primary dispatch:**
-1. **Feature-flagged** (`ARCHIMEDES_FUSION_ENABLED`, default OFF) so ops can disable it without code change; the live path stays deterministic for tests/offline.
+1. ~~**Feature-flagged** (`ARCHIMEDES_FUSION_ENABLED`, default OFF) so ops can disable it without code change; the live path stays deterministic for tests/offline.~~ **SUPERSEDED 2026-09-02 (deck Q4): the flag is retired and fusion is unconditional.** "Ops can disable it" was never true in the useful sense — once the debate society became the sole generation pipeline, disabling fusion did not fall back to anything, it made Generate silently return nothing. Rollback is still a task-definition revision, as below. Guard: [`backend/tests/test_fusion_flag_retired.py`](../../backend/tests/test_fusion_flag_retired.py); row: [`operations/feature-flag-fliplist.md`](../operations/feature-flag-fliplist.md).
 2. **Requires a reachable LLM + a sufficiently rich corpus** — otherwise decline with an honest sentinel and fall through to architect/agent (never crash).
 3. **User-steered, not free-form** — the `FusionBrief` (asset classes, risk appetite, direction, paper budget) pre-filters the corpus before the model sees it; the model may not introduce papers outside the filtered set.
 4. **Output is explicitly pre-backtest** — a `novelty_rationale` + `fusion_reasoning` (which papers, how they combine, why novel), rendered on the passport so the user knows they're evaluating a hypothesis, not a validated strategy. The rigor gate ([rigor-gate-unification](rigor-gate-unification.md)) validates separately.

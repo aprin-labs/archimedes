@@ -1,5 +1,6 @@
 .PHONY: help setup wallet fund compile test deploy feed balance \
-        up down logs pytest lint format ui-dev clean routes rotate-secret docs-check
+        up down logs pytest lint format ui-dev clean routes rotate-secret docs-check \
+        check-local
 
 # ─── Help (default) ──────────────────────────────────
 
@@ -16,6 +17,10 @@ help:
 	@echo "    lint         ruff check"
 	@echo "    format       ruff format"
 	@echo "    routes       Dump FastAPI route inventory"
+	@echo ""
+	@echo "  Local-mode contract:"
+	@echo "    check-local  Verify this config is local mode — no runners, no prod secrets,"
+	@echo "                 no ECR pull path (docs/local-vs-prod.md; needs no docker daemon)"
 	@echo ""
 	@echo "  Docs:"
 	@echo "    docs-check   Run the docs gate locally (links + index block; staleness informs)"
@@ -135,6 +140,15 @@ balance:
 		const c = initiateDeveloperControlledWalletsClient({ apiKey: process.env.CIRCLE_API_KEY, entitySecret: process.env.CIRCLE_ENTITY_SECRET });\
 		const r = await c.getWalletTokenBalance({ id: process.env.WALLET_ID });\
 		console.log(JSON.stringify(r.data, null, 2));"
+
+# ─── Local-mode contract ─────────────────────────────
+
+# Reads the committed compose files + `.env` (or `.env.example` when there is no
+# `.env`) and checks the five things that separate local mode from production —
+# see docs/local-vs-prod.md. Parses YAML rather than shelling `docker compose
+# config`, so it runs with the docker daemon closed and CI can hold it.
+check-local:
+	@python3 scripts/check-local-mode.py
 
 # ─── Docs ────────────────────────────────────────────
 

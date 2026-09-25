@@ -12,6 +12,7 @@ from archimedes.marketplace.settlement import (
     SWEEP_MIN_DEPOSIT_RAW,
     SettlementSweeper,
 )
+
 from tests.gateway_fake import FakeGatewayClient
 
 
@@ -88,6 +89,131 @@ def test_sweeper_defaults_to_live_mode(settings):
     """Constructing without the flag keeps live behavior (backwards-compatible)."""
     assert SettlementSweeper(settings)._payments_dry_run is False
     assert SettlementSweeper(settings, payments_dry_run=True)._payments_dry_run is True
+
+
+# ── PAYMENTS_HALT guard (#1240 kill switch, second round): the automatic
+# per-tick sweep moves real USDC with no human approval step and was
+# previously gated only on payments_dry_run — an operator flipping
+# PAYMENTS_HALT=true did not stop it. Same fail-safe posture as the
+# PAYMENTS_DRY_RUN guard above, read fresh per call (never cached).
+
+
+@pytest.mark.asyncio
+async def test_payments_halt_sweep_publisher_is_noop(settings, pub, monkeypatch):
+    """PAYMENTS_HALT=true stops sweep_publisher from moving real value — no
+    signer/executor touched — even though payments_dry_run is False (live)."""
+    monkeypatch.setenv("PAYMENTS_HALT", "true")
+    sweeper = SettlementSweeper(settings, payments_dry_run=False)
+    sweeper._get_signer = MagicMock(side_effect=AssertionError("signer must not run while PAYMENTS_HALT"))
+    sweeper._get_executor = MagicMock(side_effect=AssertionError("executor must not run while PAYMENTS_HALT"))
+    await sweeper.sweep_publisher(pub)
+    # No return-value assertion: sweep_publisher is `-> None` on every path,
+    # so `result is None` holds whether or not the guard fired and proves
+    # nothing. The discriminator is that neither accessor was reached — the
+    # `pub` fixture sets agent_wallet_id AND gateway_seller_address, so
+    # without the guard this call falls through to _stage_a_gateway_to_wallet
+    # and calls _get_signer.
+    sweeper._get_signer.assert_not_called()
+    sweeper._get_executor.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_payments_halt_false_sweep_publisher_still_runs(sweeper, pub, monkeypatch):
+    """Adversarial companion: PAYMENTS_HALT=false (the default) must NOT
+    block the sweep — proves the guard above isn't a tautology that always
+    skips regardless of the flag's value."""
+    monkeypatch.setenv("PAYMENTS_HALT", "false")
+    with (
+        patch.object(sweeper, "_stage_a_gateway_to_wallet") as mock_a,
+        patch.object(sweeper, "_stage_b_wallet_to_pool") as mock_b,
+    ):
+        await sweeper.sweep_publisher(pub)
+        mock_a.assert_awaited_once_with(pub)
+        mock_b.assert_awaited_once_with(pub)
+
+
+# ── PAYMENTS_HALT guard (#1240 kill switch, third round): withdraw_publisher
+# and withdraw_subscriber are reachable directly from authenticated endpoints
+# (Withdraw button, unsubscribe) without going through sweep_publisher, so
+# gating the sweep alone left PaymentSplitter.withdraw and the DCW USDC
+# transfer unprotected. Same fail-safe posture, read fresh per call.
+
+
+@pytest.mark.asyncio
+async def test_payments_halt_withdraw_publisher_is_noop(settings, pub, monkeypatch):
+    """PAYMENTS_HALT=true stops withdraw_publisher's real PaymentSplitter.withdraw
+    — no executor touched — even though payments_dry_run is False (live)."""
+    monkeypatch.setenv("PAYMENTS_HALT", "true")
+    sweeper = SettlementSweeper(settings, payments_dry_run=False)
+    sweeper._get_executor = MagicMock(side_effect=AssertionError("executor must not run while PAYMENTS_HALT"))
+    tx = await sweeper.withdraw_publisher(pub, 5_000_000)
+    assert tx is None
+    sweeper._get_executor.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_payments_halt_false_withdraw_publisher_still_runs(sweeper, pub, splitter_addr, monkeypatch):
+    """Adversarial companion: PAYMENTS_HALT=false (the default) must NOT
+    block withdraw_publisher — proves the guard above isn't a tautology."""
+    monkeypatch.setenv("PAYMENTS_HALT", "false")
+    executor = MagicMock()
+    executor._submit_and_wait = MagicMock(return_value="0xtxStageC")
+    sweeper._get_executor = MagicMock(return_value=executor)
+
+    tx = await sweeper.withdraw_publisher(pub, 5_000_000)
+
+    assert tx == "0xtxStageC"
+    executor._submit_and_wait.assert_called_once_with(
+        splitter_addr, "withdraw(bytes32,uint256)", [pub.pool_id, "5000000"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_payments_halt_withdraw_subscriber_is_noop(settings, monkeypatch):
+    """PAYMENTS_HALT=true stops withdraw_subscriber's real DCW USDC transfer
+    — no balance read, no executor touched — even though payments_dry_run is
+    False (live). Asserting on ``_usdc_balance_of`` (the first mock the live
+    path touches) rather than ``_get_executor`` matters: with the guard
+    removed, the code still reaches the try/except before the balance read,
+    so a mock that *raises* there gets swallowed by that except and returns
+    None either way — ``_get_executor.assert_not_called()`` alone would pass
+    whether or not the guard exists. ``_usdc_balance_of.assert_not_called()``
+    is the assertion that actually distinguishes the two."""
+    monkeypatch.setenv("PAYMENTS_HALT", "true")
+    sweeper = SettlementSweeper(settings, payments_dry_run=False)
+    sweeper._usdc_balance_of = MagicMock(side_effect=AssertionError("balance read must not run while PAYMENTS_HALT"))
+    sweeper._get_executor = MagicMock(side_effect=AssertionError("executor must not run while PAYMENTS_HALT"))
+    tx = await sweeper.withdraw_subscriber(
+        circle_wallet_id="w-1", dcw_address="0xdcw", to_wallet="0xto", sub_id="sub-1"
+    )
+    assert tx is None
+    sweeper._usdc_balance_of.assert_not_called()
+    sweeper._get_executor.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_payments_halt_false_withdraw_subscriber_still_runs(sweeper, settings, monkeypatch):
+    """Adversarial companion: PAYMENTS_HALT=false (the default) must NOT
+    block withdraw_subscriber — proves the guard above isn't a tautology."""
+    monkeypatch.setenv("PAYMENTS_HALT", "false")
+    sweeper._usdc_balance_of = MagicMock(return_value=7_250_000)
+    executor = MagicMock()
+    executor._submit_and_wait = MagicMock(return_value="0xtxReturn")
+    sweeper._get_executor = MagicMock(return_value=executor)
+
+    tx = await sweeper.withdraw_subscriber(
+        circle_wallet_id="w-dcw-1",
+        dcw_address="0xDCW0000000000000000000000000000000000001",
+        to_wallet="0xS1WE0000000000000000000000000000000000001",
+        sub_id="sub-9",
+    )
+
+    assert tx == "0xtxReturn"
+    executor._submit_and_wait.assert_called_once_with(
+        settings.usdc_address,
+        "transfer(address,uint256)",
+        ["0xS1WE0000000000000000000000000000000000001", "7250000"],
+    )
 
 
 # ── Stage A: Gateway balance below threshold → no withdraw ──────────────

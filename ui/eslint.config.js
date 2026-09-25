@@ -62,4 +62,12 @@ export default defineConfig([
     files: ['postcss.config.js', 'vite.config.js', 'eslint.config.js'],
     languageOptions: { globals: { ...globals.node } },
   },
+  // `npm test` is `node --test`, so the suite executes in Node and may use
+  // Node globals (#1602 needs `process.env.TZ` to re-home the local calendar
+  // and prove the chart's date labels do not move with the viewer's timezone).
+  // Browser globals stay in scope too — these files also assert on UI source.
+  {
+    files: ['test/**/*.js', 'scripts/**/*.mjs'],
+    languageOptions: { globals: { ...globals.browser, ...globals.node } },
+  },
 ])

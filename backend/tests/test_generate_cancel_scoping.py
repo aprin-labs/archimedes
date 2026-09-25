@@ -6,7 +6,7 @@ tagged with canonical user ownership; legacy wallet-owned jobs remain readable
 only through a verified link. Every cancellation now requires an account.
 
 Hermetic: the Redis-backed job store is mocked at the boundary; SIWE sessions
-are real signed cookies (test_chat_routes / test_user_routes precedent).
+are real signed cookies (test_user_routes precedent).
 """
 
 from __future__ import annotations
@@ -43,6 +43,10 @@ def _mock_store(owner_wallet: str | None):
     )
     store.update_status = AsyncMock()
     store.push_event = AsyncMock()
+    # The durable cross-process cancel flag (#1667) — cancel_job now refuses to
+    # report "cancelled" until this write is confirmed. Behaviour when it is
+    # NOT confirmed is covered in test_generate_cancel_cross_process.py.
+    store.request_cancel = AsyncMock(return_value=True)
     return store
 
 

@@ -9,7 +9,7 @@ rebalance period, not Python strategy code.
 
 This module fills that hole with a vanilla pandas/numpy simulator:
 
-  1. ``market_data_provider.get_provider().get_daily_ohlcv`` (default
+  1. ``market_data_provider.get_provider(seam="daily").get_daily_ohlcv`` (default
      yfinance; vendor-swappable + ``asset_daily_bars``-cached, #1218/#1282)
      for every ticker in ``weights``
   2. Wide-form close panel with strict inner-join on the business-day index
@@ -74,16 +74,16 @@ def _fetch_price_panel(symbols: list[str], start: str, end: str) -> tuple[pd.Dat
     EVERY requested symbol traded.
 
     Fetches via the market-data provider seam
-    (``archimedes.services.market_data_provider.get_provider().get_daily_ohlcv``,
-    #1218/#1282) rather than analytics-engine's ``fetch_ohlcv`` directly, so
+    (``get_provider(seam="daily").get_daily_ohlcv``, #1218/#1282/#1798)
+    rather than analytics-engine's ``fetch_ohlcv`` directly, so
     this — the GENERATION path's portfolio-weights backtester — honors
-    ``MARKET_DATA_PROVIDER`` and reads/writes the ``asset_daily_bars`` cache
+    ``MARKET_DATA_DAILY_PROVIDER`` and reads/writes the ``asset_daily_bars`` cache
     the same way the request-path call sites do, instead of re-hitting the
     vendor on every backtest re-run.
     """
     from archimedes.services.market_data_provider import get_provider
 
-    provider = get_provider()
+    provider = get_provider(seam="daily")
     closes: dict[str, pd.Series] = {}
     volumes: dict[str, pd.Series] = {}
     for sym in symbols:

@@ -81,6 +81,38 @@ async def test_metrics_endpoint_shape_keys_present():
 
 
 @pytest.mark.asyncio
+async def test_metrics_real_users_is_null_not_zero_on_account_count_failure():
+    """Round 4 fix: a DB error reading the account count must render as an
+    honest null, not a fabricated 0 that looks like a real, measured "zero
+    real users" — the same fail-soft violation CLAUDE.md's claims-must-be-true
+    section names, and the same class of bug engagement_metrics.py's round-2
+    fix already closed for the adjacent "Accounts (total)" tile.
+
+    Mutation-verified: reverting metrics_routes.get_metrics's
+    get_distinct_user_count_or_none() call back to get_distinct_user_count()
+    makes this assertion fail (`assert 0 is None` -> real_users reads 0).
+    """
+    from archimedes.main import app
+    from archimedes.services import user_stats
+
+    _reset_request_snapshot()
+    user_stats._reset_cache()
+    with (
+        patch(
+            "archimedes.services.telemetry_store.TelemetryStore.get_counts_or_none",
+            new=AsyncMock(return_value=(0, 0)),
+        ),
+        patch("archimedes.api.metrics_routes.get_distinct_user_count_or_none", return_value=None),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/metrics")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["real_users"] is None
+
+
+@pytest.mark.asyncio
 async def test_metrics_endpoint_falls_back_to_snapshot_when_redis_down():
     """When Redis is unreachable, the durable Postgres snapshot is served, not a false zero (D8/AC6).
 
@@ -249,11 +281,26 @@ _ADMIN = "0xadmin000000000000000000000000000000000001"
 _NON_ADMIN = "0xnotadmin0000000000000000000000000000000002"
 
 
-def _override_linked_wallet(app, wallet):
-    from archimedes.api.wallet_routes import require_linked_wallet
+def _override_signed_in_account(app, wallet):
+    """Sign a request in as a canonical account whose primary wallet is `wallet`.
 
-    app.dependency_overrides[require_linked_wallet] = lambda: wallet
-    return require_linked_wallet
+    Overrides the IDENTITY dependency (``require_current_user``), not the admin
+    decision — so the real ``require_platform_admin`` still runs and really
+    decides. Since #1648 admin is keyed on the account, so these tests pair
+    this with ``PLATFORM_ADMIN_ACCOUNTS`` set (or not set) to the returned
+    account id; that also keeps them free of any account-store read, which is
+    what let the pre-#1648 version override ``require_linked_wallet`` instead.
+    """
+    from archimedes.api.account_auth import CurrentUser, require_current_user
+
+    user = CurrentUser(
+        id=f"acct-for:{wallet}",
+        name="metrics-route test account",
+        email=f"{wallet[2:10]}@example.test",
+        email_verified=True,
+    )
+    app.dependency_overrides[require_current_user] = lambda: user
+    return require_current_user, user.id
 
 
 @pytest.mark.asyncio
@@ -274,13 +321,14 @@ async def test_private_roster_unauthenticated_is_401(path):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("path", ["/api/metrics/private/wallets", "/api/metrics/private/wallets/connections"])
 async def test_private_roster_verified_non_admin_is_403(path, monkeypatch):
-    """A verified linked wallet that is not a platform admin gets 403 — any
+    """A signed-in account that is not a platform admin gets 403 — any
     authenticated user being able to enumerate every other user would still be
     the leak, just behind a signup."""
     from archimedes.main import app
 
     monkeypatch.setenv("PLATFORM_ADMIN_WALLETS", _ADMIN)
-    dep = _override_linked_wallet(app, _NON_ADMIN)
+    monkeypatch.delenv("PLATFORM_ADMIN_ACCOUNTS", raising=False)
+    dep, _account_id = _override_signed_in_account(app, _NON_ADMIN)
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.get(path)
@@ -301,7 +349,8 @@ async def test_private_wallets_admin_shape_and_boundary(monkeypatch):
     from archimedes.main import app
 
     monkeypatch.setenv("PLATFORM_ADMIN_WALLETS", _ADMIN)
-    dep = _override_linked_wallet(app, _ADMIN)
+    dep, account_id = _override_signed_in_account(app, _ADMIN)
+    monkeypatch.setenv("PLATFORM_ADMIN_ACCOUNTS", account_id)
 
     fake_wallets = [
         {
@@ -334,7 +383,8 @@ async def test_private_wallet_connections_admin_shape(monkeypatch):
     from archimedes.main import app
 
     monkeypatch.setenv("PLATFORM_ADMIN_WALLETS", _ADMIN)
-    dep = _override_linked_wallet(app, _ADMIN)
+    dep, account_id = _override_signed_in_account(app, _ADMIN)
+    monkeypatch.setenv("PLATFORM_ADMIN_ACCOUNTS", account_id)
 
     fake_connections = [
         {"wallet": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "connected_at": "2026-07-01T00:00:00+00:00"},
@@ -387,10 +437,15 @@ async def test_get_funnel_defaults_to_visitor_source():
     assert resp.status_code == 200
     data = resp.json()
     assert data["source"] == "visitor"
+    # Stage vocabulary AND order (#1643 changed both — the free path made a
+    # visitor generate before connecting a wallet, so the old order published a
+    # step_conversion against a stage that no longer precedes its successor).
     assert [s["stage"] for s in data["stages"]] == [
         "landed",
-        "wallet_connected",
         "generation_started",
+        "free_generation_used",
+        "wallet_gate_shown",
+        "wallet_connected",
         "vault_deployed",
     ]
     # #788: the per-stage agent_type breakdown rides alongside the unchanged aggregate.

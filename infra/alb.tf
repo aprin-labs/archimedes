@@ -227,14 +227,23 @@ resource "aws_lb_target_group" "backend" {
   target_type = "ip"            # IP-based targeting for cross-VPC (EC2 in default VPC)
 
   health_check {
-    enabled             = true
-    path                = "/health"
-    port                = "traffic-port" # ALB sends health checks on the same port as traffic (80)
-    protocol            = "HTTP"
-    healthy_threshold   = 2
-    unhealthy_threshold = 3
+    enabled           = true
+    path              = "/health"
+    port              = "traffic-port" # ALB sends health checks on the same port as traffic (80)
+    protocol          = "HTTP"
+    healthy_threshold = 2
+    # 5s x 3 was too tight for a cold task: /health does a real Arc RPC round
+    # trip, and under upstream rate limiting (rpc.testnet.arc.network answered
+    # 429s on 2026-08-31, #1594) cold tasks blew that budget while warming,
+    # the ALB killed them, and the deployment circuit breaker declared three
+    # consecutive good revisions "bad" — prod ended up held by a single
+    # surviving task. 10s x 5 rides out a rate-limited warmup while a truly
+    # dead task still drains inside ~3 minutes. Matches the values applied
+    # live during the 2026-08-31 recovery — do not tighten without also
+    # removing /health's hard RPC dependency (#1594's structural fix).
+    unhealthy_threshold = 5
     interval            = 30
-    timeout             = 5
+    timeout             = 10
     matcher             = "200"
   }
 

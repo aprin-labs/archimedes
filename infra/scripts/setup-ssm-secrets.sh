@@ -8,7 +8,7 @@
 # Values are read from your SHELL ENVIRONMENT (never hardcoded here). Export the
 # ones you have, then run. Missing ones are skipped, so partial runs are fine:
 #
-#   export PINATA_JWT='...'; export CIRCLE_API_KEY='...'
+#   export CIRCLE_API_KEY='...'
 #   AWS_PROFILE=ArchimedesDanAdmin conda run -n archimedes ./setup-ssm-secrets.sh          # dry run
 #   AWS_PROFILE=ArchimedesDanAdmin conda run -n archimedes ./setup-ssm-secrets.sh --apply  # write them
 #
@@ -34,7 +34,6 @@ PARAMS=(
   DATABASE_URL             # Aurora connection URL — consumed by the backend Fargate task (ecs.tf secrets) AND the relocated oracle/agent runners (fetch-secrets.sh); ecs.tf's header flags this as not-yet-seeded
   REDIS_URL                # ElastiCache connection URL — same two consumers; same not-yet-seeded gap
   # --- Forthcoming, as features land (roadmap T1.x) ---
-  PINATA_JWT               # IPFS pinning for reasoning-trace provenance (T1.4)
   CIRCLE_API_KEY           # Circle wallets / Gateway nanopayments (T1.2) — also the oracle+agent Circle DCW signer (#1065)
   CIRCLE_ENTITY_SECRET     # Circle dev-controlled wallet entity secret (oracle+agent, #1065)
   # --- Runner relocation (issue #1065 / #1043) — oracle+agent EC2 + kb-runner ---

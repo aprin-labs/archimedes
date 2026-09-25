@@ -7,7 +7,7 @@
 > **Supersedes:** —
 > **Superseded-by:** —
 > **Question being decided:** The x402 generation paywall settles a charge before the job is enqueued. When the job never delivers, does the payer get their money back, or something else?
-> **Related:** [#1441](https://github.com/a-apin/archimedes/issues/1441), [`backend/archimedes/models/generation_credit.py`](../../backend/archimedes/models/generation_credit.py), [`backend/archimedes/services/generation_credits.py`](../../backend/archimedes/services/generation_credits.py), [`backend/archimedes/api/generate_routes.py`](../../backend/archimedes/api/generate_routes.py) (`_paywall_with_credit`), [#975](https://github.com/a-apin/archimedes/issues/975) (custody migration), [`architectural-principles.md`](../architectural-principles.md) § fail-soft.
+> **Related:** [#1441](https://github.com/aprin-labs/archimedes/issues/1441), [`backend/archimedes/models/generation_credit.py`](../../backend/archimedes/models/generation_credit.py), [`backend/archimedes/services/generation_credits.py`](../../backend/archimedes/services/generation_credits.py), [`backend/archimedes/api/generate_routes.py`](../../backend/archimedes/api/generate_routes.py) (`_paywall_with_credit`), [#975](https://github.com/aprin-labs/archimedes/issues/975) (custody migration), [`architectural-principles.md`](../architectural-principles.md) § fail-soft.
 
 ## TL;DR
 
@@ -121,5 +121,5 @@ unchanged by this. What this ADR settles is the semantics that sequence turns on
 moves rather than after.
 
 **Open, and deliberately not decided here:** the public wording. There is no Terms page on
-`main` — it arrives with [#1432](https://github.com/a-apin/archimedes/pull/1432) — so
+`main` — it arrives with [#1432](https://github.com/aprin-labs/archimedes/pull/1432) — so
 whoever lands it must describe this as credit toward a future generation, not as a refund.

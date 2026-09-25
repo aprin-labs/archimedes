@@ -31,6 +31,7 @@ from archimedes.services._rigor_helpers import (
     _ANNUALIZATION,
     _RF_ANNUAL,
     _RF_DAILY,
+    DSR_MIN_BARS,  # noqa: F401 - re-exported for rigor_verify_routes' input floor (#1803)
     _resolve_rf_daily_array,  # used by run_rigor_gate's in-sample-Sharpe fallback + compute_library_pbo (#1409)
     assert_self_contained_cohort_correlation,  # noqa: F401 - re-exported for the 3 cohort call sites (V4 guard)
     benjamini_hochberg_fdr,  # used by compute_board_level_fdr below (#1185)
@@ -47,6 +48,8 @@ from archimedes.services._rigor_helpers import (
     regime_conditional_sharpe,  # noqa: F401 - re-exported for test_rigor_regime
     regime_robustness_score,  # used by run_rigor_gate (regime-robustness) + re-exported for test_rigor_regime
 )
+from archimedes.services.dsl_lookahead_audit import DEGENERATE as _LA_DEGENERATE
+from archimedes.services.dsl_lookahead_audit import PENDING as _LA_PENDING
 from archimedes.services.return_diagnostics import diagnose
 from archimedes.services.rigor_profiles import (
     CPCV_MIN_POSITIVE_FRACTION,
@@ -546,11 +549,12 @@ def compute_board_level_fdr(
         fdr_level: Target board-level FDR (α). Default ``DEFAULT_BOARD_FDR_LEVEL``
             (0.05), matching ``benjamini_hochberg_fdr``'s own default and the
             conventional BH significance level. NOT derived from the DSR
-            badge's ``dsr_p_min`` (0.90 at strictest level, PR #901 — complement
-            0.10, not 0.05): the two are deliberately different axes (per-
-            strategy admission bar vs. board-level multiple-testing rate) and
-            the board-level α is intentionally stricter than the badge's
-            implied 0.10, not derived from it.
+            badge's ``dsr_p_min`` (``rigor_profiles.DSR_P_BADGE_MIN``): the two
+            are deliberately different axes — a per-strategy admission bar vs. a
+            board-level multiple-testing rate. Since #1794 the badge's implied
+            one-sided α and this BH level happen to coincide numerically; that
+            is a coincidence, not a derivation, and moving one must not move the
+            other.
 
     Returns:
         ``{strategy_id: {"board_fdr_significant": bool, "board_fdr_adjusted_p":
@@ -739,6 +743,22 @@ class RigorGateResult:
         is_degenerate: bool = False,
         is_full_series_degenerate: bool = False,
         is_oos_degenerate: bool = False,
+        # Why the look-ahead leg never reached a verdict, when it did not. Set
+        # only for a structural not-run (no inspectable source and no audit
+        # result supplied, or a DSL audit that could not conclude) — never for a
+        # real failure. ``look_ahead_passed`` stays False either way, so this
+        # changes nothing about admission: it is fail-closed on the gate and
+        # honest on the surface, which are two different questions. See
+        # services/dsl_lookahead_audit.py, "Deployability is fail-closed;
+        # rendering is honest".
+        look_ahead_not_run_reason: str | None = None,
+        # The DSL audit's four-state verdict ("pass"/"fail"/"pending"/
+        # "degenerate") when a DSL caller supplied one; ``None`` on every other
+        # path, which keeps the pre-existing two-state rendering for rows that
+        # never had a four-state verdict to begin with. It only selects the
+        # WORDING of ``gate_details["look_ahead"]`` — admission reads
+        # ``look_ahead_passed`` and nothing else.
+        look_ahead_status: str | None = None,
         rf_convention: str = rf_series.RF_CONVENTION_FALLBACK,
     ) -> None:
         self.strategy_id = strategy_id
@@ -806,6 +826,8 @@ class RigorGateResult:
         self.pbo_library_size = pbo_library_size
         self.oos_sharpe = oos_sharpe
         self.look_ahead_passed = look_ahead_passed
+        self.look_ahead_not_run_reason = look_ahead_not_run_reason
+        self.look_ahead_status = look_ahead_status
         self.in_sample_sharpe = in_sample_sharpe
         self.paper_claimed_sharpe = paper_claimed_sharpe
         # Combinatorial Purged CV results (None when the series is too short to
@@ -1093,7 +1115,34 @@ class RigorGateResult:
                 "NOT_RUN (no combinatorial OOS matrix supplied; CPCV is invalid on a single static return series)"
             )
 
-        details["look_ahead"] = "PASS" if self.look_ahead_passed else "FAIL"
+        # Four-state, for the same reason `cpcv` and `oos_sharpe` above are: a
+        # check that never reached a verdict must not be rendered as one that ran
+        # and failed. Admission is unchanged in every branch — `blocked_by_floor`
+        # reads `look_ahead_passed`, which is False for all three non-passes — so
+        # this is honesty on the surface, not a loosened gate. "FAIL" is reserved
+        # for an audit that actually looked and found something; the other two
+        # say what really happened, and say that they still block.
+        #
+        #   pass       → PASS
+        #   degenerate → DEGENERATE  (the audit ran, its instrument gave no reading)
+        #   pending    → NOT_RUN     (nothing was audited)
+        #   fail       → FAIL        (a leak was found)
+        #
+        # A caller that supplies no `look_ahead_status` (every non-DSL path, and
+        # every row written before the four-state verdict existed) keeps the
+        # earlier two/three-state wording, driven by `look_ahead_not_run_reason`.
+        if self.look_ahead_passed:
+            details["look_ahead"] = "PASS"
+        elif self.look_ahead_status == _LA_DEGENERATE:
+            details["look_ahead"] = (
+                f"DEGENERATE ({self.look_ahead_not_run_reason or 'the look-ahead audit could not reach a verdict'})"
+                " — blocks admission (fail-closed)"
+            )
+        elif self.look_ahead_status == _LA_PENDING or self.look_ahead_not_run_reason:
+            reason = self.look_ahead_not_run_reason or "the look-ahead audit did not run"
+            details["look_ahead"] = f"NOT_RUN ({reason}) — blocks admission (fail-closed)"
+        else:
+            details["look_ahead"] = "FAIL"
 
         # IID / random-walk diagnostic (#621) — ADVISORY, never gates pass/fail.
         # The diagnostic no longer rests on an SE it cannot defend: the gate's
@@ -1211,6 +1260,8 @@ def run_rigor_gate(
     in_sample_sharpe: float | None = None,
     paper_claimed_sharpe: float | None = None,
     look_ahead_audit_passed: bool | None = None,
+    look_ahead_status: str | None = None,
+    look_ahead_not_run_reason: str | None = None,
     average_correlation: float = 0.0,
     cv_returns_matrix: np.ndarray | list[list[float]] | None = None,
     library_pbo: float | None = None,
@@ -1251,6 +1302,15 @@ def run_rigor_gate(
             rather than silently pass — exactly as a missing cohort score does.
             When ``None``, the gate falls back to ``pbo_scores.get(strategy_id)``
             and the verdict is labelled ``source=cohort``.
+        look_ahead_audit_passed: An externally computed look-ahead verdict, for
+            callers whose "code" is a closed DSL spec with no inspectable source
+            for the AST audit. ONLY this boolean decides admission.
+        look_ahead_status: The four-state verdict behind that boolean
+            (``"pass"``/``"fail"``/``"pending"``/``"degenerate"``, from
+            ``services/dsl_lookahead_audit.py``), supplied so
+            ``gate_details["look_ahead"]`` can say which kind of non-pass it was.
+            Rendering only — it moves nothing in the gate. ``None`` keeps the
+            earlier wording, which is right for every non-DSL caller.
         average_correlation: Mean pairwise correlation among the ``num_trials``
             trials in the selection set, used by the DSR effective-N correction.
             The caller holds the library/variant returns and computes it via
@@ -1382,6 +1442,7 @@ def run_rigor_gate(
             logger.debug("Regime-robustness diagnostic skipped [%s]: %s", strategy_id, exc)
 
     # 4. Look-ahead audit
+    la_not_run_reason = look_ahead_not_run_reason
     if strategy_code is not None:
         la_passed, la_warnings = look_ahead_audit(strategy_code)
         if la_warnings:
@@ -1389,9 +1450,27 @@ def run_rigor_gate(
                 logger.info("Look-ahead audit [%s]: %s", strategy_id, w)
     else:
         la_passed = False
+        if look_ahead_audit_passed is None and la_not_run_reason is None:
+            # Nothing to audit and nobody supplied a verdict: the leg did not run.
+            # It still blocks admission (la_passed stays False) — but the detail
+            # line must say "not run", not "FAIL". A check that never looked did
+            # not catch anything.
+            la_not_run_reason = (
+                "no strategy source to audit and no external look-ahead verdict supplied "
+                "(the AST audit needs inspectable code)"
+            )
 
     if look_ahead_audit_passed is not None:
         la_passed = look_ahead_audit_passed
+        if la_passed:
+            la_not_run_reason = None
+
+    # The four-state verdict is a RENDERING input only — `la_passed` above is the
+    # single thing admission reads. A caller that claims a pass cannot also claim
+    # the leg never ran, so a `pass` clears the not-run wording either way.
+    la_status = look_ahead_status
+    if la_passed:
+        la_status = None
 
     # Derive in-sample Sharpe from IS slice (first 70%) only — not the full series.
     # Using the full series blends IS+OOS and makes the OOS/IS ratio trivially easy to pass.
@@ -1427,6 +1506,8 @@ def run_rigor_gate(
         pbo_score=pbo_score,
         oos_sharpe=oos_sharpe,
         look_ahead_passed=la_passed,
+        look_ahead_not_run_reason=la_not_run_reason,
+        look_ahead_status=la_status,
         in_sample_sharpe=in_sample_sharpe,
         paper_claimed_sharpe=paper_claimed_sharpe,
         cpcv_mean_oos_sharpe=cpcv["mean_oos_sharpe"] if cpcv else None,

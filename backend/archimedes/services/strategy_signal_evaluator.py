@@ -410,6 +410,59 @@ GLOBAL_ASSETS: dict[str, tuple[str, str, str, str]] = {
 }
 
 
+#: Declared-universe ticker → synth symbol. Lifted out of
+#: ``evaluate_strategies``'s body (it was a local dict) so the paper-execution
+#: pass can ask which synths a spec's ``asset_universe`` resolves to WITHOUT
+#: copying the table (#1410: the paper path and the vault path share the signal
+#: interpretation code, they do not each keep a version of it). Not derivable
+#: from ``GLOBAL_ASSETS``: this maps the loose ticker names a spec declares
+#: ("GOLD", "TREASURY") onto synths, while GLOBAL_ASSETS maps synths onto
+#: vendor tickers ("GC=F"), and the two are not inverses.
+TICKER_TO_SYNTH: dict[str, str] = {
+    "SPY": "sSPY",
+    "QQQ": "sQQQ",
+    "IWM": "sIWM",
+    "TSLA": "sTSLA",
+    "NVDA": "sNVDA",
+    "BTC": "sBTC",
+    "ETH": "sETH",
+    "GOLD": "sGOLD",
+    "SILVER": "sSI",
+    "COPPER": "sHG",
+    "OIL": "sOIL",
+    "BRENT": "sBRENT",
+    "NATGAS": "sNG",
+    "NIKKEI": "sNKY",
+    "TREASURY": "sBIL",
+    "BIL": "sBIL",
+    "DAX": "sDAX",
+    "FTSE": "sFTSE",
+    "CAC": "sCAC",
+    "BIST": "sBIST",
+    "TUR": "sTUR",
+}
+
+
+def synths_for_universe(tickers: list[str]) -> list[str]:
+    """Resolve a spec's declared ``asset_universe`` to synth symbols.
+
+    Order-preserving and de-duplicated, mirroring what ``evaluate_strategies``
+    does with the same map. A ticker that is already a synth symbol (a spec may
+    declare ``"sSPY"`` directly) passes through; an unmappable one is DROPPED
+    rather than guessed at — the evaluator's own fallback then decides what the
+    strategy sees, which is the behaviour that already exists for vault
+    strategies with unmappable universes.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for ticker in tickers:
+        synth = TICKER_TO_SYNTH.get(ticker) or (ticker if ticker in GLOBAL_ASSETS else None)
+        if synth and synth not in seen:
+            out.append(synth)
+            seen.add(synth)
+    return out
+
+
 def synth_display(synth: str) -> str:
     """Return the human-facing label for a synth symbol."""
     entry = GLOBAL_ASSETS.get(synth)
@@ -593,9 +646,9 @@ def _fetch_price_history(symbol: str, period: str = "2y") -> pd.Series:
     (``asset_daily_bars``) is daily-grained; a prior ``interval`` parameter
     was dropped since every caller left it at its "1d" default anyway.
 
-    Fetch goes through the market-data provider seam (#1218:
-    ``archimedes.services.market_data_provider``) rather than yfinance
-    directly — vendor-swappable via ``MARKET_DATA_PROVIDER``, and the
+    Fetch goes through the market-data provider seam's ``daily`` half (#1218 /
+    #1798: ``archimedes.services.market_data_provider``) rather than yfinance
+    directly — vendor-swappable via ``MARKET_DATA_DAILY_PROVIDER``, and the
     provider's own Postgres cache means a warm request never re-hits the
     vendor live. This in-process ``_cache_get``/``_cache_put`` layer is
     unchanged (hot 600s TTL in front of that).
@@ -610,11 +663,20 @@ def _fetch_price_history(symbol: str, period: str = "2y") -> pd.Series:
     yf_ticker = entry[0]
 
     try:
-        from archimedes.services.market_data_provider import get_provider
+        from archimedes.services.market_data_provider import get_provider, provider_name
 
-        fetched = get_provider().get_daily_close_batch({symbol: yf_ticker}, period=period)
+        fetched = get_provider(seam="daily").get_daily_close_batch({symbol: yf_ticker}, period=period)
         close = fetched.get(symbol)
         if close is None or close.empty:
+            # Named, never silent (#1710) — same reason as the batch path below.
+            logger.warning(
+                "market-data gap: no price history for %s (%s) from provider %r (period=%s) — "
+                "EXCLUDED, no series synthesized.",
+                symbol,
+                yf_ticker,
+                provider_name("daily"),
+                period,
+            )
             return pd.Series(dtype=float)
         close = close.copy()
         close.name = symbol
@@ -663,7 +725,7 @@ def _fetch_price_histories(
     try:
         from archimedes.services.market_data_provider import get_provider
 
-        fetched = get_provider().get_daily_close_batch(ticker_for_synth, period=period)
+        fetched = get_provider(seam="daily").get_daily_close_batch(ticker_for_synth, period=period)
     except Exception as e:
         logger.warning("Batched market-data fetch failed: %s", e)
         # Fall back to per-symbol fetch for the ones we still need
@@ -680,6 +742,30 @@ def _fetch_price_histories(
         series.name = synth
         _cache_put(synth, series)
         result[synth] = series
+
+    # Name the symbols the vendor had NO data for (#1710). The seam's
+    # documented per-item-skip contract leaves an unfetchable ticker simply
+    # ABSENT from `fetched`, so before this the only trace was whatever the
+    # vendor library itself chose to print — for yfinance, a bare
+    # "possibly delisted; no price data found" ERROR carrying vendor tickers
+    # and no synth symbols, no provider name and no indication that the
+    # evaluator then ran a strategy over a universe missing those names. This
+    # line is the operator-legible half: which synths, which vendor tickers,
+    # which provider. Excluded, never padded or forward-filled.
+    missing = sorted(set(ticker_for_synth) - set(result))
+    if missing:
+        from archimedes.services.market_data_provider import provider_name
+
+        logger.warning(
+            "market-data gap: no price history for %d/%d requested symbols from provider %r "
+            "(period=%s) — %s. These symbols are EXCLUDED from signal evaluation this run; "
+            "no series is synthesized to replace them.",
+            len(missing),
+            len(ticker_for_synth),
+            provider_name("daily"),
+            period,
+            ", ".join(f"{s}({ticker_for_synth[s]})" for s in missing),
+        )
 
     return result
 
@@ -971,9 +1057,14 @@ def _compute_indicator_value(name: str, period: int, prices: pd.Series) -> float
                         could pass in the graded backtest and fail live on
                         identical data (divergence audit F5).
       - momentum      → prices.iloc[-1] / prices.iloc[-N-1] - 1   (matches _tsmom_signal)
-      - realized_vol  → pct_change().tail(N).std() * sqrt(252)    (matches _vol_managed_signal;
-                        NO backtest counterpart yet — interpret_spec raises
-                        DSLError for it, divergence audit F6)
+      - realized_vol  → pct_change().tail(N).std() * sqrt(252)    (matches _vol_managed_signal
+                        AND, since 2026-08-30, dsl_to_backtrader.
+                        RealizedVolAnnualized — a hand-written ddof=1 estimator
+                        rather than bt.indicators.StandardDeviation, which is
+                        ddof=0. Divergence audit F6 is CLOSED; the asymmetry pin
+                        in test_interpreter_parity became a per-bar equality
+                        pin. NOT the estimator the sizing branches use — see
+                        dsl_to_backtrader.sizing_realized_vol.)
     """
     if name == "sma":
         return float(prices.rolling(period).mean().iloc[-1])
@@ -1358,8 +1449,68 @@ def _spec_signal(
             ),
         )
 
-    # full_invested_when_in_market / equal_weight / inverse_vol → full exposure
-    # when in market (inverse_vol cross-asset sizing is an aggregation concern).
+    if ps_type in ("equal_weight", "inverse_vol"):
+        # Sized by the SAME module-level functions the backtest sizes with
+        # (dsl_to_backtrader.slot_weight / sizing_realized_vol /
+        # inverse_vol_weight), not by a second implementation of the same
+        # arithmetic. Until 2026-08-30 this branch returned a flat 1.0 for both
+        # types while the backtest sized them, so a spec's graded exposure and
+        # its live exposure differed by up to N×.
+        #
+        # ``universe_slots`` is not a live concept: the evaluator emits one
+        # signal per asset in the strategy's universe and the portfolio sums
+        # them, which is exactly the single-feed convention (slots =
+        # len(asset_universe)). The sleeve runners' ``universe_slots=1`` is a
+        # backtest-side restatement of the same per-name weight, not a
+        # different one — see interpret_spec's seam note.
+        #
+        # STILL DIVERGENT, and not silently: sizing TIMING. The backtest sizes
+        # once at entry and freezes the share count; this recomputes at the last
+        # decision bar. equal_weight is unaffected (1/N does not move);
+        # inverse_vol agrees at the entry bar and drifts after it, exactly as
+        # volatility_target already does. That is the unification plan's open D4
+        # decision and is listed in the DSL spec's Known limitations.
+        from archimedes.services.dsl_to_backtrader import (
+            DEFAULT_INVERSE_VOL_REFERENCE,
+            inverse_vol_weight,
+            sizing_realized_vol,
+            slot_weight,
+        )
+
+        slots = max(1, len(spec.asset_universe))
+        slot = slot_weight(slots)
+        if ps_type == "equal_weight":
+            raw_weight = slot
+            sizing_note = f"equal weight 1/{slots}"
+        else:
+            reference = float(ps.get("reference_vol_annual") or DEFAULT_INVERSE_VOL_REFERENCE)
+            realized_vol = sizing_realized_vol(decision_prices.tolist())
+            raw_weight = inverse_vol_weight(slot, realized_vol, reference)
+            vol_note = "no vol estimate yet" if not realized_vol else f"realized {realized_vol:.1%}"
+            sizing_note = f"inverse-vol slot 1/{slots} × ref {reference:.0%}/{vol_note}"
+        # A weight above 1.0 is a leverage request. The backtest's cash broker
+        # refuses it outright (margin-rejected, logged, flat); this portfolio has
+        # no leverage either, so the live twin reports the clamp instead of
+        # implying an exposure nothing can take. Reachable only for a
+        # single-name inverse_vol universe on an asset calmer than the
+        # reference — the one input class where the two sides disagree, pinned
+        # by name in test_interpreter_parity and listed in the DSL spec's
+        # Known limitations.
+        weight = min(raw_weight, 1.0)
+        clamp_note = f" (requested {raw_weight:.2f}, clamped — no leverage)" if raw_weight > 1.0 else ""
+        return AssetSignal(
+            strategy_id=strategy_id,
+            strategy_name=strategy_name,
+            asset=asset,
+            signal=Signal.LONG if weight >= 0.95 else Signal.SCALED,
+            weight=round(weight, 4),
+            reason=(
+                f"in market since bar {replay.entered_index}; {sizing_note} → weight "
+                f"{weight:.0%}{clamp_note} ({cadence_note}; close={close:.2f})"
+            ),
+        )
+
+    # full_invested_when_in_market → full exposure when in market.
     return AssetSignal(
         strategy_id=strategy_id,
         strategy_name=strategy_name,
@@ -1446,29 +1597,7 @@ class StrategySignalEvaluator:
             return []
 
         # Map a strategy's declared asset_universe → synth symbols.
-        synth_map = {
-            "SPY": "sSPY",
-            "QQQ": "sQQQ",
-            "IWM": "sIWM",
-            "TSLA": "sTSLA",
-            "NVDA": "sNVDA",
-            "BTC": "sBTC",
-            "ETH": "sETH",
-            "GOLD": "sGOLD",
-            "SILVER": "sSI",
-            "COPPER": "sHG",
-            "OIL": "sOIL",
-            "BRENT": "sBRENT",
-            "NATGAS": "sNG",
-            "NIKKEI": "sNKY",
-            "TREASURY": "sBIL",
-            "BIL": "sBIL",
-            "DAX": "sDAX",
-            "FTSE": "sFTSE",
-            "CAC": "sCAC",
-            "BIST": "sBIST",
-            "TUR": "sTUR",
-        }
+        synth_map = TICKER_TO_SYNTH
 
         results: list[StrategySignals] = []
 

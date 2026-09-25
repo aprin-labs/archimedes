@@ -6,6 +6,7 @@ import pytest
 from archimedes.services.strategy_dsl import (
     FABER_2007_SPEC,
     REFERENCE_EXAMPLES,
+    REQUIRED_FIELDS,
     VOL_MANAGED_SPEC,
     DSLError,
     validate_strategy_spec,
@@ -20,7 +21,10 @@ class TestValidatesReferenceExamples:
         result = validate_strategy_spec(spec)
         assert result.name == spec["name"]
         assert result.asset_universe == spec["asset_universe"]
-        assert result.look_ahead_safe is True
+        # The reference examples carry no self-declared look-ahead field, and
+        # the validated object exposes no attribute to read one back from.
+        assert "look_ahead_safe" not in spec
+        assert not hasattr(result, "look_ahead_safe")
 
     def test_faber_spec(self):
         result = validate_strategy_spec(FABER_2007_SPEC)
@@ -57,11 +61,6 @@ class TestValidationRejectsInvalidSpecs:
     def test_invalid_rebalance_frequency(self):
         spec = {**FABER_2007_SPEC, "rebalance_frequency": "quarterly"}
         with pytest.raises(DSLError, match="rebalance_frequency"):
-            validate_strategy_spec(spec)
-
-    def test_look_ahead_unsafe_rejected(self):
-        spec = {**FABER_2007_SPEC, "look_ahead_safe": False}
-        with pytest.raises(DSLError, match="look_ahead_safe=false"):
             validate_strategy_spec(spec)
 
     def test_unknown_condition_operator(self):
@@ -211,3 +210,72 @@ class TestParameterVariants:
         result = validate_strategy_spec(FABER_2007_SPEC)
         d = result.to_dict()
         assert "parameter_variants" not in d
+
+
+class TestLookAheadSafeIsRemovedFromTheSchema:
+    """``look_ahead_safe`` was a boolean the generating model wrote about its own
+    output; the validator only checked it was ``True``, so a spec was admitted on
+    its own assertion of innocence. It is REMOVED — not demoted, not
+    deprecated-but-read. These tests pin the removal and the back-compat contract
+    for specs persisted before it.
+    """
+
+    def test_spec_without_the_field_validates(self):
+        """The point of the change: no spec ever has to declare this again."""
+        spec = {k: v for k, v in FABER_2007_SPEC.items() if k != "look_ahead_safe"}
+        assert "look_ahead_safe" not in spec
+        result = validate_strategy_spec(spec)
+        assert result.name == FABER_2007_SPEC["name"]
+
+    def test_it_is_not_a_required_field(self):
+        assert "look_ahead_safe" not in REQUIRED_FIELDS
+
+    def test_missing_field_error_never_names_it(self):
+        """A model that omits it must not be told to put it back."""
+        with pytest.raises(DSLError) as exc:
+            validate_strategy_spec({"name": "bare"})
+        assert "look_ahead_safe" not in str(exc.value)
+
+    @pytest.mark.parametrize("declared", [True, False])
+    def test_legacy_persisted_spec_carrying_the_field_loads_without_crashing(self, declared):
+        """Migration/back-compat: rows written before the removal still carry the
+        key. The reader must ignore it gracefully — including a legacy ``false``,
+        which is exactly as uninformative as a ``true`` and must not be re-honoured
+        as a rejection.
+        """
+        legacy = {**FABER_2007_SPEC, "look_ahead_safe": declared}
+        result = validate_strategy_spec(legacy)
+        assert result.name == FABER_2007_SPEC["name"]
+
+    @pytest.mark.parametrize("declared", [True, False])
+    def test_the_declared_value_is_never_trusted_or_carried(self, declared):
+        """Ignoring it is not enough — it must be unreadable downstream. The
+        validated object exposes no attribute and round-trips without the key, so
+        a consumer cannot resurrect the declaration by accident.
+        """
+        legacy = {**FABER_2007_SPEC, "look_ahead_safe": declared}
+        result = validate_strategy_spec(legacy)
+        assert not hasattr(result, "look_ahead_safe")
+        assert "look_ahead_safe" not in result.to_dict()
+        assert "look_ahead_safe" not in result.to_json()
+
+    def test_a_legacy_spec_round_trips_into_a_clean_one(self):
+        """Re-validating the serialised form of a legacy spec is stable and drops
+        the field permanently, so the key dies out as rows are rewritten.
+        """
+        import json
+
+        legacy = {**FABER_2007_SPEC, "look_ahead_safe": True}
+        once = validate_strategy_spec(legacy)
+        twice = validate_strategy_spec(json.loads(once.to_json()))
+        assert twice.to_dict() == once.to_dict()
+        assert "look_ahead_safe" not in twice.to_dict()
+
+    def test_validation_does_not_mutate_the_callers_dict(self):
+        """The legacy key is dropped from the DSL's view of the spec, not from the
+        caller's object — a persisted blob passed in by reference must come back
+        unchanged so nothing downstream sees a surprise in-place edit.
+        """
+        legacy = {**FABER_2007_SPEC, "look_ahead_safe": True}
+        validate_strategy_spec(legacy)
+        assert legacy["look_ahead_safe"] is True

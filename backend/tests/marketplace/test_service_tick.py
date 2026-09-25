@@ -134,7 +134,7 @@ async def test_tick_produces_trades_and_verifies_payment(market: MarketService):
     with ExitStack() as stack:
         _patch_strategy_evaluator(stack)
         stack.enter_context(patch("archimedes.marketplace.service.compute_trades", return_value=_dummy_trades()))
-        stack.enter_context(patch.object(market, "_charge_one", AsyncMock(return_value=(True, None))))
+        stack.enter_context(patch.object(market, "_charge_one", AsyncMock(return_value=(True, None, False))))
         stack.enter_context(patch.object(market, "record_subscriber_tick", AsyncMock()))
 
         market.publishers["strat_a"] = Publisher(
@@ -173,7 +173,7 @@ async def test_tick_marks_subscriber_inactive_on_payment_failure(market: MarketS
     with ExitStack() as stack:
         _patch_strategy_evaluator(stack)
         stack.enter_context(patch("archimedes.marketplace.service.compute_trades", return_value=_dummy_trades()))
-        stack.enter_context(patch.object(market, "_charge_one", AsyncMock(return_value=(False, None))))
+        stack.enter_context(patch.object(market, "_charge_one", AsyncMock(return_value=(False, None, False))))
         stack.enter_context(patch.object(market, "record_subscriber_tick", AsyncMock()))
 
         market.publishers["strat_b"] = Publisher(
@@ -204,7 +204,9 @@ async def test_tick_no_trades_skips_payment(market: MarketService):
         _patch_strategy_evaluator(stack, weights={"ETH": 0.5})
         stack.enter_context(patch("archimedes.marketplace.service.compute_trades", return_value=[]))
         stack.enter_context(patch.object(market, "record_subscriber_tick", AsyncMock()))
-        mock_charge = stack.enter_context(patch.object(market, "_charge_one", AsyncMock(return_value=(True, None))))
+        mock_charge = stack.enter_context(
+            patch.object(market, "_charge_one", AsyncMock(return_value=(True, None, False)))
+        )
 
         market.publishers["strat_c"] = Publisher(
             strategy_id="strat_c",
@@ -232,7 +234,7 @@ async def test_tick_records_liability_when_mirror_fails(market: MarketService):
     with ExitStack() as stack:
         _patch_strategy_evaluator(stack)
         stack.enter_context(patch("archimedes.marketplace.service.compute_trades", return_value=_dummy_trades()))
-        stack.enter_context(patch.object(market, "_charge_one", AsyncMock(return_value=(True, None))))
+        stack.enter_context(patch.object(market, "_charge_one", AsyncMock(return_value=(True, None, False))))
         stack.enter_context(patch.object(market, "record_subscriber_tick", AsyncMock()))
 
         market.publishers["strat_d"] = Publisher(
@@ -272,7 +274,7 @@ async def test_tick_no_liability_when_mirror_succeeds(market: MarketService):
     with ExitStack() as stack:
         _patch_strategy_evaluator(stack)
         stack.enter_context(patch("archimedes.marketplace.service.compute_trades", return_value=_dummy_trades()))
-        stack.enter_context(patch.object(market, "_charge_one", AsyncMock(return_value=(True, None))))
+        stack.enter_context(patch.object(market, "_charge_one", AsyncMock(return_value=(True, None, False))))
         stack.enter_context(patch.object(market, "record_subscriber_tick", AsyncMock()))
 
         market.publishers["strat_e"] = Publisher(
@@ -303,7 +305,7 @@ async def test_tick_no_liability_when_payment_fails(market: MarketService):
     with ExitStack() as stack:
         _patch_strategy_evaluator(stack)
         stack.enter_context(patch("archimedes.marketplace.service.compute_trades", return_value=_dummy_trades()))
-        stack.enter_context(patch.object(market, "_charge_one", AsyncMock(return_value=(False, None))))
+        stack.enter_context(patch.object(market, "_charge_one", AsyncMock(return_value=(False, None, False))))
         stack.enter_context(patch.object(market, "record_subscriber_tick", AsyncMock()))
 
         market.publishers["strat_f"] = Publisher(
@@ -433,7 +435,7 @@ async def test_tick_renews_leader_at_midpoint(market: MarketService):
     with ExitStack() as stack:
         _patch_strategy_evaluator(stack)
         stack.enter_context(patch("archimedes.marketplace.service.compute_trades", return_value=_dummy_trades()))
-        stack.enter_context(patch.object(market, "_charge_one", AsyncMock(return_value=(True, None))))
+        stack.enter_context(patch.object(market, "_charge_one", AsyncMock(return_value=(True, None, False))))
         stack.enter_context(patch.object(market, "record_subscriber_tick", AsyncMock()))
         stack.enter_context(patch.object(market, "_apply_to_subscriber", AsyncMock(return_value=(True, []))))
 

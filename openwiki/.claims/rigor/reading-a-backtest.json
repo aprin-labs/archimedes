@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:eeaed2a297c948c9f101e50be30f730c112975a45524eed6685a74c56948b756",
+  "claims": [
+    {
+      "id": "claim_bda06701005646a89c43c2c868c2a2e3",
+      "statement": "The prescribed stance toward a backtest is adversarial — treat it as a claim about the future stated in the language of the past, and assume it is overfit until it survives attempts to break it; the first question about a high Sharpe is how many strategies were tried before this one was kept, not how much money it would have made.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/backtest-interpretation.md#L11-L30",
+          "version": "repo-lines-v1:sha256:4b45ec7db2979a1cbaa900a8fa0a4e196a1491180012cfe322cfc2401623d006:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE4ZTYyMjIxZWY2NWIyYzU5NzI2OGYyMWFiYTFiODJmNDZiMDA2MGRlYjQ2Y2FlMTlhMDRjNjAxNGUzOTQ1MjQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNiYjFjNjI3ZWQzZGQzYTdiOTMxMjRjOGRiYmU4NDMyMWVkYjA2MmI0ZmUzMGJmZDg1Yzc0MzU5MWY5OTYzMzYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkzOGRkOTIwODdiMmNjZTJmMjc0NTNlOTI4OTY3ZmIwYTM2MmQ2OWVhNDIwMjUyNDhmYTA0MWI4MWUxYjU2ZjAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_95bb011ed2c14498bea8cb8ad14cb6b2",
+      "statement": "The IS/OOS cliff is detected by the held-out final-30% Sharpe with the cliff check enforced against an in-sample Sharpe measured on the first 70% only, so the ratio cannot be gamed by blending the slices, and the gate renders the exact ratio in its detail string.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/backtest-interpretation.md#L35-L55",
+          "version": "repo-lines-v1:sha256:ce0543783e68f23327f0fd4c7247fd40a89bfa3cd3523f6893cbc8cbff0f5812:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYzNjE4ZDFjOTRlNTk2ODZhNTY2NzA2YWY1MTE4ZWM4M2MzMmJkMTM3YWVlZThkY2RiM2NjMTY2OWNiYTg5YjgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk0YzBiODVlNjljYWE5ZDczZjk5MGRiZWQ5NjQ0Yjk0YmU5MGY4NmE0ZmNmYzBiMDQ2NDM2ODA2M2M1Mzc1ZjIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNkMzk2ZjFmNjkzODUxOTQ1ZDNiNDhjYmNhODllNjUwZTBmNzg2ZWU1NGNkZmZkYTgxMjkwY2M1OGU5YWM3ODMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2104d9ea16ff47789fcd27e28e24387c",
+      "statement": "Parameter sensitivity is caught at library level by PBO across C(16,8)=12,870 symmetric splits and at strategy level by DSR, which widens the Sharpe's standard error for non-normality and autocorrelation and deflates by expected best-of-N only where a candidate pool exists — on the curated library num_trials is 1, so neither deflation nor multiple-testing correction applies.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/backtest-interpretation.md#L56-L71",
+          "version": "repo-lines-v1:sha256:06ad504288cab7600e06a87432c37e4f0b1e9a3bc9828b5827029392d415e0da:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ2YTFhNmM1ZmIzZDA4YjA2MTlkOTZmOTQyOGQ3ZGQ0MTVjN2E4M2QzZGMzZjcyOTY3N2ViNmQ3NDgzYWU1OTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ4Mzg1ZmNkZDRjZTBkYmViZTJlMmJiNzRmNjdiM2Y2MjBmZmUzNzJmYWU3YmE1ZjdjYWQ4MTVhMGJiNTFhMzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU5OGU5NjY0N2RiMjBmOThjYjQwODkxZGRkMzc4M2VjYTRjN2FkOTFkY2YwNDc2ZjI3YmVhNzcxYjViZjg1MzYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM0ZWQ2YTMxMmUzMTg0YmFlYTdiOThhZDQzNDBhYjYzZjY0ZTE0ZmJjNTJmOWM0OTBhZTcwZDRiNWVjMTU3MzkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_839823d1772e499b9b7973c0c245e2d2",
+      "statement": "An unrealistically smooth equity curve is checked three ways: the look-ahead audit flags forward-data access, the analytics engine rejects close-on-close and close-on-open broker configurations that leak a bar's own close into its decision, and the closed-form expected one-year maximum drawdown flags a curve whose realised drawdowns are materially smaller than its own mu and sigma imply.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/backtest-interpretation.md#L73-L91",
+          "version": "repo-lines-v1:sha256:b51effa431ea14fe4f78874ec4f89aa154de855cf9d323144bb6f07ec8516614:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM5NDYyNzA0NDk1MmE5MTc2YTdjOTZhZDc1ZjFjNmQyMzNhOTk3MTNjMDg5MzVhNTY5NjBkY2ZkYTdlZTQ4MmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE4YTk4YTRjODk2NzRjZjZkZGFjYzA4ZjMyYWJjNzcwNWVjODM5Y2Q5Y2JlYmQyMTBmMmRiZjc3YWIxMzc2OTAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdlYWMyMDljZTE0MjQ3ZmFkMmNhMTNhYTEzYTU3ZGE0MDRjMGIxNWI1ZTI2OGRlNmNhMTBhZWM3M2E0NDAwYTAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e718559fa5cd4edab9736f60c571e5a2",
+      "statement": "Concentration risk is surfaced by the Euler marginal-contribution-to-variance decomposition and defended structurally by per-asset weight caps, with pairwise-correlation reporting exposing apparent diversification across correlated names.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/backtest-interpretation.md#L93-L106",
+          "version": "repo-lines-v1:sha256:ab6b6d45514c0f32649073d8674d5ea12f742ee1c39a461106a25b6021e2e462:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjgxNDM1YjJjN2QxYzhkZDM4MTBhNjYxNWUzNTI3NDFjNDdhZDE0YzJkZjkyZGI5MTlhMTdmY2QyNDY0ZDQxYmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZlYTcxNGI1ZTFmZGQxYTAyNDRjYzk1ZDM5ZjNhYmI0Yjg1ZjhlZDExODBlYmVhOTAzOTQxMDc2M2UxNzE5ZjIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3d74fbdf8de04f4d83bad7c72e63eee6",
+      "statement": "Regime-selection turnover is addressed by regime tagging plus the regime-conditional gamma multiplier, which is the sizing mechanism that prevents a single-regime strategy from being sized as if its favourable regime will persist.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/backtest-interpretation.md#L108-L122",
+          "version": "repo-lines-v1:sha256:b2bd4a779fbfb7749c2bf4bbc81dfeb3e3c69fd15ac622f5343eabd8387d0a79:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImMyNTIxY2MwZjVhMGQ0MDQwOTI5M2VjYWVhNmI0ZjkzODI1YjYwMGI5YjZiZTExN2FmOWE2ODljYzUxNzAwYzciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE1Zjg3MDdhYzc4MmQ3YWMwZTdiNDQxMjg2NzM2NDllYmVhMmRkYTYyNGU2N2U5NTE5Yzc1MjY3ZDkxYWRkNjAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9009bf1c02ae47ae905e695faefdce58",
+      "statement": "Correlation clustering makes apparent diversification and apparent multiple-testing breadth both illusory, and is handled by feeding average pairwise correlation into the DSR effective-N correction so highly correlated trials count as fewer independent tests.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/backtest-interpretation.md#L124-L137",
+          "version": "repo-lines-v1:sha256:d9dafcd1adb18001caac4c4ca6be5d3e53ac1168ba3f96daf193f35aa37b48ba:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNjNWJiYTE3YzkyNDY2MTNhOTM2NzQ5OTIzZTE2OWE1ZjRiNzBhNmM4OGI3MDU1YWQwNmYxZWQzYmIwMjBmZDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjczNzUxY2Q0YjkyN2I5N2I1N2Q5NGI0ZDc2MzgwZmI2ZGQ4OGRhZjVjNDBmZjc4NmJjZmI0NjJlYWMyMzJiMTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_144494f19ef84c7ea50b50242d2caac4",
+      "statement": "Peer-reviewed backing is treated as necessary but not sufficient: McLean & Pontiff (2016) found published predictors lost roughly 26% of their return out-of-sample and about 58% post-publication, so a paper anchor must still clear the four gates on internal data.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/backtest-interpretation.md#L198-L213",
+          "version": "repo-lines-v1:sha256:51cadc2e69b683032c8c5c8dfd2baf28754d33d40a8ced77f6ee85e3fcc6a363:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEyNzExYmJkYTk4MDViZmZmMjQ0NmM4ODJjMjRiOTA0NDAxZTgxZGZjNWNiM2ZlYWYxZjM4YzU3ZjY4OWFmODgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY1NzE4OTMyNWM5NzM4Y2JkZDFmZjgxMjMzNTVlNzI5OTc1YzljMjA1Zjg4ZWQ1M2IwODU2ZWMwMjQ2MGZkMDAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYyYjRhOTE3ZjYzYmIyYWRlYTU4Njc4MjExNjk5ZjNkNmU5MDg0NmQ1YmY2Zjk0MDQwMjYyMTJmMzQ2NTIyNDAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3ee84c56e08a489c918dc5e1c173ed9e",
+      "statement": "A documented economic mechanism stated before the backtest is treated as a quality signal: a strategy with a strong backtest and no economic story is more likely a data-mining artefact than one with a weak backtest and a sound thesis, and where the live implementation is a proxy for the paper's design the file header discloses the divergence.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/backtest-interpretation.md#L183-L197",
+          "version": "repo-lines-v1:sha256:4c05cc0bffd00e430309ada1e0b5f7e3a6a11d5290d9d3f7ff40dd765a72e586:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFjODhhNGRmMDJmOTY0ZjQ4MTY1OWJjOWU0NGUxNmI5MzY5MTdkYTFkYzZjZmRkMjQ3MWQ3NDQ4MDkzODA3ODciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkxNDkxZTA2MjBhMWE3MDNlZmJiYWM0NmJlMjUxYTM0YWQ2OTBjMjVmY2FlZTM1ZjIwYTVlZmM0Njc5OGE0ZjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBiN2E1MDVlZGMzZTUxNzc0ZDQ0M2JjZTE0NDI1NzdkNDUwYmE5NmI3MDg1ODY5OWIwZmRlMjI2MGQ4M2NiNDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6fe2ec3209504980b7654674b041d5d4",
+      "statement": "The prescribed passport scan order is gate details, DSR p-value, PBO, OOS/IS ratio, paper-claim delta, then risk decomposition; surviving all six is explicitly not a guarantee that a strategy will work, and stating exactly that rather than more is described as the point of the protocol.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/backtest-interpretation.md#L216-L240",
+          "version": "repo-lines-v1:sha256:1cc5aa2e5fef8650f9474c561f402da674b1947e676e7bfbeb1f97a52637853c:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhYzI3YzRmNzc3MWFkM2Y1Yjc5MzY2M2VjM2Q4M2ZkZjcwYTJlYTFiOTc5ZmIzMjcwMjgxNDYyNDllZDUzYWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUwODJmMzg2YjIxNDZiMzUyOTAwYzU1OTlkNDcxMDBkZDg4ODllMDQxMzQ2OWI5MDc1YzM3NTU2YjQ5M2UxYzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.4.3",
+    "at": "2026-08-31T05:55:43.566Z"
+  }
+}

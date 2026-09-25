@@ -9,6 +9,11 @@ exercised.
 
 Hermetic: the aiohttp HTTP boundary is mocked; the RSA encrypt helper is mocked
 where a real key would otherwise be needed. No network, no Circle, no Arc RPC.
+
+See also backend/tests/test_circle_signer.py (#1527): the submit-status contract is
+{200, 201}, not 201 alone — 200 is Circle replaying our deterministic idempotency key —
+and ``STUCK`` raises immediately instead of burning the poll budget. Both are proven
+there, against a fake with real RSA rather than a mocked encrypt.
 """
 
 from __future__ import annotations
@@ -16,6 +21,7 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
 from archimedes.chain.circle_signer import CircleSigner, _encrypt_entity_secret
 
@@ -52,6 +58,15 @@ def _resp(status: int, body: dict) -> MagicMock:
     resp = MagicMock(status=status)
     resp.json = AsyncMock(return_value=body)
     return resp
+
+
+def _raising_cm(exc: BaseException) -> MagicMock:
+    """An async context manager whose __aenter__ raises — how aiohttp surfaces
+    a timeout / transport failure at the `async with session.get(...)` line."""
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(side_effect=exc)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    return cm
 
 
 @pytest.fixture
@@ -99,6 +114,136 @@ class TestGetPublicKey:
         assert await configured._get_public_key(session) is None
 
 
+# ── get_wallet_address (#1412) ────────────────────────────────
+
+
+class TestGetWalletAddress:
+    """``get_wallet_address`` asks Circle what WALLET_ID actually signs with.
+
+    This is the value the reveal-reconciliation signer pre-check acts on
+    IRREVERSIBLY (``ChainExecutor.backend_signer_address_confirmed`` →
+    ``agent_runner._reconcile_one_reveal``), so the contract under test is
+    two-sided: a real address when Circle answers, and ``None`` — meaning
+    "could not confirm", never "confirmed" — for every way the lookup can fail.
+    """
+
+    async def test_returns_the_address_circle_reports(self, configured):
+        session = _mock_session()
+        body = {
+            "data": {
+                "wallet": {
+                    "id": "wallet-uuid",
+                    "address": "0xCIRCLE0000000000000000000000000000000001",
+                    "blockchain": "ARC-TESTNET",
+                }
+            }
+        }
+        session.get = MagicMock(return_value=session._cm(_resp(200, body)))
+
+        with patch(
+            "archimedes.chain.circle_signer.aiohttp.ClientSession", return_value=_session_context(session)
+        ) as mock_session_cls:
+            addr = await configured.get_wallet_address()
+
+        assert addr == "0xCIRCLE0000000000000000000000000000000001"
+        # The lookup must be keyed on WALLET_ID — the identifier that signs —
+        # not on the WALLET_ADDRESS mirror.
+        assert session.get.call_args.args[0].endswith("/wallets/wallet-uuid")
+        # Bounded (#1412): this runs inside the agent tick, so a hung Circle
+        # endpoint must not stall it. Pinned so a future edit can't silently
+        # drop the ceiling back to aiohttp's 5-minute default.
+        timeout = mock_session_cls.call_args.kwargs["timeout"]
+        assert timeout.total is not None
+        assert 0 < timeout.total <= 30
+
+    async def test_caches_the_successful_answer(self, configured):
+        session = _mock_session()
+        body = {"data": {"wallet": {"address": "0xCIRCLE0000000000000000000000000000000001"}}}
+        session.get = MagicMock(return_value=session._cm(_resp(200, body)))
+
+        with patch("archimedes.chain.circle_signer.aiohttp.ClientSession", return_value=_session_context(session)):
+            first = await configured.get_wallet_address()
+            session.get.reset_mock()
+            second = await configured.get_wallet_address()
+
+        assert first == second == "0xCIRCLE0000000000000000000000000000000001"
+        session.get.assert_not_called()  # cached, same pattern as _get_public_key
+
+    async def test_unconfigured_returns_none_without_calling_circle(self, monkeypatch):
+        monkeypatch.delenv("CIRCLE_API_KEY", raising=False)
+        monkeypatch.delenv("CIRCLE_ENTITY_SECRET", raising=False)
+        monkeypatch.delenv("WALLET_ID", raising=False)
+        signer = CircleSigner()
+        with patch("archimedes.chain.circle_signer.aiohttp.ClientSession") as mock_session_cls:
+            assert await signer.get_wallet_address() is None
+        mock_session_cls.assert_not_called()
+
+    async def test_non_200_returns_none_and_is_not_cached(self, configured):
+        """A 401/500 is "could not confirm", not "confirmed absent" — and a
+        transient outage must not pin that state for the process lifetime."""
+        session = _mock_session()
+        session.get = MagicMock(return_value=session._cm(_resp(401, {"message": "unauthorized"})))
+        with patch("archimedes.chain.circle_signer.aiohttp.ClientSession", return_value=_session_context(session)):
+            assert await configured.get_wallet_address() is None
+
+        # Circle recovers → the next call re-reads rather than serving a
+        # cached failure.
+        ok = _mock_session()
+        ok.get = MagicMock(
+            return_value=ok._cm(
+                _resp(200, {"data": {"wallet": {"address": "0xLATER00000000000000000000000000000000001"}}})
+            )
+        )
+        with patch("archimedes.chain.circle_signer.aiohttp.ClientSession", return_value=_session_context(ok)):
+            assert await configured.get_wallet_address() == "0xLATER00000000000000000000000000000000001"
+
+    @pytest.mark.parametrize(
+        ("label", "body"),
+        [
+            ("no data key", {"message": "ok"}),
+            ("null data", {"data": None}),
+            ("no wallet key", {"data": {}}),
+            ("null wallet", {"data": {"wallet": None}}),
+            ("no address field", {"data": {"wallet": {"id": "wallet-uuid"}}}),
+            ("empty address", {"data": {"wallet": {"address": ""}}}),
+        ],
+    )
+    async def test_payload_without_a_usable_address_returns_none(self, configured, label, body):
+        session = _mock_session()
+        session.get = MagicMock(return_value=session._cm(_resp(200, body)))
+        with patch("archimedes.chain.circle_signer.aiohttp.ClientSession", return_value=_session_context(session)):
+            assert await configured.get_wallet_address() is None, label
+
+    @pytest.mark.parametrize(
+        ("label", "exc"),
+        [
+            # TimeoutError IS asyncio.TimeoutError on 3.11+ — this is what the
+            # bounded _WALLET_LOOKUP_TIMEOUT raises when Circle hangs.
+            ("timeout", TimeoutError()),
+            ("connection error", aiohttp.ClientConnectionError("circle unreachable")),
+        ],
+    )
+    async def test_transport_failure_returns_none_and_never_raises(self, configured, label, exc):
+        """The caller runs inside the agent tick and acts irreversibly on a
+        confirmed mismatch — a raised exception here would abort the whole
+        reconciliation pass, and a guessed address would terminal a
+        recoverable reveal. Both are wrong; None is the honest answer."""
+        session = _mock_session()
+        session.get = MagicMock(return_value=_raising_cm(exc))
+        with patch("archimedes.chain.circle_signer.aiohttp.ClientSession", return_value=_session_context(session)):
+            assert await configured.get_wallet_address() is None, label
+
+    async def test_non_json_body_returns_none(self, configured):
+        """A 200 whose body doesn't parse (proxy error page, truncated
+        response) must not propagate out of the tick."""
+        session = _mock_session()
+        resp = MagicMock(status=200)
+        resp.json = AsyncMock(side_effect=ValueError("Expecting value"))
+        session.get = MagicMock(return_value=session._cm(resp))
+        with patch("archimedes.chain.circle_signer.aiohttp.ClientSession", return_value=_session_context(session)):
+            assert await configured.get_wallet_address() is None
+
+
 # ── execute_contract ──────────────────────────────────────────
 
 
@@ -138,7 +283,13 @@ class TestExecuteContract:
         ):
             await configured.execute_contract("0xVault", "setAgent(address)", ["0xabc"])
 
-    async def test_non_201_submit_raises(self, configured):
+    async def test_a_rejected_submit_raises(self, configured):
+        """A NON-2xx submit raises. 200 does not — it is Circle replaying our idempotency key.
+
+        Renamed from ``test_non_201_submit_raises``: the old name asserted a rule the code
+        no longer follows. {200, 201} are both accepted (``_SUBMIT_ACCEPTED``); the 200 path
+        is proven in ``backend/tests/test_circle_signer.py``, alongside ``STUCK``.
+        """
         session = _mock_session()
         session.get = MagicMock(return_value=session._cm(_resp(200, {"data": {"publicKey": "PEM"}})))
         session.post = MagicMock(return_value=session._cm(_resp(400, {"error": "bad"})))

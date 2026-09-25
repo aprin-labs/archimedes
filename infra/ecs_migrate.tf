@@ -31,7 +31,7 @@
 # so `.github/workflows/deploy.yml`'s `migrate` job documents, rather than
 # silently assumes, which Terraform resource its hardcoded `ECS_MIGRATE_TASK_FAMILY`
 # literal must stay in sync with — the same literal-constant pattern already used
-# for `ECS_CLUSTER` / `EC2_INSTANCE_ID` there (CI can't run `terraform output`
+# for `ECS_CLUSTER` / `ECR_REGISTRY` there (CI can't run `terraform output`
 # without a full backend/state setup, so the value itself stays a literal; the
 # Terraform output is the sync-check a reviewer / future change can grep for).
 #

@@ -24,8 +24,10 @@ from archimedes.chain.executor import chain_executor
 from archimedes.chain.oracle_updater import OracleUpdater
 from archimedes.chain.v_check import VCheck
 from archimedes.db import get_session
+from archimedes.execution.core import compute_trades as runner_compute_trades
 from archimedes.interfaces.math import IRegimeDetector
 from archimedes.marketplace import payments, spend_cap
+from archimedes.marketplace.config import payments_halted
 from archimedes.marketplace.settlement import SettlementSweeper
 from archimedes.marketplace.state import MarketState
 from archimedes.marketplace.tick_registry import (
@@ -35,7 +37,7 @@ from archimedes.marketplace.tick_registry import (
     TickStep,
 )
 from archimedes.models.marketplace import MarketplaceAgent, SettlementIntent, SubscriberLiability, SubscriberTickLog
-from archimedes.models.portfolio import Portfolio, RiskProfile, TargetAllocation, TradeDirection, TradeOrder
+from archimedes.models.portfolio import Portfolio, RiskProfile, TargetAllocation, TradeOrder
 from archimedes.models.regime import EnsembleConsensus, RegimeClassification
 from archimedes.services.gmm_regime_detector import GmmRegimeDetector
 from archimedes.services.portfolio_constructor import PortfolioConstructor
@@ -48,7 +50,10 @@ from archimedes.services.vix_regime_detector import VixRegimeDetector
 
 logger = logging.getLogger(__name__)
 
-_DRIFT_THRESHOLD = 0.15
+# Drift threshold: NOT redefined here. The marketplace used to carry its own
+# `_DRIFT_THRESHOLD = 0.15` beside its copy of the diff loop — two constants
+# that had to be kept equal by hand. The single one now lives with the single
+# implementation, `execution.core.DRIFT_THRESHOLD` (#1719, #1410).
 _USDC_FLOOR = float(os.getenv("AGENT_USDC_FLOOR", "0.20"))
 FLAT_FEE_PER_ACTION = int(os.getenv("FLAT_FEE_PER_ACTION", "100"))  # raw 6-dec USDC
 CHARGE_BATCH_SIZE = int(os.getenv("CHARGE_BATCH_SIZE", "10"))  # concurrent Circle signing calls per batch
@@ -91,50 +96,42 @@ def compute_trades(
     target_weights: dict[str, float],
     token_addresses: dict[str, str] | None = None,
 ) -> list[TradeOrder]:
-    """PORT of StrategyRunner._compute_trades (agent_runner.py:806).
+    """Marketplace adapter over the CANONICAL runner implementation.
 
-    Diff current portfolio vs target weights → trade list.
-    token_addresses maps symbol → checksummed contract address (includes USDC).
+    This used to be a hand-ported copy of ``StrategyRunner._compute_trades``,
+    and it drifted: the runner grew the #1080 unpriced-holding skip and this
+    copy never did, so a marketplace vault holding a synth whose oracle price
+    could not be read saw that holding's weight as a real 0 (it is 0 BY
+    CONSTRUCTION) and sized a full-weight BUY against it, every tick, forever
+    (#1719).
+
+    It is no longer a copy. The diff loop, the drift threshold and the #1080
+    skip all live in :func:`archimedes.execution.core.compute_trades`; this
+    function only adapts the marketplace's calling convention to it:
+
+    * in — a ``symbol -> weight`` dict plus a separate ``symbol -> address``
+      map, instead of the runner's pre-built ``TargetAllocation`` list;
+    * out — trades for symbols that resolved to no contract address are
+      dropped. The vault runner cannot hit that case (it resolves addresses
+      while building its targets); the marketplace can, because ``addr_map``
+      comes from a per-publisher universe lookup that may not cover a held
+      symbol. Filtering the RESULT is exactly equivalent to the old in-loop
+      ``continue`` — nothing else in the loop reads ``token_addr`` — so this
+      keeps the marketplace-only guard without forking the loop to hold it.
     """
     addr_map = token_addresses or {}
-    current_weights = portfolio.weights_dict
-    target_map = {
-        sym: TargetAllocation(symbol=sym, weight=w, token_address=addr_map.get(sym, ""))
-        for sym, w in target_weights.items()
-    }
+    targets = [
+        TargetAllocation(symbol=sym, weight=w, token_address=addr_map.get(sym, "")) for sym, w in target_weights.items()
+    ]
 
-    trades: list[TradeOrder] = []
-    all_symbols = set(target_map.keys()) | set(current_weights.keys())
-
-    for sym in all_symbols:
-        current_w = current_weights.get(sym, 0.0)
-        target = target_map.get(sym)
-        target_w = target.weight if target else 0.0
-        token_addr = target.token_address if target else ""
-
-        # Skip unresolved symbols — no address means we cannot trade them
-        if not token_addr and sym != "USDC":
-            logger.warning("no token address for %s; skipping", sym)
+    tradeable: list[TradeOrder] = []
+    for trade in runner_compute_trades(portfolio, targets):
+        if not trade.token_address and trade.symbol != "USDC":
+            logger.warning("no token address for %s; skipping", trade.symbol)
             continue
+        tradeable.append(trade)
 
-        drift = target_w - current_w
-        if abs(drift) < _DRIFT_THRESHOLD:
-            continue
-
-        usdc_value = abs(drift) * portfolio.total_value_usdc
-        direction = TradeDirection.BUY if drift > 0 else TradeDirection.SELL
-
-        trades.append(
-            TradeOrder(
-                symbol=sym,
-                token_address=token_addr,
-                direction=direction,
-                amount=round(usdc_value, 6),
-                estimated_usdc_value=round(usdc_value, 2),
-            )
-        )
-
-    return trades
+    return tradeable
 
 
 @dataclass
@@ -376,15 +373,17 @@ class MarketService:
 
             for step in PIPELINE_STEPS:
                 # charge everyone still active for reaching this step
-                active = await self._charge_step(pub, active, strategy_id, tick_id, step)
+                active, charge_suppressed_ids = await self._charge_step(pub, active, strategy_id, tick_id, step)
                 # execute the step; publisher work runs regardless of subscriber count
                 try:
                     result = await step_runners[step]()
                 except Exception as exc:
-                    await self._halt_publisher(active, strategy_id, tick_id, step, str(exc))
+                    await self._halt_publisher(active, strategy_id, tick_id, step, str(exc), charge_suppressed_ids)
                     return
                 if result.halted:
-                    await self._halt_publisher(active, strategy_id, tick_id, step, result.reason or step.value)
+                    await self._halt_publisher(
+                        active, strategy_id, tick_id, step, result.reason or step.value, charge_suppressed_ids
+                    )
                     return
 
             trades = ctx.trades
@@ -422,7 +421,10 @@ class MarketService:
 
             # Settlement sweep (P5) — Gateway → wallet → depositToPool.
             # Runs inside its own try/except so a sweep failure never fails the tick.
-            # Gated on payments_dry_run — sweep disburses real collected fees.
+            # Gated on payments_dry_run here; SettlementSweeper.sweep_publisher
+            # ALSO checks the #1240 PAYMENTS_HALT kill switch internally (not
+            # only here) — sweep disburses real collected fees, so both gates
+            # matter regardless of which callers exist today.
             if not self.payments_dry_run:
                 try:
                     await self._sweeper.sweep_publisher(pub)
@@ -623,7 +625,7 @@ class MarketService:
 
         async def _one(sub):
             async with sem:
-                paid, halt_reason_override = await self._charge_one(
+                paid, halt_reason_override, charge_suppressed = await self._charge_one(
                     pub, sub, strategy_id, tick_id, TickStep.REBALANCE, action_count
                 )
                 if not paid:
@@ -644,6 +646,30 @@ class MarketService:
                     )
                     return
                 mirrored, trades_or_exc = await self._apply_to_subscriber(sub, target_weights, addr_map)
+                # #1240 PAYMENTS_HALT suppresses only the fee charge, never the
+                # (non-custodial) trade mirror — the switch stops money moving,
+                # not service. `charged` must reflect the suppressed fee, not
+                # the fictional charged=True the pre-#1240 shape produced.
+                #
+                # These two conditions are independent and must be composed,
+                # not treated as if/elif alternatives: a real execution
+                # failure while halted is still a real execution failure — the
+                # underlying vault error (`trades_or_exc`) must not be dropped
+                # from the ledger just because the fee charge was also
+                # suppressed. `not mirrored` takes the halt_source/halt_reason
+                # (the execution failure is the operative fact for this
+                # record); the PAYMENTS_HALT note is appended, not swapped in.
+                if not mirrored:
+                    halt_source = HaltSource.EXECUTION
+                    halt_reason = str(trades_or_exc)
+                    if charge_suppressed:
+                        halt_reason += " (PAYMENTS_HALT also active — no real charge was attempted)"
+                elif charge_suppressed:
+                    halt_source = HaltSource.PAYMENTS_HALT
+                    halt_reason = "PAYMENTS_HALT active — no real charge; rebalance still applied"
+                else:
+                    halt_source = None
+                    halt_reason = None
                 await self.record_subscriber_tick(
                     SubscriberTickRecord(
                         sub_id=sub.sub_id,
@@ -651,10 +677,10 @@ class MarketService:
                         tick_id=tick_id,
                         timestamp=datetime.now(UTC),
                         step_reached=TickStep.REBALANCE,
-                        halted=not mirrored,
-                        halt_source=None if mirrored else HaltSource.EXECUTION,
-                        halt_reason=None if mirrored else str(trades_or_exc),
-                        charged=True,
+                        halted=(not mirrored) or charge_suppressed,
+                        halt_source=halt_source,
+                        halt_reason=halt_reason,
+                        charged=not charge_suppressed,
                         action_count=action_count,
                         trade_orders=[asdict(t) for t in trades_or_exc] if mirrored else None,
                     )
@@ -824,20 +850,46 @@ class MarketService:
 
     async def _charge_one(
         self, pub, sub, strategy_id, tick_id, step: TickStep, action_count: int
-    ) -> tuple[bool, str | None]:
-        """Returns (paid, halt_reason_override). halt_reason_override is only set
-        when this method refuses the charge for a reason more specific than the
-        caller's own generic "could not afford X" message (currently: only the
-        #713 spend cap) — callers should prefer it over their default message
-        when it isn't None."""
+    ) -> tuple[bool, str | None, bool]:
+        """Returns (paid, halt_reason_override, charge_suppressed).
+
+        halt_reason_override is only set when this method refuses the charge
+        for a reason more specific than the caller's own generic "could not
+        afford X" message (currently: only the #713 spend cap) — callers
+        should prefer it over their default message when it isn't None.
+
+        charge_suppressed is True only for the #1240 PAYMENTS_HALT kill
+        switch: paid is still True (the subscriber is not deferred and the
+        tick proceeds normally — flipping the switch must not itself cascade
+        into a defer/halt of the subscriber; it only stops money moving), but
+        no USDC actually moved. Callers MUST persist charged=False whenever
+        charge_suppressed is True — a halted charge must never be recorded as
+        if it were a real (or even dry-run) settled charge; that ambiguity on
+        a live rail is exactly what #1240 calls out as unacceptable.
+        """
         if self.payments_dry_run:
-            return True, None
+            return True, None, False
+        if payments_halted():
+            # #1240 kill switch: read fresh every charge (never cached), unlike
+            # payments_dry_run above. paid=True so subscriber stays "paid" for
+            # this tick and flipping the switch cannot itself trigger
+            # cascading defer/halt side effects — it only stops money from
+            # moving. charge_suppressed=True tells the caller to persist that
+            # truthfully (charged=False), unlike payments_dry_run above, where
+            # the entire run is already known-fake and charged=True is the
+            # documented, unambiguous convention.
+            logger.warning(
+                "[%s] PAYMENTS_HALT active — refusing real charge for sub %s (treated as no-op)",
+                tick_id,
+                sub.sub_id,
+            )
+            return True, None, True
         if not pub.gateway_seller_address:
             logger.warning("[%s] no gateway_seller_address for pub %s — unpaid", tick_id, strategy_id)
-            return False, None
+            return False, None, False
         if not sub.circle_wallet_id:
             logger.warning("[%s] no circle_wallet_id for sub %s — unpaid", tick_id, sub.sub_id)
-            return False, None
+            return False, None, False
 
         # Idempotency guard (x402 is NOT crash-retry-idempotent — a retry signs a
         # fresh EIP-3009 nonce that settles as a new payment). Claim the logical
@@ -848,7 +900,7 @@ class MarketService:
         # reserve the same amount twice (see try_reserve_usdc's docstring).
         claim = self._claim_settlement_intent(strategy_id, tick_id, sub.sub_id, step.value)
         if claim == "already_settled":
-            return True, None  # this exact (strategy, tick, sub, step) already paid
+            return True, None, False  # this exact (strategy, tick, sub, step) already paid
         if claim == "in_flight":
             logger.warning(
                 "[%s] settlement intent already in-flight for sub %s step %s — skipping to avoid double-charge",
@@ -856,7 +908,7 @@ class MarketService:
                 sub.sub_id,
                 step.value,
             )
-            return False, None
+            return False, None, False
 
         # Spend-cap guard (#713): per subscriber WALLET (not sub_id — one wallet
         # can run several subscriptions and the cap is meant to bound total
@@ -882,7 +934,7 @@ class MarketService:
                 step.value,
             )
             self._finalize_settlement_intent(strategy_id, tick_id, sub.sub_id, step.value, settled=False)
-            return False, "24h spend cap reached"
+            return False, "24h spend cap reached", False
 
         # payments.charge documents "never raises", but the reservation above
         # must not depend on that contract holding forever: a raise escaping
@@ -906,12 +958,23 @@ class MarketService:
         self._finalize_settlement_intent(strategy_id, tick_id, sub.sub_id, step.value, settled=paid)
         if not paid:
             await spend_cap.release_reservation(sub.subscriber_wallet, charge_id, pending_raw)
-        return paid, None
+        return paid, None, False
 
     # F6.6 — charge all active subscribers for one pipeline step
     # Batched into groups of CHARGE_BATCH_SIZE for concurrent Circle signing.
-    async def _charge_step(self, pub, active, strategy_id, tick_id, step: TickStep):
+    async def _charge_step(self, pub, active, strategy_id, tick_id, step: TickStep) -> tuple[list, set[str]]:
+        """Returns (survivors, charge_suppressed_ids).
+
+        charge_suppressed_ids is the sub_id set of survivors whose charge for
+        *this* step was suppressed by PAYMENTS_HALT rather than actually paid
+        (or dry-run). Callers that later halt the publisher pipeline for these
+        same survivors (_halt_publisher) MUST persist charged=False for them —
+        the whole point of #1240's tick-ledger fix (see _charge_one's
+        docstring); the fix does not hold if a later publisher-halt on the
+        same step re-hardcodes charged=True.
+        """
         survivors = []
+        charge_suppressed_ids: set[str] = set()
         for i in range(0, len(active), CHARGE_BATCH_SIZE):
             chunk = active[i : i + CHARGE_BATCH_SIZE]
             results = await asyncio.gather(
@@ -920,10 +983,31 @@ class MarketService:
             )
             for sub, result in zip(chunk, results, strict=True):  # results == gather(over chunk) → same length
                 if isinstance(result, Exception):
-                    paid, halt_reason_override = False, None
+                    paid, halt_reason_override, charge_suppressed = False, None, False
                 else:
-                    paid, halt_reason_override = result
-                if paid:
+                    paid, halt_reason_override, charge_suppressed = result
+                if paid and charge_suppressed:
+                    # #1240 PAYMENTS_HALT: subscriber is NOT deferred and the
+                    # pipeline continues normally, but no USDC moved — the
+                    # persisted/mirrored record must say so truthfully rather
+                    # than reusing the charged=True shape of a real charge.
+                    await self.record_subscriber_tick(
+                        SubscriberTickRecord(
+                            sub_id=sub.sub_id,
+                            strategy_id=strategy_id,
+                            tick_id=tick_id,
+                            timestamp=datetime.now(UTC),
+                            step_reached=step,
+                            halted=True,
+                            halt_source=HaltSource.PAYMENTS_HALT,
+                            halt_reason="PAYMENTS_HALT active — no real charge; subscriber continues (not deferred)",
+                            charged=False,
+                            action_count=1,
+                        )
+                    )
+                    survivors.append(sub)
+                    charge_suppressed_ids.add(sub.sub_id)
+                elif paid:
                     await self.record_subscriber_tick(
                         SubscriberTickRecord(
                             sub_id=sub.sub_id,
@@ -963,10 +1047,29 @@ class MarketService:
                             "tick_id": tick_id,
                         },
                     )
-        return survivors
+        return survivors, charge_suppressed_ids
 
     # F6.7 — halt all still-active subscribers due to publisher pipeline halt
-    async def _halt_publisher(self, active, strategy_id, tick_id, step: TickStep, reason: str):
+    async def _halt_publisher(
+        self,
+        active,
+        strategy_id,
+        tick_id,
+        step: TickStep,
+        reason: str,
+        charge_suppressed_ids: set[str],
+    ):
+        """charge_suppressed_ids: sub_ids whose charge for *this* step was a
+        PAYMENTS_HALT no-op rather than a real/dry-run charge (from
+        _charge_step). Those survivors must NOT be recorded charged=True here
+        just because the publisher pipeline halted on a later step — that
+        would resurrect the exact tick-ledger lie #1240's charge_suppressed
+        fix closed on the happy path (see _charge_one's docstring).
+
+        Required, no default: a future caller that forgets to pass this gets
+        a loud TypeError at call time instead of silently re-persisting
+        charged=True for every survivor (the exact failure this parameter
+        exists to prevent)."""
         for sub in active:
             await self.record_subscriber_tick(
                 SubscriberTickRecord(
@@ -978,7 +1081,7 @@ class MarketService:
                     halted=True,
                     halt_source=HaltSource.PUBLISHER,
                     halt_reason=reason,
-                    charged=True,
+                    charged=sub.sub_id not in charge_suppressed_ids,
                     action_count=1,
                 )
             )
@@ -1163,7 +1266,7 @@ class MarketService:
         action_count: int,
     ) -> bool:
         """Legacy delegate — replaced by _charge_one.  Kept for test compat."""
-        paid, _ = await self._charge_one(pub, sub, strategy_id, tick_id, TickStep.LOAD_STRATEGY, action_count)
+        paid, _, _ = await self._charge_one(pub, sub, strategy_id, tick_id, TickStep.LOAD_STRATEGY, action_count)
         return paid
 
     async def _record_liability(self, sub: Subscriber, strategy_id: str, tick_id: str, action_count: int) -> None:

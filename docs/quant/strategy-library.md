@@ -13,15 +13,33 @@
 > methodology is non-trivial, see the file header for the complete write-up.
 
 This page documents the strategy files in the library (34 at the time of writing; count
-them with `ls analytics-engine/strategies/*.py`).
-Each carries an academic or practitioner anchor, a `REGIME_TAG`
+them with `ls analytics-engine/strategies/*.py` — that command, not this number, is the
+answer). Each carries an academic or practitioner anchor, a `REGIME_TAG`
 (`bull` / `bear` / `regime_neutral`), and the honest paper-vs-implementation
 delta. Admission to Tier 1 still requires passing the four-gate
 [`admission-criteria.md`](admission-criteria.md); a paper anchor is necessary, not
 sufficient. Which strategies pass all four gates is not recorded here — the live rigor gate is the only authority on which strategies currently pass; see the PASS/CANDIDATE badges in the app and `backend/archimedes/services/live_rigor_gate.py`; the rest are honest
-`CANDIDATE`s with their failing gate shown openly. **Faber 2007 does not pass** — its walk-forward OOS Sharpe
-ratio is 0.612, under the 0.90 gate (see
-[`../analysis/faber-dsr-finding.md`](../analysis/faber-dsr-finding.md)).
+`CANDIDATE`s with their failing gate shown openly.
+
+> **A note on library size, added 2026-08-31 ([#1598](https://github.com/aprin-labs/archimedes/issues/1598)).**
+> The two findings notes in this directory — [`library-pbo.md`](library-pbo.md) and
+> [`second-wave-universe-experiment.md`](second-wave-universe-experiment.md) — were both run
+> on **2026-06-11 over 22 of the 23 strategies that existed then**. The shelf has grown
+> since. Those notes are correct at their vintage and are not restated here; a PBO or
+> universe figure quoted from them is a 22-strategy figure, not a figure about the shelf you
+> are reading now.
+
+> **Corrected 2026-08-31 (#1598).** This paragraph used to explain Faber's failure by
+> calling 0.612 a walk-forward out-of-sample Sharpe and comparing it to the DSR gate. Both
+> halves were wrong. **0.612 is a DSR p-value** — the live pull recorded in
+> [`../analysis/faber-dsr-finding.md`](../analysis/faber-dsr-finding.md) (2026-05-27) puts
+> Faber's `dsr_p_value` at 0.612 and its out-of-sample Sharpe at **0.930**. And **the DSR
+> bar is not an out-of-sample-Sharpe threshold at all**: it is the level-1 DSR p-value bar,
+> a probability in `[0, 1]`. The out-of-sample Sharpe has two thresholds of its own — an
+> always-on floor of `> 0` and a cliff of `OOS/IS ≥ 0.5` — and 0.930 clears both
+> comfortably. Faber's recorded failure is on **criterion 1**, `dsr_p_value` against the
+> DSR bar; the verdict is unchanged, the reason was misattributed. As with every strategy
+> on this page, the current verdict comes from the live gate, not from this file.
 
 A recurring honesty theme: many files set `paper_claimed_*` to **null** when the
 source reports win-rate / t-statistic / conditional-mean tables rather than a
@@ -48,7 +66,7 @@ carry crash risk at trend reversals.
 - **v1 caveat:** the original is a cross-sectional long–short ranking; verify the
   live universe and ranking horizon against the paper. *(See file header.)*
 
-### Moskowitz, Ooi & Pedersen (2012) — Time Series Momentum (TSMOM) ✅ *passes the gate*
+### Moskowitz, Ooi & Pedersen (2012) — Time Series Momentum (TSMOM)
 - **File:** `moskowitz_ooi_pedersen_2012_tsmom.py`
 - **Paper:** *Time Series Momentum*, Journal of Financial Economics, 2012.
 - **Anomaly:** an asset's own past 12-month return predicts its next-month return —
@@ -334,7 +352,7 @@ anomaly to chase.
   Hierarchical Risk Parity objective documented in
   [`methodology.md`](methodology.md) §11.
 
-### Moreira & Muir (2017) — volatility-managed portfolios ✅ *passes the gate*
+### Moreira & Muir (2017) — volatility-managed portfolios
 - **File:** `moreira_muir_2017_volatility_managed.py`
 - **Paper:** *Volatility-Managed Portfolios*, Journal of Finance, 2017.
 - **Anomaly:** scale exposure **inversely to recent realized volatility** — contract
@@ -342,13 +360,17 @@ anomaly to chase.
   versus a static-exposure baseline; exploits the weak/negative relationship between
   current volatility and next-period return.
 - **Regime:** `bear` (outperforms in bear/high-vol regimes).
-- **Status:** `CANDIDATE` — **fails admission.** Walk-forward OOS Sharpe ratio 0.612,
-  under the 0.90 gate. The earlier claim that Faber passed was wrong; see
-  [`../analysis/faber-dsr-finding.md`](../analysis/faber-dsr-finding.md).
+- **Status:** per the live rigor gate.
+  *(Corrected 2026-08-31, [#1598](https://github.com/aprin-labs/archimedes/issues/1598).)*
+  This line used to assert a `CANDIDATE` verdict, explain it with 0.612 as a walk-forward
+  out-of-sample Sharpe, and then retract a claim about **Faber**. Every clause of it
+  belonged to a different strategy — 0.612 is Faber's DSR p-value — and the Faber sentence
+  was stranded here by a partially-applied edit. It sat directly under a heading that
+  claimed this strategy passes. All of it is gone; the live gate answers.
 - **v1 note:** the volatility signal is a rolling realized-volatility estimate (the
   paper uses one-month realized vol). *(See file header.)*
 
-### Faber (2007) — SMA200 tactical asset allocation ❌ *fails the gate*
+### Faber (2007) — SMA200 tactical asset allocation
 - **File:** `faber_2007_sma200_timing.py`
 - **Paper:** *A Quantitative Approach to Tactical Asset Allocation*, Journal of
   Wealth Management, 2007.
@@ -407,8 +429,17 @@ against, and the defensive floor.
   t-stats/win-rates rather than a mechanical Sharpe/CAGR; the number we stand behind
   is always the post-gate one on our own data.
 - **A paper anchor does not equal Tier-1 admission.** Which strategies pass all four gates is
-  reported by the live gate, not by this file; Faber 2007 is among those that do not.
+  reported by the live gate, not by this file.
   Everything that has not passed is an honest `CANDIDATE` with its failing gate visible. See [`admission-criteria.md`](admission-criteria.md).
+  One strategy has a standing written analysis of *why* it fails —
+  [`../analysis/faber-dsr-finding.md`](../analysis/faber-dsr-finding.md), on a 2026-05-27
+  pull — which is a record of that finding, not a statement of Faber's status today.
+- **A heading is not a verdict.** *(Rule added 2026-08-31, #1598.)* Section headings on
+  this page carry the paper and the strategy name only. Three of them used to carry a
+  pass/fail marker, and all three disagreed with the status line directly beneath them —
+  including a green tick sitting on top of "fails admission". Pass/fail lives in the live
+  gate and nowhere on this page; if you are tempted to add a marker to a heading, add a
+  link to the badge instead.
 - **Regime tags drive sizing, not just labeling.** A `bull`-tagged strategy is sized
   down by the regime-conditional γ multiplier in `risk_off`/`crisis` regimes (see
   [`methodology.md`](methodology.md) §10).

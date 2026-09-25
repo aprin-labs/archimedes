@@ -130,10 +130,29 @@ const paperTrading = readFileSync(
 );
 
 test("PaperTrading.jsx imports the shared copy/format helpers from ../paperCopy", () => {
-	assert.match(
-		paperTrading,
-		/import \{ driftTooltip, formatTotalReturn, paperErrorMessage \} from ['"]\.\.\/paperCopy['"]/,
-	);
+	// Matched per-name against the single ../paperCopy import block rather than
+	// as one literal line: the list grew when intraday marks landed, and a
+	// whole-line regex would have to be rewritten (and could be quietly
+	// loosened) every time it grows again. What this guards is unchanged —
+	// every copy helper the component renders comes from the tested module,
+	// not a local re-implementation.
+	const block = paperTrading.match(/import \{([^}]*)\} from ['"]\.\.\/paperCopy['"]/);
+	assert.ok(block, "expected a named import block from ../paperCopy");
+	const imported = new Set(block[1].split(",").map((s) => s.trim()).filter(Boolean));
+	for (const name of [
+		"driftTooltip",
+		"formatTotalReturn",
+		"paperErrorMessage",
+		"markLabel",
+		"markAnnouncement",
+		"marksStalenessNote",
+		"noMarksNote",
+		"marksUnavailableNote",
+		"markBasisNote",
+		"MARK_BASIS_DISCLOSURE",
+	]) {
+		assert.ok(imported.has(name), `expected ${name} to be imported from ../paperCopy`);
+	}
 });
 
 test("PaperTrading.jsx's DRIFT tooltip calls driftTooltip(driftAt, status), not an inline literal", () => {

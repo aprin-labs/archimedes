@@ -4,9 +4,15 @@ Production: reads all parameters under ``/archimedes/prod/*`` via boto3 SSM
 and injects them into ``os.environ`` so downstream services (LLM, Circle,
 chain client) work without any code changes.
 
-Local development: no-op when ``AWS_SSM_PATH_PREFIX`` is unset or when
+Local development: no-op when ``AWS_SSM_PATH_PREFIX`` is unset/blank or when
 boto3 cannot reach SSM (no instance profile, no credentials). Falls back
 silently to .env-based values already loaded by python-dotenv.
+
+Nothing in this module defaults the prefix to a real path. A missing prefix
+means "load nothing", never "load production" — ambient AWS credentials on a
+developer machine must not be able to promote a local run to prod-secret-backed
+(issue #1044). The caller-side half of that guard lives in ``main.py``, which
+only calls ``load_ssm_secrets()`` when ``PUBLIC_DOMAIN`` is set.
 
 Usage (in main.py, BEFORE init_db / service imports):
     from archimedes.services.secrets_service import load_ssm_secrets
@@ -27,8 +33,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Default prefix — matches infra/iam policy + .env.example documentation.
-_DEFAULT_PREFIX = "/archimedes/prod/"
+# NOTE: there is intentionally no module-level default prefix constant. The
+# production prefix is declared where production is declared — infra/ecs.tf and
+# infra/ecs_migrate.tf — never as an in-code fallback that an unset env var can
+# silently select (issue #1044).
 
 # Map SSM param names (last segment after prefix) → env var names.
 # e.g. /archimedes/prod/LLM_AUTH_TOKEN → LLM_AUTH_TOKEN
@@ -65,7 +73,9 @@ def load_ssm_secrets(
     """Load secrets from AWS SSM Parameter Store into os.environ.
 
     Args:
-        prefix: SSM path prefix (default: AWS_SSM_PATH_PREFIX env var or /archimedes/prod/)
+        prefix: SSM path prefix (default: the AWS_SSM_PATH_PREFIX env var).
+            There is deliberately NO fallback path — blank means "load
+            nothing" and returns 0 (issue #1044).
         region: AWS region (default: AWS_REGION env var or us-east-1)
         override_existing: If True, overwrite env vars that already have values.
             Default False — .env values take precedence (useful for local dev override).
@@ -137,8 +147,19 @@ def _fetch_all_parameters(client: Any, prefix: str) -> list[dict[str, Any]]:
 
 
 def list_ssm_parameters(prefix: str | None = None, region: str | None = None) -> list[str]:
-    """List parameter names (not values) under the prefix. Useful for diagnostics."""
-    prefix = prefix or os.environ.get("AWS_SSM_PATH_PREFIX", _DEFAULT_PREFIX)
+    """List parameter names (not values) under the prefix. Useful for diagnostics.
+
+    Blank prefix → ``[]``, matching :func:`load_ssm_secrets`. This helper used
+    to fall back to ``/archimedes/prod/`` when the env var was unset, which
+    made a bare ``list_ssm_parameters()`` from a developer shell with ambient
+    AWS credentials enumerate the real production parameter store — the same
+    ambient-credential promotion #1044 closed on the load path, left open on
+    the diagnostic path. The prefix must now be stated, by env var or argument.
+    """
+    prefix = (prefix or os.environ.get("AWS_SSM_PATH_PREFIX", "")).strip()
+    if not prefix:
+        logger.debug("secrets_service: AWS_SSM_PATH_PREFIX not set — skipping SSM list")
+        return []
     region = region or os.environ.get("AWS_REGION", "us-east-1")
 
     try:

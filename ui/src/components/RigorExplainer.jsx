@@ -29,7 +29,7 @@ export default function RigorExplainer() {
           it never changes the global Verified badge, which always stays at the strictest level.
           Three checks are <strong>always enforced at every level</strong> and can never be bypassed:
           the look-ahead audit must pass, the out-of-sample Sharpe must be positive, and the
-          deflated-Sharpe p-value must be ≥ 0.50. You can trade confidence for breadth — you can
+          deflated-Sharpe confidence must be ≥ 0.50. You can trade confidence for breadth — you can
           never fully bypass the gate.
         </div>
       </div>
@@ -44,9 +44,9 @@ export default function RigorExplainer() {
           }}>1</div>
           <div>
             <div className="label">Deflated Sharpe Ratio (DSR)</div>
-            <div className="caption" style={{ color: 'var(--text-4)' }}>Bailey & López de Prado (2014)</div>
+            <div className="caption" style={{ color: 'var(--text-3)' }}>Bailey & López de Prado (2014)</div>
           </div>
-          <span className="tag tag-positive" style={{ marginLeft: 'auto' }}>p-value ≥ 0.90 (badge)</span>
+          <span className="tag tag-positive" style={{ marginLeft: 'auto' }}>confidence ≥ 0.95 (badge)</span>
         </div>
 
         <p className="body" style={{ marginBottom: 16, lineHeight: 1.65 }}>
@@ -64,7 +64,7 @@ export default function RigorExplainer() {
           <div className="body" style={{ fontFamily: 'var(--mono, monospace)', fontSize: '0.82rem', color: 'var(--text-2)', lineHeight: 1.5 }}>
             z = (SR̂ − SR₀) × √(T−1) / √(1 − γ₃SR̂ + ((γ₄−1)/4)SR̂²)
             <br />
-            <span style={{ color: 'var(--text-4)', fontSize: '0.75rem' }}>
+            <span style={{ color: 'var(--text-3)', fontSize: '0.75rem' }}>
               where SR₀ = expected best Sharpe of N iid trials, γ₃ = skewness, γ₄ = raw kurtosis
             </span>
           </div>
@@ -79,16 +79,16 @@ export default function RigorExplainer() {
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
           <div className="card-flat" style={{ padding: 12 }}>
-            <div className="caption" style={{ color: 'var(--text-4)', marginBottom: 4 }}>Our threshold</div>
-            <div className="body" style={{ fontWeight: 600 }}>p-value ≥ 0.90 → 0.50</div>
+            <div className="caption" style={{ color: 'var(--text-3)', marginBottom: 4 }}>Our threshold</div>
+            <div className="body" style={{ fontWeight: 600 }}>confidence ≥ 0.95 → 0.50</div>
             <div className="caption" style={{ color: 'var(--text-3)' }}>
-              The Verified badge needs ≥90% confidence the Sharpe is genuine. The strictness
+              The Verified badge needs ≥95% confidence the Sharpe is genuine. The strictness
               slider relaxes this down to a hard floor of 0.50 (never a coin flip) at the
               riskiest level.
             </div>
           </div>
           <div className="card-flat" style={{ padding: 12 }}>
-            <div className="caption" style={{ color: 'var(--text-4)', marginBottom: 4 }}>Library example</div>
+            <div className="caption" style={{ color: 'var(--text-3)', marginBottom: 4 }}>Library example</div>
             <div className="body" style={{ fontWeight: 600, color: 'var(--positive)' }}>
               Moreira-Muir: DSR = 0.55, p = 0.995
             </div>
@@ -112,7 +112,7 @@ export default function RigorExplainer() {
           }}>2</div>
           <div>
             <div className="label">Probability of Backtest Overfitting (PBO)</div>
-            <div className="caption" style={{ color: 'var(--text-4)' }}>Bailey, Borwein, López de Prado & Zhu (2014) — CSCV</div>
+            <div className="caption" style={{ color: 'var(--text-3)' }}>Bailey, Borwein, López de Prado & Zhu (2014) — CSCV</div>
           </div>
           <span className="tag tag-positive" style={{ marginLeft: 'auto' }}>PBO &lt; 50%</span>
         </div>
@@ -138,7 +138,7 @@ export default function RigorExplainer() {
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
           <div className="card-flat" style={{ padding: 12 }}>
-            <div className="caption" style={{ color: 'var(--text-4)', marginBottom: 4 }}>Our threshold</div>
+            <div className="caption" style={{ color: 'var(--text-3)', marginBottom: 4 }}>Our threshold</div>
             <div className="body" style={{ fontWeight: 600 }}>PBO &lt; 50%</div>
             <div className="caption" style={{ color: 'var(--text-3)' }}>
               Less likely than random to underperform median out-of-sample.
@@ -146,7 +146,7 @@ export default function RigorExplainer() {
             </div>
           </div>
           <div className="card-flat" style={{ padding: 12 }}>
-            <div className="caption" style={{ color: 'var(--text-4)', marginBottom: 4 }}>Library example</div>
+            <div className="caption" style={{ color: 'var(--text-3)', marginBottom: 4 }}>Library example</div>
             <div className="body" style={{ fontWeight: 600, color: 'var(--positive)' }}>
               Both Tier-1 strategies: PBO ≈ 39%
             </div>
@@ -168,7 +168,7 @@ export default function RigorExplainer() {
           }}>3</div>
           <div>
             <div className="label">Walk-Forward Out-of-Sample Sharpe</div>
-            <div className="caption" style={{ color: 'var(--text-4)' }}>Chronological 70/30 train-test split</div>
+            <div className="caption" style={{ color: 'var(--text-3)' }}>Chronological 70/30 train-test split</div>
           </div>
           <span className="tag tag-positive" style={{ marginLeft: 'auto' }}>OOS ≥ 50% of in-sample</span>
         </div>
@@ -183,14 +183,14 @@ export default function RigorExplainer() {
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
           <div className="card-flat" style={{ padding: 12 }}>
-            <div className="caption" style={{ color: 'var(--text-4)', marginBottom: 4 }}>Our threshold</div>
+            <div className="caption" style={{ color: 'var(--text-3)', marginBottom: 4 }}>Our threshold</div>
             <div className="body" style={{ fontWeight: 600 }}>OOS ≥ 50% of in-sample Sharpe</div>
             <div className="caption" style={{ color: 'var(--text-3)' }}>
               Prevents strategies that look good historically but degrade on modern data.
             </div>
           </div>
           <div className="card-flat" style={{ padding: 12 }}>
-            <div className="caption" style={{ color: 'var(--text-4)', marginBottom: 4 }}>Library examples</div>
+            <div className="caption" style={{ color: 'var(--text-3)', marginBottom: 4 }}>Library examples</div>
             <div className="body" style={{ fontWeight: 600, color: 'var(--positive)' }}>
               Moreira-Muir: in-sample 0.77, OOS 0.97
             </div>
@@ -212,7 +212,7 @@ export default function RigorExplainer() {
           }}>4</div>
           <div>
             <div className="label">Look-Ahead Audit</div>
-            <div className="caption" style={{ color: 'var(--text-4)' }}>Static code review — binary pass/fail</div>
+            <div className="caption" style={{ color: 'var(--text-3)' }}>Static code review — binary pass/fail</div>
           </div>
           <span className="tag tag-positive" style={{ marginLeft: 'auto' }}>All pass</span>
         </div>
@@ -228,7 +228,7 @@ export default function RigorExplainer() {
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
           <div className="card-flat" style={{ padding: 12 }}>
-            <div className="caption" style={{ color: 'var(--text-4)', marginBottom: 4 }}>What we check</div>
+            <div className="caption" style={{ color: 'var(--text-3)', marginBottom: 4 }}>What we check</div>
             <ul className="body" style={{ paddingLeft: 16, lineHeight: 1.7, fontSize: '0.83rem', color: 'var(--text-2)' }}>
               <li>No fills at intrabar extremes (open/close only)</li>
               <li>Signal computed on bar N, filled on bar N+1</li>
@@ -237,7 +237,7 @@ export default function RigorExplainer() {
             </ul>
           </div>
           <div className="card-flat" style={{ padding: 12 }}>
-            <div className="caption" style={{ color: 'var(--text-4)', marginBottom: 4 }}>Library result</div>
+            <div className="caption" style={{ color: 'var(--text-3)', marginBottom: 4 }}>Library result</div>
             <div className="body" style={{ fontWeight: 600, color: 'var(--positive)' }}>
               All 6 strategies: audit passed
             </div>
@@ -260,7 +260,7 @@ export default function RigorExplainer() {
             <thead>
               <tr>
                 <th>Strategy</th>
-                <th className="text-right">DSR p-val</th>
+                <th className="text-right">DSR conf</th>
                 <th className="text-right">PBO</th>
                 <th className="text-right">OOS Sharpe</th>
                 <th className="text-right">Look-ahead</th>
@@ -319,15 +319,15 @@ export default function RigorExplainer() {
             </tbody>
           </table>
         </div>
-        <div className="caption" style={{ marginTop: 10, color: 'var(--text-4)', fontSize: '0.72rem' }}>
-          Badge (Conservative/level-1) thresholds: DSR p ≥ 0.90 · PBO &lt; 50% · OOS ≥ 50% of in-sample Sharpe.
-          The strictness slider relaxes these toward the always-on floors (look-ahead pass · OOS &gt; 0 · DSR p ≥ 0.50).
+        <div className="caption" style={{ marginTop: 10, color: 'var(--text-3)', fontSize: '0.72rem' }}>
+          Badge (Conservative/level-1) thresholds: DSR conf ≥ 0.95 · PBO &lt; 50% · OOS ≥ 50% of in-sample Sharpe.
+          The strictness slider relaxes these toward the always-on floors (look-ahead pass · OOS &gt; 0 · DSR conf ≥ 0.50).
           Numbers above are a snapshot from the most recent seed backtest run; the verdict is recomputed by the
           gate at the chosen strictness every time.
         </div>
       </div>
 
-      <div className="caption" style={{ color: 'var(--text-4)', fontSize: '0.72rem', lineHeight: 1.6 }}>
+      <div className="caption" style={{ color: 'var(--text-3)', fontSize: '0.72rem', lineHeight: 1.6 }}>
         Bailey & López de Prado (2014) "The Deflated Sharpe Ratio" ·
         Bailey, Borwein, López de Prado & Zhu (2014) "The Probability of Backtest Overfitting"
       </div>

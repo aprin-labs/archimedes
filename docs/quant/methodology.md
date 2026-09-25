@@ -132,33 +132,53 @@ Read it left to right:
   `N = len(strategy_library)` so the correction is meaningful, and a warning is
   logged when `N = 1` while the library holds more than one strategy.
 
-#### Effective-N for correlated trials
+#### Correlated trials shrink `E[max]`, they do not shrink `N`
 
 A parameter sweep whose variants move together does **not** constitute `N`
 *independent* tests. `compute_dsr` accepts an `average_correlation` argument and
-converts the nominal trial count to an effective count under an equicorrelation
-model:
+shrinks the expected best-of-N null directly. For `N` standard normals with
+equicorrelation `ρ̄ ≥ 0`, the one-factor representation
+`Xᵢ = √ρ̄·Z + √(1−ρ̄)·εᵢ` gives each `Xᵢ` unit variance and pairwise correlation
+`ρ̄`, and the term `Z` common to all of them factors straight out of the maximum:
 
 ```
-N_eff = N / (1 + (N − 1)·ρ̄)
+max_i Xᵢ    = √ρ̄·Z + √(1−ρ̄)·max_i εᵢ
+E[max_i Xᵢ] = √(1−ρ̄) · E[max of N iid]
 ```
 
-This is the standard "effective number of independent tests" (Cheverud 2001;
-Nyholt 2004). At `ρ̄ = 0` we get `N_eff = N` (full multiple-testing penalty); at
-`ρ̄ = 1` all variants collapse to a single test (`N_eff = 1`, no deflation). The
-helper `compute_average_pairwise_correlation(...)` computes `ρ̄` from the library's
+So the correlated `E[max]` is exactly the independent one scaled by `√(1−ρ̄)`.
+This is Bailey–López de Prado's own `√(V[{SRₙ}])` term specialised to
+equicorrelation. At `ρ̄ = 0` the full multiple-testing penalty applies; at
+`ρ̄ = 1` all variants are one test and there is nothing to deflate. The helper
+`compute_average_pairwise_correlation(...)` computes `ρ̄` from the library's
 return matrix and clamps negative (diversifying) correlations to `0.0` — a
-conservative "no penalty relief" default. The two-quantile `E[max]` approximation
-diverges as `N → 1`, so the code evaluates it at `max(2, N_eff)` and linearly
-tapers to zero across `N_eff ∈ [1, 2]`.
+conservative "no penalty relief" default.
+
+> **Superseded (#1558 / #1559, 2026-08-31).** This section previously documented
+> an effective-trial-count form `N_eff = N / (1 + (N − 1)·ρ̄)`, attributed to
+> Cheverud 2001 / Nyholt 2004, evaluated at `max(2, N_eff)` with a linear taper
+> across `N_eff ∈ [1, 2]`. That is the Kish design effect — an effective sample
+> size for a *mean*, not an expectation of a *maximum*. It under-deflated by
+> 2×–10× across `ρ̄ ∈ [0.3, 0.9]`, and it was wrong in shape as well as scale:
+> `N_eff → 1/ρ̄` as `N` grows, so the penalty saturated and a 10,000-variant
+> sweep drew the same deflation as a 64-variant one. The formula, the citation,
+> and the taper are all gone from the code; none of them should be reintroduced.
 
 #### Outputs
 
 `compute_dsr` returns `(deflated_sharpe_ratio, dsr_p_value)`:
 - `deflated_sharpe_ratio` — `(ŜR − SR_zero)·√252`, the *annualized* corrected
   Sharpe in Sharpe units (positive ⇒ clears the multiple-testing bar).
-- `dsr_p_value` — `Φ(z) ∈ [0, 1]`, the gate quantity. **Gate threshold: ≥ 0.95**
-  (`RigorGateResult.passes_all`).
+- `dsr_p_value` — `Φ(z) ∈ [0, 1]`, the gate quantity. **Gate threshold at the strictest
+  level (1, Conservative — the badge bar): ≥ 0.95**, loosening down the strictness ladder
+  to `DSR_P_FLOOR` at level 5. The live values are the `dsr_p_min` fields of
+  `_PROFILES` in [`rigor_profiles.py`](../../backend/archimedes/services/rigor_profiles.py);
+  `RigorGateResult.passes_all` reads the selected profile, never a literal, and the level-1
+  row *is* `DSR_P_BADGE_MIN` rather than a copy of its value.
+  **Corrected 2026-09-03 (#1794):** between PR #901 and #1794 this line quoted a lower bar
+  than the Generate pipeline and the public rigor pages did, so the product graded against
+  two bars at once. There is now one. Say "deflated-Sharpe evidence at the 95% one-sided
+  level" — real evidence on a short return history, not "statistically proven".
 
 A companion `compute_sharpe_ci(...)` returns the Lo (2002) confidence interval for
 an annualized Sharpe under i.i.d. daily returns — useful context for how wide the

@@ -75,10 +75,49 @@ domain identity (`ecs_task_ses_send` in `infra/ecs.tf`). A failed send is
 deliberately fail-soft (loud log, signup proceeds) so a sandboxed or degraded
 SES never 500s registration.
 
+**Nothing about either mail flow has been validated against a real inbox** — in the sandbox
+a send to any address that is not an individually-verified destination identity is rejected
+by SES and swallowed fail-soft, so no signal has ever reached a user either way. The
+procedure for that validation, and the six findings from the 2026-08-31 code-truth audit
+that gate the flip, are in
+[`runbooks/email-verification-validation.md`](runbooks/email-verification-validation.md).
+Three facts from that audit belong here because they change what a reader of this section
+should expect:
+
+- **Token lifetimes are 1 hour**, for both the verification link and the reset link, and
+  both are now pinned explicitly in `auth/auth.js` rather than inherited from a library
+  default (`emailVerification.expiresIn`, `emailAndPassword.resetPasswordTokenExpiresIn`).
+- **A verification link is a one-time bearer sign-in credential.**
+  `autoSignInAfterVerification` is on, so whoever opens the URL first gets a live session
+  without a password; a second open verifies nothing and mints nothing. A verification token
+  is a stateless JWT with no stored row, so only expiry closes that window — unlike a reset
+  token, which is a real `auth_verifications` row consumed on first use, with its identifier
+  stored hashed (`verification.storeIdentifier: 'hashed'`).
+- **`sendVerificationEmail` is fire-and-forget**, for the same anti-enumeration reason as
+  `sendResetPassword` below and one that is specific to it: `POST
+  /api/auth/send-verification-email` is reachable with no session, and Better Auth defends
+  it with a 500 ms constant-time floor that an awaited SES round trip walked straight
+  through (measured 504 ms unknown vs 922 ms known-and-unverified against a 900 ms mailer).
+
 Independently of enforcement, disposable accounts are bounded by three layers:
 
-1. Better Auth's production rate limiter: `/sign-up/email` at 3 per 10
-   minutes (`auth/auth.js` `rateLimit.customRules`).
+1. Better Auth's production rate limiter: `/sign-up/email` at 3 per 10 minutes, and
+   `/request-password-reset` + `/send-verification-email` at 3 per minute — all three
+   pinned in `auth/auth.js` `rateLimit.customRules`. **What the bucket is keyed on**
+   ([#1691](https://github.com/aprin-labs/archimedes/issues/1691), fixed): every bucket key is
+   `${ip}|${path}`, and Better Auth trusts a forwarded header only when it carries exactly
+   one value. Behind CloudFront → ALB → nginx each hop appends one, so until #1691 *no*
+   client IP resolved and the entire internet shared one bucket per path — three password
+   resets from anywhere exhausted the endpoint for everybody. nginx now **sets**
+   `X-Client-IP` from its realip-resolved `$remote_addr` and `advanced.ipAddress.
+   ipAddressHeaders` points the resolver at that one header, which is the same trusted
+   value layers 2 and 3 key on. Because `proxy_set_header` overwrites, a client-supplied
+   `X-Client-IP` cannot reach the auth service. **Stated exactly: nginx trusts only the ALB
+   CIDR, so behind CloudFront this address is the CloudFront *edge* that relayed the
+   request, not the viewer** — buckets are per-edge (unspoofable, no longer global, coarser
+   than one caller). Sharpening that further means trusting CloudFront's published edge
+   ranges, which is deliberately not done: that list changes and a stale one degrades
+   silently.
 2. nginx's `/api/auth/` `limit_req` zone.
 3. Decisively: the **per-IP daily generation cap**
    (`backend/archimedes/services/generation_quota.py`). Generation is the
@@ -219,6 +258,72 @@ sqlite adapter, faking only the network boundary (Google's token endpoint) via a
 mock — the authorization-URL construction, CSRF state, and linking decisions are the real
 library code. UI wiring and the `canUnlink` guard are covered in `ui/test/auth-client.test.js`,
 `ui/test/auth-errors.test.js`, and `ui/test/account-settings.test.js`.
+
+### Account management — email, password, sessions, deletion (#1367)
+
+Account Settings (`/app/account`) was read-only until this landed: no email change, no
+password change, no session list, no deletion. All four are Better Auth's own endpoints,
+called through `ui/src/auth-client.js`; nothing here re-implements password hashing,
+verification tokens, or session invalidation.
+
+**Email change** — `POST /api/auth/change-email`, opt-in via `user.changeEmail.enabled`.
+The address never switches over on submit. When the current address is already verified,
+`sendChangeEmailConfirmation` (`auth/auth.js`) mails a confirmation to the CURRENT address;
+opening it makes Better Auth mint a second token and mail the NEW address; opening THAT is
+the switchover. An unverified account skips the first step — there is no proven old
+address to confirm from. `updateEmailWithoutVerification` stays off, so no path switches an
+address without proving the new one. The callback is fire-and-forget with a fail-soft
+`.catch` for the same reason `sendResetPassword` is: an address that already belongs to
+another account returns an identical `{status: true}` with no mail sent, so a mailer
+failure that could 500 would make "taken" and "free" distinguishable by status code.
+Failures log the greppable marker `CHANGE_EMAIL_CONFIRM_SEND_FAILED`.
+
+**Password change** — `POST /api/auth/change-password`, already live server-side; the UI
+sends `revokeOtherSessions: true`, so rotating the password ends every other session. An
+account with no credential row (Google/GitHub only) is told so rather than shown a form
+that can only 400: `/set-password` is `serverOnly` in Better Auth, so there is no client
+path to add one.
+
+**Sessions** — `GET /api/auth/list-sessions`, `POST /api/auth/revoke-session`, `POST
+/api/auth/revoke-other-sessions`. Note the library's asymmetry: **listing** is behind
+`freshSessionMiddleware` (24h, `session.freshAge`) while **revoking** is not, so a stale
+session cannot read its own session list but can still end every other one. The UI renders
+that state honestly and deliberately keeps "End all other sessions" live in it — an empty
+list would be indistinguishable from a genuinely single-session account, which is a
+fabricated all-clear at exactly the moment someone is checking for a compromise.
+
+`auth/auth.js`'s `hooks.before` adds one guard here. Better Auth's `/revoke-session` does
+check ownership (`api/routes/session.mjs:434`) but returns `{status: true}` either way, so
+a token belonging to another account — or to nothing — gets a 200 claiming a revocation
+that did not happen. The hook turns that into a `404 SESSION_NOT_FOUND` before the
+endpoint runs, uniformly for "not yours" and "no such token", so the UI's "Session ended."
+notice is only ever reached when a session really went away.
+
+**Deletion** — `POST /api/auth/delete-user`, opt-in via `user.deleteUser.enabled`.
+`sendDeleteAccountVerification` is deliberately NOT set: with it, the endpoint only ever
+mails a link and never deletes in-request, which while SES is sandboxed would be a button
+that silently does nothing. Re-authentication is the endpoint's own: a password account
+must submit its current password, and a password-less account falls through to the
+session-freshness check. The UI adds a typed `delete my account` confirmation
+(`ui/src/account-deletion.js`) on top of the usual `window.confirm`.
+
+What actually gets erased is the **database's** decision, not this service's:
+`internalAdapter.deleteUser` ends in a bare `DELETE FROM auth_users WHERE id = ?`, which is
+the statement migration `85ca5310b7a1`'s per-table `ON DELETE` actions and its
+`trg_auth_users_purge_unclaimed_owned_rows` trigger are written to fire on
+(`backend/tests/test_account_deletion_cascade.py`). The user-facing erased/detached/retained
+lists are generated from `ui/src/account-deletion.js`, which
+`ui/test/account-deletion.test.js` pins against the `ondelete=` declared in
+`backend/archimedes/models/*.py` — so the page cannot promise something the schema does not
+do. `payment_receipts` and `generation_credits` carry no FK to `auth_users` and are listed
+to the user as NOT removed, which is the honest reading of the migration's own deferral.
+
+One side effect worth knowing: deleting an account also deletes its `auth_accounts` rows,
+which fires the same `databaseHooks.account.delete.after` that sends the link/unlink
+notification. `notifyAccountChange` returns early for `/delete-user` — otherwise the owner
+gets an "a sign-in method was removed, go review Account Settings" mail about an account
+they just deleted, and the queued hook (running after the `auth_users` row is gone) trips
+`ACCOUNT_CHANGE_NOTIFY_FAILED` on a completely expected event.
 
 ## Wallet linking
 

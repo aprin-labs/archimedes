@@ -283,9 +283,23 @@ def test_migrated_schema_is_what_is_under_test(engine):
     tables is caught here by introspection, in addition to being caught
     behaviourally by ``test_account_deletion_cascades_or_nulls_every_owned_table``.
     """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
     with engine.connect() as conn:
         stamped = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert stamped == "85ca5310b7a1", f"expected this migration to be head, got {stamped!r}"
+        # The premise is "this ran `upgrade head`", NOT "85ca5310b7a1 is
+        # forever the newest revision". Pinning the literal made every later
+        # migration break this file for a reason unrelated to what it guards
+        # (#1575's paper_decision_traces was the first). Resolve head from the
+        # script directory instead, and assert separately that the cascade
+        # policy revision this file is ABOUT is in the applied chain.
+        script = ScriptDirectory.from_config(Config(str(_BACKEND_DIR / "alembic.ini")))
+        heads = script.get_heads()
+        assert len(heads) == 1, f"the migration chain must stay serial; found heads {heads}"
+        assert stamped == heads[0], f"expected head {heads[0]!r} to be stamped, got {stamped!r}"
+        applied = {rev.revision for rev in script.iterate_revisions(stamped, "base")}
+        assert "85ca5310b7a1" in applied, "the cascade-policy migration this file guards was not applied"
 
         for table in _ALL_OWNED_TABLES:
             expected = "CASCADE" if table in _CASCADE_TABLES else "SET NULL"
@@ -551,4 +565,67 @@ def test_deletion_does_not_reach_an_unclaimed_row_on_a_wallet_the_account_never_
         )
         assert session.get(PaperDeployment, "deployment-stranger-1") is not None, (
             "an unrelated wallet's paper deployment was destroyed by another account's deletion"
+        )
+
+
+def test_payment_and_credit_records_survive_account_deletion(engine):
+    """The honest half of the deletion UI's promise (#1367, D4).
+
+    ``payment_receipts.user_id`` (`1752121b8d7c`, #1456) and
+    ``generation_credits.user_id`` (`a3f19c7d2e84`, #1441) carry no foreign
+    key to ``auth_users`` at all, so the DB does nothing to them when the
+    account row goes — a deliberate non-decision this revision's docstring
+    records under SCOPE ("a receipt is a financial record ... that is a call
+    for the humans who own the money path").
+
+    Account Settings' Delete-account panel therefore lists both under "Not
+    removed by this, and you should know it"
+    (``ui/src/account-deletion.js``'s ``DELETION_RETAINED``, mirrored against
+    the models by ``ui/test/account-deletion.test.js``). That is a claim
+    about runtime behaviour, so it gets a runtime check rather than only a
+    schema one: if a later revision gives either column a CASCADE, the copy
+    silently starts telling users the opposite of the truth, and this test
+    is what fails first.
+    """
+    with Session(engine) as session:
+        _add_account(session)
+        session.flush()
+        # Bound as an ISO string, not a datetime: sqlite3's default datetime
+        # adapter is deprecated in 3.12 and raises a DeprecationWarning on a
+        # raw-SQL bind, which this file has none of elsewhere.
+        now = datetime.now(UTC).isoformat()
+        session.execute(
+            text(
+                "INSERT INTO payment_receipts (user_id, payer_wallet, amount_base_units, price_usd, "
+                "network, settlement_ref, job_id, created_at) "
+                "VALUES (:uid, :wallet, 2000000, '2.00', 'arc-testnet', 'circle-ref-1', 'job-1', :now)"
+            ),
+            {"uid": _USER_ID, "wallet": _WALLET, "now": now},
+        )
+        session.execute(
+            text(
+                "INSERT INTO generation_credits (user_id, idempotency_key, status, created_at) "
+                "VALUES (:uid, 'idem-1', 'available', :now)"
+            ),
+            {"uid": _USER_ID, "now": now},
+        )
+        session.commit()
+
+        _delete_the_account(session)
+
+    with Session(engine) as session:
+        receipts = session.execute(
+            text("SELECT COUNT(*) FROM payment_receipts WHERE user_id = :uid"), {"uid": _USER_ID}
+        ).scalar_one()
+        credits = session.execute(
+            text("SELECT COUNT(*) FROM generation_credits WHERE user_id = :uid"), {"uid": _USER_ID}
+        ).scalar_one()
+
+        assert receipts == 1, (
+            "payment_receipts no longer survives account deletion — ui/src/account-deletion.js's "
+            "DELETION_RETAINED tells users their receipts are kept, and that copy is now false"
+        )
+        assert credits == 1, (
+            "generation_credits no longer survives account deletion — ui/src/account-deletion.js's "
+            "DELETION_RETAINED tells users the credit ledger is kept, and that copy is now false"
         )

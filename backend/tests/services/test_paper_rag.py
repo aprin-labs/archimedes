@@ -7,10 +7,16 @@ Covers:
 - Integration with select_candidates() via augment_candidate_scores
 - Anti-hallucination: scores don't introduce phantom candidates
 - Graceful fallback when semantic retrieval fails
+
+Every test in this module runs on the TF-IDF branch: the ``pin_tfidf_path``
+autouse fixture below forces it, so the branch is the same here as it is in
+CI. See that fixture for why that was not previously true.
 """
 
 from __future__ import annotations
 
+import archimedes.services.paper_rag as rag_module
+import pytest
 from archimedes.services.paper_rag import (
     PaperRAGHealth,
     _compute_idf,
@@ -62,6 +68,61 @@ PAPERS = [
         "We apply gradient boosted trees to corporate credit default prediction.",
     ),
 ]
+
+
+@pytest.fixture(autouse=True)
+def pin_tfidf_path(monkeypatch):
+    """Pin every test in this module to the TF-IDF branch, and record the
+    branch that actually ran.
+
+    Why (suite audit P1-3, 2026-09-01): the tests here are NAMED for the
+    TF-IDF path but nothing made them take it. ``semantic_rerank`` picks its
+    branch from ``_get_embedding_model()``
+    (``archimedes/services/paper_rag.py:408-412``), so the branch was decided
+    by what happened to be installed:
+
+    - CI installs ``backend/requirements-base.txt``
+      (``.github/workflows/quality-gate.yml:146``), which deliberately carries
+      no ``torch`` and no ``sentence-transformers`` — CI took the TF-IDF branch.
+    - A dev box with those installed took the EMBEDDING branch, and paid a
+      ~15.4s ``all-MiniLM-L6-v2`` load — including a live HuggingFace Hub
+      request — for the privilege.
+
+    Same test names, two different code paths, and the branch the names claim
+    was the one nobody ran locally. Forcing the loader to ``None`` makes the
+    branch identical everywhere, drops this file from 17.8s to 1.9s, and makes
+    it hermetic (no network, no weights on disk required).
+
+    Nothing is lost by pinning: the embedding branch keeps deterministic,
+    model-free coverage in the hermetic sibling ``backend/tests/test_paper_rag.py``
+    (issue #874) — ``TestSemanticRerank::test_uses_embedding_model_when_available``
+    stubs the encoder instead of loading one.
+
+    Returns the branch recorder (a list) so a test can assert WHICH branch ran.
+
+    MUTATION: delete the ``_get_embedding_model`` monkeypatch below and run
+    this file on a box that has sentence-transformers installed. The recorder
+    fills with ``"embeddings"``, the ``assert pin_tfidf_path == ["tfidf"]``
+    assertions fail, and the file goes back to ~18s.
+    """
+    branch: list[str] = []
+
+    monkeypatch.setattr(rag_module, "_get_embedding_model", lambda: None)
+
+    real_tfidf = rag_module._rerank_tfidf
+    real_embeddings = rag_module._rerank_with_embeddings
+
+    def _record_tfidf(*args, **kwargs):
+        branch.append("tfidf")
+        return real_tfidf(*args, **kwargs)
+
+    def _record_embeddings(*args, **kwargs):
+        branch.append("embeddings")
+        return real_embeddings(*args, **kwargs)
+
+    monkeypatch.setattr(rag_module, "_rerank_tfidf", _record_tfidf)
+    monkeypatch.setattr(rag_module, "_rerank_with_embeddings", _record_embeddings)
+    return branch
 
 
 # ── Tokenizer + TF-IDF tests ────────────────────────────────────
@@ -163,22 +224,25 @@ class TestSemanticRerank:
     def test_empty_input(self):
         assert semantic_rerank("momentum", []) == []
 
-    def test_tfidf_rerank_orders_by_relevance(self):
+    def test_tfidf_rerank_orders_by_relevance(self, pin_tfidf_path):
         """Papers with 'momentum' in their text should rank higher for a
-        'momentum' query."""
+        'momentum' query — on the TF-IDF branch this test is named for."""
         papers = [
             {"arxiv_id": "a1", "title": "Credit Risk", "abstract": "default prediction"},
             {"arxiv_id": "a2", "title": "Momentum Strategies", "abstract": "cross-sectional momentum"},
         ]
         results = semantic_rerank("momentum strategies equity", papers)
+        # The branch the test name claims is the branch that ran (audit P1-3).
+        assert pin_tfidf_path == ["tfidf"]
         # Momentum paper should score higher than credit risk paper
         a1_score = next(s for p, s in results if p["arxiv_id"] == "a1")
         a2_score = next(s for p, s in results if p["arxiv_id"] == "a2")
         assert a2_score > a1_score
 
-    def test_tfidf_rerank_returns_all_papers(self):
+    def test_tfidf_rerank_returns_all_papers(self, pin_tfidf_path):
         papers = [{"arxiv_id": f"p{i}", "title": f"Paper {i}", "abstract": f"Abstract {i}"} for i in range(5)]
         results = semantic_rerank("test query", papers)
+        assert pin_tfidf_path == ["tfidf"]
         assert len(results) == 5
 
     def test_scores_bounded(self):
@@ -243,7 +307,6 @@ class TestSelectCandidatesIntegration:
     def test_keyword_ranking_preserved_when_disabled(self, monkeypatch):
         """When FUSION_SEMANTIC_RETRIEVAL=false, select_candidates is pure keyword."""
         monkeypatch.setenv("FUSION_SEMANTIC_RETRIEVAL", "false")
-        monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "true")
         from archimedes.agents.strategy_fusion import (
             FusionBrief,
             select_candidates,
@@ -281,7 +344,6 @@ class TestSelectCandidatesIntegration:
         """When FUSION_SEMANTIC_RETRIEVAL=true, select_candidates applies
         semantic rerank after keyword filter."""
         monkeypatch.setenv("FUSION_SEMANTIC_RETRIEVAL", "true")
-        monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "true")
         from archimedes.agents.strategy_fusion import (
             FusionBrief,
             select_candidates,
@@ -363,7 +425,6 @@ class TestGracefulFallback:
     def test_paper_budget_floor_respected(self, monkeypatch):
         """Even with semantic rerank, paper_budget floor/ceiling holds."""
         monkeypatch.setenv("FUSION_SEMANTIC_RETRIEVAL", "true")
-        monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "true")
         from archimedes.agents.strategy_fusion import (
             FUSION_MAX_PAPERS,
             MIN_PAPERS,

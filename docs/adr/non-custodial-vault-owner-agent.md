@@ -44,3 +44,32 @@ A rebalance cannot exfiltrate to a platform-held wallet: it operates only over t
 ## Ratification
 
 Accepted; implemented via PR #731 (live on Arc testnet). Commit-before-trade ([commit-reveal] enforcement, #589/#755) layers on top so a rebalance also requires a fresh, causally-prior reasoning-trace commitment.
+
+## Amendment — 2026-08-31 (product framing only; the decision is unchanged)
+
+> Appended, not rewritten. Everything above still holds and was re-verified on this date:
+> `contracts/src/Vault.sol` and `VaultFactory.sol` carry the owner / creator / agent
+> separation exactly as decided, and the ownership check is live in the backend
+> (`api/vaults_routes.py`).
+
+What has changed is not the mechanism but **what the product is allowed to say about it.**
+The Ratification line's "live on Arc testnet" is true of the *contracts* and has been read as
+a claim about the *product*. It is not one. The vault-deploy journey — deploy, deposit,
+rebalance, withdraw — is gated off every public surface behind `ROADMAP_SURFACES_ENABLED`
+(off by default, [`ui/src/featureFlags.js`](../../ui/src/featureFlags.js), #1266), the
+public-page copy was moved into `ui/src/roadmapCopy*.js` and pinned by
+`ui/test/roadmap-copy.test.js` (#1354), and #1469 is open to scrub the last present-tense
+phrasing.
+
+So, precisely:
+
+- **Deployed and verifiable:** the contracts, their role separation, and the guarantee that
+  a compromised agent key cannot withdraw. This ADR's decision stands.
+- **Roadmap, not shipped product:** the user-facing vault journey. Any doc, UI string, or
+  pitch that implies users are running funds in Archimedes vaults today is wrong, whatever
+  the contract addresses say.
+
+Both sentences are needed. Dropping the first understates a real security property that was
+paid for; dropping the second is the claim-integrity failure `CLAUDE.md` § "The hard
+constraint" exists to prevent. Related: [`../architecture.md`](../architecture.md) § 8
+(trust boundaries) and § 9 item 11.

@@ -1,20 +1,21 @@
 """Shared LLM-generation JSON plumbing (relocated from `strategy_architect.py`).
 
 The interactive Strategy Architect was retired (issue #1064 — the debate
-society is now the sole strategy-generation path), but three of its pieces
-were load-bearing for OTHER live call sites and had to survive the deletion:
+society is now the sole strategy-generation path), but two of its pieces were
+load-bearing for OTHER live call sites and had to survive the deletion:
 
 - `extract_json` — robust JSON-object extraction from LLM text. Used by
   `debate_engine.py`, `strategy_fusion.py`, and `services/arxiv_pipeline.py`.
-- `ArchitectProposal` / `StrategySelection` — the proposal DTO shape. Used by
-  `services/strategy_guardrail.py` (the deterministic weight guardrail) and
-  `services/construction_trace.py` (the construction reasoning-trace
-  builder) — both are still-live, independently-tested utilities that just
-  happen to consume this shape; they are not Architect-specific themselves.
 - `ArchitectCannedBackend` / `default_backend` — the offline-safe LLM
   backend fallback `services/arxiv_pipeline.py` uses for its extraction
   pipeline. Names kept as-is (not renamed) to keep the relocation a pure
   move, not a redesign.
+
+A third piece — the `ArchitectProposal` / `StrategySelection` proposal DTOs —
+was kept in 2026-07 for two consumers, `services/strategy_guardrail.py` and
+`services/construction_trace.py`. Neither of those had any production caller
+either; all three were deleted on 2026-08-31. Nothing in the tree carries an
+Architect-shaped proposal any more.
 
 Names are unchanged from the original module so this is a mechanical move,
 not a rename.
@@ -25,8 +26,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
 
 from archimedes.services.llm_backend import LLMBackend, make_llm_backend
 
@@ -79,50 +78,6 @@ def extract_json(text: str) -> dict:
                         break
         start = cleaned.find("{", start + 1)
     raise ValueError("no parseable JSON object in LLM response")
-
-
-# ── Proposal DTOs (the seam services/strategy_guardrail.py and
-#    services/construction_trace.py consume) ─────────────────────
-
-
-@dataclass(frozen=True)
-class StrategySelection:
-    """One strategy an LLM chose, with its rationale and provenance."""
-
-    strategy_id: str
-    weight: float  # Raw model-proposed fraction; guardrail normalizes.
-    rationale: str
-    paper_citation: str = ""
-
-
-@dataclass
-class ArchitectProposal:
-    """A complete strategy-construction proposal.
-
-    Pre-guardrail: weights are the model's raw suggestion and need not sum to
-    1.0 — the guardrail normalizes/caps/applies the USYC floor. Carries the
-    LLM id so provenance can be recorded honestly.
-    """
-
-    intent: str
-    risk_profile: str
-    capital_usdc: float
-    regime: str | None
-    selected: list[StrategySelection]
-    overall_reasoning: str
-    risk_notes: str
-    model_id: str
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-
-    @property
-    def strategies_referenced(self) -> list[str]:
-        """Strategy IDs, for `ReasoningTrace.strategies_referenced`."""
-        return [s.strategy_id for s in self.selected]
-
-    @property
-    def raw_weights(self) -> dict[str, float]:
-        """strategy_id → raw proposed weight, for the guardrail."""
-        return {s.strategy_id: s.weight for s in self.selected}
 
 
 # ── Offline-safe LLM backend fallback ────────────────────────────

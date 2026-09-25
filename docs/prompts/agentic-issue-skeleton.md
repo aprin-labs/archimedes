@@ -2,17 +2,18 @@
 
 > **status:** current
 > **owner:** Dan Browne
-> **updated:** 2026-07-28
+> **updated:** 2026-08-31
 > **superseded-by:** —
 
 The template for an issue a Claude Code session can execute end-to-end, with the human in
 the loop at review rather than during the work. The **gates** that make an issue safe to
 hand off — a named owner, machine-checkable acceptance, the pre-close verification gate —
-live in [`../../CLAUDE.md`](../../CLAUDE.md) § Spec-driven execution and are not repeated
-here. This file is just the shape.
+live in [`../agent-operations.md`](../agent-operations.md) § Spec-driven execution and are
+not repeated here. This file is just the shape.
 
-There is no autonomous dispatch bot. `t2o2` is dormant (see CLAUDE.md); a spec is executed
-when a person opens a session against it.
+There is no autonomous dispatch bot. `t2o2` is dormant (see
+[`../agent-operations.md`](../agent-operations.md)); a spec is executed when a person opens
+a session against it.
 
 ```markdown
 ## Summary             <!-- one paragraph: the problem, why it matters -->

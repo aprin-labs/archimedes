@@ -81,6 +81,106 @@ async def test_record_failsafe_on_redis_error():
     await store.record("landed", "vid")
 
 
+# ─── The free-path stages (#1643) ────────────────────────────────────────
+
+
+def _fake_hll_redis():
+    """A redis double whose PFADD/PFCOUNT actually behave like an HLL.
+
+    Set-backed rather than mock-backed on purpose: a record-then-read
+    assertion built from two independent MagicMocks agrees with itself
+    whatever the store does with the key, which is the "test that passes
+    against unfixed code" trap. Here the read can only see what the write
+    genuinely put under the same key.
+    """
+    keys: dict[str, set[str]] = {}
+    queued: list = []
+
+    pipe = MagicMock()
+
+    def _pfadd(key, member):
+        queued.append(("pfadd", key, member))
+        return pipe
+
+    def _pfcount(key):
+        queued.append(("pfcount", key, None))
+        return pipe
+
+    def _expire(key, ttl):
+        queued.append(("expire", key, ttl))
+        return pipe
+
+    async def _execute():
+        results = []
+        for op, key, arg in queued:
+            if op == "pfadd":
+                bucket = keys.setdefault(key, set())
+                before = len(bucket)
+                bucket.add(arg)
+                results.append(1 if len(bucket) != before else 0)
+            elif op == "pfcount":
+                results.append(len(keys.get(key, ())))
+            else:
+                results.append(True)
+        queued.clear()
+        return results
+
+    pipe.pfadd = MagicMock(side_effect=_pfadd)
+    pipe.pfcount = MagicMock(side_effect=_pfcount)
+    pipe.expire = MagicMock(side_effect=_expire)
+    pipe.execute = AsyncMock(side_effect=_execute)
+
+    redis = MagicMock()
+    redis.pipeline = MagicMock(return_value=pipe)
+    return redis, keys
+
+
+async def test_new_free_path_stages_are_in_stages():
+    """Both #1643 stages exist, and in the journey order the ratios assume."""
+    assert "free_generation_used" in STAGES
+    assert "wallet_gate_shown" in STAGES
+    assert STAGES.index("generation_started") < STAGES.index("free_generation_used")
+    assert STAGES.index("free_generation_used") < STAGES.index("wallet_gate_shown")
+    assert STAGES.index("wallet_gate_shown") < STAGES.index("wallet_connected")
+
+
+async def test_new_stages_round_trip_from_record_funnel_to_the_hll_count(monkeypatch):
+    """End to end: the route helper's emit is what the funnel read reports.
+
+    Drives ``record_funnel`` (the exact helper ``start_generation`` calls),
+    not ``FunnelStore.record`` directly, so the request-state plumbing is in
+    the loop too — and counts DISTINCT visitors, which is the property the
+    HLL keyspace exists for.
+    """
+    redis, keys = _fake_hll_redis()
+    store = FunnelStore()
+    store._get_redis = AsyncMock(return_value=redis)
+
+    def _request(vid):
+        return SimpleNamespace(state=SimpleNamespace(visitor_id=vid, agent_type="human"))
+
+    # record_funnel imports FunnelStore from this module at call time; hand it
+    # the instance above so the emit and the read share one keyspace.
+    import archimedes.services.funnel_store as fs_module
+
+    monkeypatch.setattr(fs_module, "FunnelStore", lambda *a, **k: store)
+    store.close = AsyncMock(return_value=None)
+
+    await record_funnel(_request("vid-1"), "free_generation_used")
+    await record_funnel(_request("vid-2"), "free_generation_used")
+    await record_funnel(_request("vid-1"), "free_generation_used")  # repeat visitor
+    await record_funnel(_request("vid-1"), "wallet_gate_shown")
+    await record_funnel(_request("vid-1"), "not-a-real-stage")  # must not create a key
+
+    counts = await store.get_totals()
+
+    assert counts["free_generation_used"] == 2  # distinct visitors, not events
+    assert counts["wallet_gate_shown"] == 1
+    assert "archimedes:funnel:total:not-a-real-stage" not in keys
+    # The agent_type split (#788) works for the new stages with no extra wiring.
+    assert keys["archimedes:funnel:total:free_generation_used:human"] == {"vid-1", "vid-2"}
+
+
 # ─── FunnelStore.record — agent_type breakdown (#788) ────────────────────
 
 
@@ -130,15 +230,19 @@ async def test_record_ignores_unrecognized_agent_type():
 
 async def test_get_totals_reads_pfcount_in_stage_order():
     store = FunnelStore()
-    redis, pipe = _mock_redis_with_pipeline([10, 4, 2, 1])
+    redis, pipe = _mock_redis_with_pipeline([10, 6, 5, 3, 2, 1])
     store._get_redis = AsyncMock(return_value=redis)
 
     counts = await store.get_totals()
 
+    # Positional: the results come back in STAGES order, so this pins the
+    # order itself, not just the key set (#1643 changed both).
     assert counts == {
         "landed": 10,
-        "wallet_connected": 4,
-        "generation_started": 2,
+        "generation_started": 6,
+        "free_generation_used": 5,
+        "wallet_gate_shown": 3,
+        "wallet_connected": 2,
         "vault_deployed": 1,
     }
     assert pipe.pfcount.call_count == len(STAGES)
@@ -210,18 +314,31 @@ async def test_get_totals_by_agent_type_failsafe_returns_zeros():
 
 
 def test_build_funnel_ratios():
-    # Post-#851 journey: wallet_connected precedes generation_started.
-    counts = {"landed": 100, "wallet_connected": 25, "generation_started": 5, "vault_deployed": 2}
+    # Post-#1643 journey: the first three generations need only an account, so
+    # a visitor GENERATES first and meets the wallet gate afterwards — the
+    # reverse of the post-#851 order this test used to assert.
+    counts = {
+        "landed": 100,
+        "generation_started": 50,
+        "free_generation_used": 40,
+        "wallet_gate_shown": 20,
+        "wallet_connected": 5,
+        "vault_deployed": 2,
+    }
     resp = _build_funnel(counts, "all-time")
     by = {s.stage: s for s in resp.stages}
 
     assert resp.window == "all-time"
     assert by["landed"].pct_of_landed == 1.0
     assert by["landed"].step_conversion == 1.0
-    assert by["wallet_connected"].pct_of_landed == 0.25
-    assert by["wallet_connected"].step_conversion == 0.25  # 25 / 100
-    assert by["generation_started"].pct_of_landed == 0.05
-    assert by["generation_started"].step_conversion == 0.2  # 5 / 25
+    assert by["generation_started"].pct_of_landed == 0.5
+    assert by["generation_started"].step_conversion == 0.5  # 50 / 100
+    assert by["free_generation_used"].pct_of_landed == 0.4
+    assert by["free_generation_used"].step_conversion == 0.8  # 40 / 50
+    assert by["wallet_gate_shown"].pct_of_landed == 0.2
+    assert by["wallet_gate_shown"].step_conversion == 0.5  # 20 / 40
+    assert by["wallet_connected"].pct_of_landed == 0.05
+    assert by["wallet_connected"].step_conversion == 0.25  # 5 / 20
     assert by["vault_deployed"].pct_of_landed == 0.02
     assert by["vault_deployed"].step_conversion == 0.4  # 2 / 5
 

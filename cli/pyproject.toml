@@ -1,6 +1,6 @@
 [project]
 name = "archimedes-cli"
-version = "0.1.0"
+version = "0.2.0"
 description = "Run the Archimedes rigor gate over your own strategies and returns, from the command line."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -35,8 +35,8 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://archimedes-arc.com"
-Repository = "https://github.com/a-apin/archimedes"
-Issues = "https://github.com/a-apin/archimedes/issues"
+Repository = "https://github.com/aprin-labs/archimedes"
+Issues = "https://github.com/aprin-labs/archimedes/issues"
 
 [project.scripts]
 archimedes = "archimedes_cli.cli:main"

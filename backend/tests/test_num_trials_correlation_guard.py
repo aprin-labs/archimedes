@@ -1,7 +1,8 @@
 """V4 regression guard: num_trials-provenance audit, 2026-08-03.
 
 Three cohort-computing call sites — ``selection_bias_routes.evaluate_rigor_gate``,
-``strategies_routes._live_rigor_results_for_strategies``, and
+``curated_grading.grade_cohort`` (the curated grading job, which is where the
+library's cohort computation moved in #1746 / PR-B), and
 ``live_rigor_gate.verdicts_for_strategies`` — each compute a COHORT-WIDE
 ``average_correlation`` across every curated strategy with enough persisted
 returns, then grade each strategy at ``num_trials=1`` (Dan's decouple #2
@@ -56,15 +57,15 @@ def test_guard_allows_the_real_num_trials_one_cohort_case():
     """Today's actual usage at all three call sites: num_trials=1 with a
     real, nonzero cohort-wide correlation. Must never raise — this is the
     documented-safe combination (E[max_N]=0 makes the correlation inert)."""
-    assert_self_contained_cohort_correlation(1, 0.73) is None
-    assert_self_contained_cohort_correlation(1, 0.0) is None
+    assert assert_self_contained_cohort_correlation(1, 0.73) is None
+    assert assert_self_contained_cohort_correlation(1, 0.0) is None
 
 
 def test_guard_allows_genuinely_self_contained_multi_trial_with_zero_correlation():
     """A strategy's OWN N-candidate generation pool or parameter-variant grid
     legitimately passes num_trials>1 — the guard must not block that, only
     the COMBINATION with a nonzero (cohort) correlation."""
-    assert_self_contained_cohort_correlation(35, 0.0) is None
+    assert assert_self_contained_cohort_correlation(35, 0.0) is None
 
 
 # ── 3. Wiring: all three call sites actually invoke the guard ──────────────
@@ -114,10 +115,10 @@ def test_selection_bias_routes_evaluate_rigor_gate_calls_the_guard():
     assert _invokes(evaluate_rigor_gate)
 
 
-def test_strategies_routes_live_rigor_results_calls_the_guard():
-    from archimedes.api.strategies_routes import _live_rigor_results_for_strategies
+def test_the_curated_grading_cohort_calls_the_guard():
+    from archimedes.services.curated_grading import grade_cohort
 
-    assert _invokes(_live_rigor_results_for_strategies)
+    assert _invokes(grade_cohort)
 
 
 def test_live_rigor_gate_verdicts_for_strategies_calls_the_guard():

@@ -13,11 +13,20 @@ Two reasons this matters:
    human would hit, fast and repeatably.
 2. **The agent-user segment** — an agent that sends a non-browser `User-Agent` is
    classified as an external agent by the telemetry middleware and its
-   `generation_started` is attributed in the conversion funnel ([#787](https://github.com/a-apin/archimedes/issues/787)).
+   `generation_started` is attributed in the conversion funnel ([#787](https://github.com/aprin-labs/archimedes/issues/787)).
+   An agent holding an **API key** does better: it is classified `keyed` from the
+   credential itself rather than from a header it chose.
 
-**READ** needs no authentication. **GENERATE requires Better Auth session**:
+**READ** needs no authentication. **GENERATE requires an account credential**:
 anonymous `POST /api/generate/start` returns 401, and per-job stream/status/jobs/candidates
 reads are scoped by canonical user ID. Wallet connection alone never authenticates.
+
+Two credentials establish that account identity, and **they are interchangeable
+everywhere except key management**: the Better Auth **session cookie**, and an
+`Authorization: Bearer archim_…` **API key** (see [API keys](#api-keys-bearer)). Both
+resolve to the same canonical user ID at the same chokepoint
+(`api/account_auth.py`), so no route, quota, rate limit, or paywall can tell them
+apart — a key is a credential, never a bypass.
 
 ## Quick start
 
@@ -228,10 +237,26 @@ strategy-passport verdict uses. A bare series can only support two of the four c
 | PBO | always `not_evaluable` — overfitting probability is a property of a *selection set* |
 | look-ahead audit | always `not_evaluable` — AST analysis of code, and this endpoint takes only numbers |
 
-`passes` is `true` **iff** no evaluable check failed *and* at least one check was
-evaluable: an all-`not_evaluable` request (e.g. a too-short series) must never report
-`passes: true` by vacuous truth. `self_attested: true` is returned to keep the caller's
-declared `trials` count visible as the unverified input it is. The response also carries
+`passes` is `true` **iff every RUNNABLE leg — DSR *and* walk-forward OOS — actually ran
+and passed**: a quorum, not "no evaluable check failed" (#1481). Neither an
+all-`not_evaluable` request nor a partially-evaluated one (a degenerate series where DSR
+ran and the OOS split could not) may report `passes: true`; the response carries
+`legs_evaluated` / `legs_runnable` / `legs_total` / `verdict_capped` so the scalar is
+qualifiable without re-deriving the leg statuses. `self_attested: true` is returned to
+keep the caller's declared `trials` count visible as the unverified input it is.
+
+**The request body is validated strictly and nothing is repaired (#1803).** Dates must be
+strict `YYYY-MM-DD`, unique and ascending; returns must be finite with `abs(r) <= 1.0`
+(simple decimals — +1.3% is `0.013`); the series is 250..2,600 rows and `trials` is
+1..10,000. **250 daily bars — one trading year — is the minimum evaluation window**: under
+it the answer is a typed refusal naming `bars_received` and `bars_required`, never a
+verdict and never a verdict with a warning attached. A violation is a 422 carrying
+`{"detail": {"error": "input_rejected", "reason": "<code>", "message": "…"}}` where
+`<code>` is one of `invalid_date`, `duplicate_date`, `unsorted_dates`, `non_finite`,
+`out_of_range`, `window_too_short`, `too_many_rows`, `trials_out_of_range`. The walk-forward split is positional, so an out-of-order series is
+REFUSED rather than sorted — sorting it would return a verdict on a series you did not
+send. Full table:
+[`api/strategies-and-rigor.md`](api/strategies-and-rigor.md). The response also carries
 `rf_convention` (`excess_tbill_series` | `excess_flat_fallback`, #1409) — the `date`s
 above already resolve against the historical 3-month T-bill series when they fall inside
 its vendored coverage, and DSR/OOS are computed against whichever rate that resolution
@@ -255,6 +280,58 @@ Keep cookies in one HTTP client. No browser or wallet is required.
 Use `ARCHIMEDES_EMAIL` and `ARCHIMEDES_PASSWORD` for reference client. Never pass
 credentials as command-line arguments or commit them. `--ephemeral` creates disposable
 account for smoke testing.
+
+### API keys (Bearer)
+
+A cookie expires in seven days and can only be refreshed by re-sending the account
+password. For anything unattended, mint a key once instead.
+
+```bash
+# mint (session cookie required — see below)
+curl -sS -b /tmp/agora.jar -X POST $BASE/api/account/keys \
+  -H 'Content-Type: application/json' -d '{"name":"ci-nightly"}'
+```
+
+```json
+{ "id": "9f3c1a77b204de51", "name": "ci-nightly", "prefix": "archim_9f3c1a77b204de51",
+  "created_at": "…", "last_used_at": null, "revoked_at": null,
+  "key": "archim_9f3c1a77b204de51_KtQ8yv…" }
+```
+
+Then every account-gated call in this document is one header:
+
+```bash
+curl -sS -H "Authorization: Bearer $ARCHIMEDES_KEY" $BASE/api/account/usage
+```
+
+| Endpoint | Method | Credential | Notes |
+| --- | --- | --- | --- |
+| `/api/account/keys` | `POST` | **cookie only** | Body `{"name": "…"}` (1–64 chars). `201`. Returns `key` **once**. `409 api_key_limit_reached` past 25 live keys. |
+| `/api/account/keys` | `GET` | **cookie only** | `id`, `name`, `prefix`, `created_at`, `last_used_at`, `revoked_at`. Never the key. |
+| `/api/account/keys/{id}` | `DELETE` | **cookie only** | `204`, idempotent. Another account's id → `404`. |
+| everything else account-gated | — | cookie **or** key | Identical behaviour either way. |
+
+The contract, precisely:
+
+- **Format** `archim_<key_id>_<secret>`. `secret` is 32 random bytes from `secrets`;
+  `archim_<key_id>` is the non-secret `prefix` the list returns.
+- **Shown once.** The server stores a per-key salted SHA-256 of the secret and nothing
+  else, so the token cannot be read back by anyone, including operators. Lost key →
+  revoke and mint another.
+- **Verification is constant-time** (`hmac.compare_digest`) on the hit path *and* the
+  miss path, so response timing does not tell an attacker whether a key id exists.
+- **Revocation is immediate** — read from the row on every request, no cache, no TTL.
+  The next call with a revoked key is `401`.
+- **Scoped to one account.** A key resolves to its own account and no other; another
+  account's key id is `404`, not `403`, so the surface is not an enumeration oracle.
+- **Never a bypass.** Same daily caps, same per-route rate limits, same x402 paywall,
+  same wallet precondition. A keyed `POST /api/generate/start` returns the same `402`,
+  with the same quote, that a cookie call returns.
+- **A key cannot manage keys.** The three endpoints above answer `403` to a bearer key.
+  Containment: a leaked key must not be able to mint successors that outlive your
+  revoking the one you know about.
+- **Telemetry.** A keyed caller classifies as `agent_type: "keyed"` — an identity, unlike
+  `external`, which is a User-Agent guess about an unauthenticated client.
 
 ### Optional EIP-4361 wallet link
 
@@ -365,10 +442,10 @@ request sent — unless the winning candidate's LIVE GATE read above is
 and sends nothing. Pass `--deploy` to actually call the endpoint. The default
 stays OFF, but the original reason no longer holds: the T3.2 redeploy landed
 2026-07-09 and issue
-[#588](https://github.com/a-apin/archimedes/issues/588) (whether the repo's
+[#588](https://github.com/aprin-labs/archimedes/issues/588) (whether the repo's
 cached ABI matches the live deployed bytecode) closed 2026-07-14. The
 `deploy` group has been `live` in the served manifest since
-[#1447](https://github.com/a-apin/archimedes/pull/1447). It stays OFF now for
+[#1447](https://github.com/aprin-labs/archimedes/pull/1447). It stays OFF now for
 the ordinary reason: this call spends gas and creates a real on-chain vault,
 so it should be an explicit act, not a default.
 
@@ -420,13 +497,19 @@ python scripts/agent_journey.py --no-auth --read-only --monitor-address 0x<vault
 
 ### What's NOT covered here
 
-Tracked in [#788](https://github.com/a-apin/archimedes/issues/788), but out of
-scope for this document / the harness: the issue's funnel/telemetry
-acceptance line ("the agent path is reflected in the funnel/telemetry as
-`agent_type`") is only partly built. `/api/metrics` already classifies
-traffic as human/internal-agent/external-agent
-(`telemetry_middleware.py`), but the conversion funnel itself (`FunnelStore`,
-[#787](https://github.com/a-apin/archimedes/issues/787)) records
-distinct-visitor counts per stage only — `landed`, `wallet_connected`,
-`generation_started`, `vault_deployed` are not currently segmented by
-`agent_type`. Segmenting the funnel by `agent_type` remains open work.
+The reference harness (`scripts/agent_journey.py`) does **not** use API keys — it
+still drives the cookie recipe above. Teaching it the key lane is follow-up work,
+not part of the key lane itself.
+
+**Correction (2026-08-31).** An earlier version of this section said funnel
+segmentation by `agent_type` "remains open work". That was true when it was
+written and is not true now: [#788](https://github.com/aprin-labs/archimedes/issues/788)
+shipped, and `GET /api/metrics/funnel` returns a per-stage `by_agent_type`
+breakdown over `internal` / `keyed` / `external` / `human`. What is still open is
+**interpretation**: before the API-key lane, an authenticated agent was
+indistinguishable from a human (`classify_request` resolved a session to `human`
+before any agent heuristic ran), so historical `external: 0` at
+`generation_started` measures the absence of the question, not the absence of
+agents. `keyed` is the first `agent_type` on that endpoint that reflects a
+credential rather than a guess; readings taken before it existed cannot be
+compared with readings taken after.

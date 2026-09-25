@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:a4119e6748e9b1b025d44e7a9870b60f8b25c559825d0ba90e96bc692a3e9aa9",
+  "claims": [
+    {
+      "id": "claim_38c8ab366b7f40e7a27dfba0ac695060",
+      "statement": "The quant slice is organised around four conceptual docs plus a canonical operational spec and a judge-facing summary, and its README states that where thresholds or formulas overlap, the spec and the implementing code are authoritative over these docs.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/README.md#L1-L23",
+          "version": "repo-lines-v1:sha256:265c8e927a1555ceeb2c30dd11ddd44655f1e27cba16803b2070bdb707bad0ad:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFjOTQ4OTkxMTQzY2E4MWVmZDYwY2E1ZjY3ZjFlZDMwOThkN2MwYTRiMWU2MjI5YWNiYjY0NGU4ZjE0MTQ5MTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVlZmY2N2UwZTM0OWE2YTlhZGJhYTVmYzQ5Y2ExN2IwODZmZjU3NDMwY2E5ZjQzZGYyNTA4OTRhZGQyMTVlOGUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b155742c31f1488f85464c822f69d01d",
+      "statement": "A strategy is admitted to Tier 1 only when all four controls pass simultaneously — DSR, PBO, walk-forward out-of-sample Sharpe, and the look-ahead static audit — and each control is rendered as PASS with its value, FAIL with the value and threshold, or MISSING when it could not be computed.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L160-L177",
+          "version": "repo-lines-v1:sha256:01848f73e9a1aba6d93ad4dd984cf68b4e6148103464f64ba54f50770e405ca8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ0YzlkNmE3NDJjNmY5ZWIxYzJkOThmZDYwZDRmNDE0MDkwMDM1ZjUzY2RhODNkYTk5NDdjMzIwNDQ5ZGUxMTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE5YzYzZGIzYmU5NDhkMjM3ZjhjMDhmNGQ3OGQyMmM5NWEwZDVjZWYzOGVjMTdjOWI0ZDczM2FhNGQwZDVkNGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZmNGNmMDJiYjhiZTA5NjE5OTY0NTViZDEyMjhlMjhkOTE3ZTViZGVkN2I4NmI1MDgxZGZjMTU5YzM0NDUwMjgifQ"
+        },
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L22-L37",
+          "version": "repo-lines-v1:sha256:4140904ba0baccdbbaafe6e0f51ba9ee6f648e056704609ec0fc8a675b55256c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRjZGNlODQ3ZTg3NjdhMDkyODViMTk5ZDQzNWQ0MGUyNjM4NWI3MjAwODI1YzYyYTNhYTk0MTQ3Njc0YzU1MGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdkODExNWU5OWRjODAyZjhiODliMmNlY2U1YzM1NmYwOTU2MTdkMmZiYWIyMzc4NjNjOGYzZTg1MGYyNmI1NmIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b9b8178a2e924cee86a446085e411414",
+      "statement": "How many library strategies currently pass the gate must not be written into a document, because the live rigor gate is the only authority on which strategies currently pass.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L160-L177",
+          "version": "repo-lines-v1:sha256:01848f73e9a1aba6d93ad4dd984cf68b4e6148103464f64ba54f50770e405ca8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ0YzlkNmE3NDJjNmY5ZWIxYzJkOThmZDYwZDRmNDE0MDkwMDM1ZjUzY2RhODNkYTk5NDdjMzIwNDQ5ZGUxMTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE5YzYzZGIzYmU5NDhkMjM3ZjhjMDhmNGQ3OGQyMmM5NWEwZDVjZWYzOGVjMTdjOWI0ZDczM2FhNGQwZDVkNGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZmNGNmMDJiYjhiZTA5NjE5OTY0NTViZDEyMjhlMjhkOTE3ZTViZGVkN2I4NmI1MDgxZGZjMTU5YzM0NDUwMjgifQ"
+        },
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L15-L31",
+          "version": "repo-lines-v1:sha256:4a3740e2cb88b6f60702aa5f35fc6c315521fbaf18ac27c03b2b1aef72e98051:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUyYTIzNTZmYWY3ZDMwZDgzNmEwZGZmYjg2NDc1ZmIzNTU0ZGEzMDA3MzExOGFmOTYwZGY2ZTM4YzI0MjgzZjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJlNGIyMmMyYTc1ZjI3NWRhMzM2ZjFjOGNmZTA5OGJlOWZkYjIwNjE2OGQ0YmVlZjBmZDM3NzUyZmY0ZDI0MTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ5NWJmN2VhYmY5NGM5MDA5Y2E5ZDBjNTA0NGVkNzc4MzA4MTgyYTgwNDlkNmViNjI2MzUwYWQwNDRlN2QxNmMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a7378758b79b441cb4960b81f7ad2be8",
+      "statement": "The curated path must not be described as multiple-testing corrected: num_trials is 1 there so the expected best-of-N term is zero and DSR runs undeflated, and the board-level bias a user incurs by picking the best of N displayed strategies is disclosed rather than corrected because the Benjamini-Hochberg helpers have zero non-test callers.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L38-L71",
+          "version": "repo-lines-v1:sha256:9c3b9fcb7f7d98e8ee5419ae05ede4eacfe0e741904d2431b4683452bb983bc1:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0YTdkYTNmOWU4NGZiZWE2NmY1ZDI0MDQwOTVmN2E0YmUzM2YyYjlmNGRkYjc4OWQ0OTdkODE5ZmQyNTYwNDkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhiOTAwYzE2OTFmYTAwNGRiYzNjZjYzNzZkOGYwYzIxNGM5OGY2ZWFkZmM4YjU3Y2MzY2IzODQxNmFmY2E0ZjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZiNGRkYTI1NjQ0YTg2OTNiMWViMWM2NzY5NzUyY2Y0NWJhYzc0ZGU5YTkwY2QyZjNmYjg4NzQxN2ZlOGVkOTkifQ"
+        },
+        {
+          "resource": "repo://docs/quant/methodology.md#L25-L41",
+          "version": "repo-lines-v1:sha256:42e3eb98896001dc94bb4966c74d8351cac1bf0aa152325a2400b5a0120761be:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI5YWI5ZmU4N2I3MjRhZmIxNWJmN2FhNjkxMmU1ODc4OWI0NzA1YTA4ZDhjMTc1ZjVmMjAyYTkyNWVmNzFkNWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRiZDgxNWI0MTg3NGFkOWUwYzFjMzcyZDU4ZjA5NGFmYTM3MGUwODI1ZWMwMmZjNjNhOTc2M2FkMmJhNWRmOTkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b6ef3f0f1bbf49d5b7b70b4dd568ae6b",
+      "statement": "The correct phrasing for a passing DSR is deflated-Sharpe evidence at the 0.90 level — a one-sided roughly 10% test, materially weaker than a conventional 0.95 bar — and not 'statistically proven'.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L155-L173",
+          "version": "repo-lines-v1:sha256:b4763776f81afa71f08ea137ca8645fd18cb12af0044db56c2ef12d95845327e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI0NDc1OWE1YzA0MmIwZGZjZjIwMTIxMGJlMjhiN2EzYTE1YWVmNTEzM2MyNGEzNTA4MDk2OTIzZGZhYjQ0MWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ3NWExNDY2ODQ5ZjVmZjZkYzBkMmM0N2M1NjQ2NTg0MjJlMzdiYTU3Y2VjMDc5MTE1ZWQyNWYwM2NjNTE0ZjIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4YzdiMjhkYjNkMDExZjhkYmQzOGIyOTI3NGZjYTIxOTU2NTNlOTc2YjJmNzg0YzhjMjljZWM1M2Y4MTk4ZDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_954477e0328747f0b7231e646e8372bc",
+      "statement": "The reading order the slice prescribes for a newcomer is methodology, then backtest interpretation, then admission criteria, then the strategy library.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/README.md#L1-L23",
+          "version": "repo-lines-v1:sha256:265c8e927a1555ceeb2c30dd11ddd44655f1e27cba16803b2070bdb707bad0ad:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFjOTQ4OTkxMTQzY2E4MWVmZDYwY2E1ZjY3ZjFlZDMwOThkN2MwYTRiMWU2MjI5YWNiYjY0NGU4ZjE0MTQ5MTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVlZmY2N2UwZTM0OWE2YTlhZGJhYTVmYzQ5Y2ExN2IwODZmZjU3NDMwY2E5ZjQzZGYyNTA4OTRhZGQyMTVlOGUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a70c321cbe8d4fc88981a9e9381c2ee0",
+      "statement": "The rigor documentation is written so that the four gate numbers are never collapsed into a single aggregate score and paper-claim deltas are surfaced alongside them, which the slice describes as rigor being transparency rather than a hidden score.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L160-L177",
+          "version": "repo-lines-v1:sha256:01848f73e9a1aba6d93ad4dd984cf68b4e6148103464f64ba54f50770e405ca8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ0YzlkNmE3NDJjNmY5ZWIxYzJkOThmZDYwZDRmNDE0MDkwMDM1ZjUzY2RhODNkYTk5NDdjMzIwNDQ5ZGUxMTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE5YzYzZGIzYmU5NDhkMjM3ZjhjMDhmNGQ3OGQyMmM5NWEwZDVjZWYzOGVjMTdjOWI0ZDczM2FhNGQwZDVkNGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZmNGNmMDJiYjhiZTA5NjE5OTY0NTViZDEyMjhlMjhkOTE3ZTViZGVkN2I4NmI1MDgxZGZjMTU5YzM0NDUwMjgifQ"
+        },
+        {
+          "resource": "repo://docs/quant/methodology.md#L566-L585",
+          "version": "repo-lines-v1:sha256:d1e9a26dd52d5bae8c5b45e3ce77e4376aec3fb2d970564b1f7d285030dedea2:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkyZTAyNDczZWQyZTNjODcyOWJmOGU0M2I3NTVmNWEwM2ZjMzBiMmRkMTFhOTlmNGMzODZiMGM2M2ZjM2Y5MDgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFkMThmZGM1OWNkODJkMTM5N2E0MWI1ZmE0OWU5ZWNjOWExZGFlODNhMGY3Y2RmZGMyZTI3NDRhMjA1YmZiY2MiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMxYmIxMTIzZTAwNmNlOGYwZDBiOGVkODIyYTQxMTYyYjY3OThiN2RkNDgyNTljMjdhZGRkMzdkNjUxODc3YTQifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.4.3",
+    "at": "2026-08-31T05:55:43.566Z"
+  }
+}

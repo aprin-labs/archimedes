@@ -421,6 +421,20 @@ export default function Explore() {
         returns × √252).
       </p>
 
+      {/* Data-sourcing disclosure (#1218) — see docs/adr/market-data-sourcing.md.
+          Deliberately plain-language and deliberately here rather than buried in a
+          legal page: the honest thing to say is that this page and the paid
+          analysis run on DIFFERENT data under different terms, and a reader can
+          only check that claim if we make it where the data is shown.
+          Pinned by ui/test/explore-data-disclosure.test.js. */}
+      <p className="caption" style={{ marginTop: 14, color: 'var(--text-4)' }}>
+        <strong>About this data.</strong> Explore is a free, open-source viewer over
+        yfinance market-data streams. Nothing on this page is sold or commercially
+        redistributed — it is here to look at, and that is the whole of it. Paid
+        analysis runs on separately licensed data, not on this feed; the two are
+        sourced independently on purpose.
+      </p>
+
       {openAsset && <AssetModal asset={openAsset} onClose={() => setOpenAsset(null)} />}
       {openGroup && (
         <AssetGroupModal

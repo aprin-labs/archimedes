@@ -5,7 +5,11 @@ Backs the conversion-funnel instrument. We have a zero-conversion problem
 visitors drop. This records the distinct visitors that reach each stage of the
 journey:
 
-    landed → wallet_connected → generation_started → vault_deployed
+    landed → generation_started → free_generation_used → wallet_gate_shown
+           → wallet_connected → vault_deployed
+
+(the two middle stages, and this order, arrived with the free path — #1643;
+see ``STAGES`` below for why the order itself had to change)
 
 using Redis HyperLogLog (``PFADD`` / ``PFCOUNT``) so the counts are *distinct
 visitors* without retaining any raw identifier — privacy-friendly (no tracking
@@ -52,10 +56,28 @@ _PREFIX = "archimedes:funnel"
 
 # Ordered funnel stages. Order is load-bearing: ratios are computed against the
 # first stage (``landed``) and against the immediately preceding stage.
+#
+# **The order changed with the free path (#1643), because the journey did.**
+# Until 2026-08-31 a wallet was required before the FIRST generation, so
+# ``wallet_connected`` genuinely preceded ``generation_started`` (the post-#851
+# order). Now the first three generations need only an account, so a visitor
+# generates first and meets the wallet gate afterwards. Leaving the old order
+# in place would have published a ``step_conversion`` computed against a stage
+# that no longer precedes its successor — a number that reads as a conversion
+# rate and measures nothing.
+#
+#   landed              — the SPA's JS beacon fired
+#   generation_started  — a generation actually queued (free or paid)
+#   free_generation_used— …and it was spent from the account's free allowance
+#   wallet_gate_shown   — the allowance ran out; 409 wallet_link_required
+#   wallet_connected    — a wallet was linked after seeing that gate
+#   vault_deployed      — roadmap (ROADMAP_SURFACES_ENABLED), still tracked
 STAGES: tuple[str, ...] = (
     "landed",
-    "wallet_connected",
     "generation_started",
+    "free_generation_used",
+    "wallet_gate_shown",
+    "wallet_connected",
     "vault_deployed",
 )
 
@@ -69,7 +91,17 @@ CLIENT_EMITTABLE_STAGES: frozenset[str] = frozenset({"landed"})
 # imported to keep this services-layer module independent of the api layer.
 # An agent_type outside this set is treated like an unknown stage: no-op on
 # write, not a bogus key.
-AGENT_TYPES: tuple[str, ...] = ("internal", "external", "human")
+#
+# ``keyed`` joined the set with the scoped API-key lane (#1653 decision D3): a
+# caller authenticated by ``Authorization: Bearer archim_…``. It is deliberately
+# NOT folded into ``external`` — ``external`` is a User-Agent *guess* about an
+# unauthenticated client, while ``keyed`` is a credential minted for machine use,
+# and merging them would put the only high-confidence agent signal we have back
+# into a bucket of heuristics. Because an unrecognised type silently no-ops on
+# write (see ``record``), forgetting this line would have made keyed traffic
+# vanish from the breakdown rather than fail loudly — which is why the classifier
+# module names this file as one of the four sites that move together.
+AGENT_TYPES: tuple[str, ...] = ("internal", "keyed", "external", "human")
 
 # Per-day buckets self-expire after this window (90 days of trend history).
 _DAY_TTL_SECONDS = 90 * 24 * 60 * 60

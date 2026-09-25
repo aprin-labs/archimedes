@@ -2,7 +2,7 @@
 
 > **status:** current
 > **owner:** Dan Browne
-> **updated:** 2026-08-20
+> **updated:** 2026-08-31
 
 Every generation now carries a measurement record: how many tokens the debate
 society actually consumed, how long each pipeline phase took in wall and CPU
@@ -16,25 +16,31 @@ and CSCV backtests the debate society runs across every candidate. Issue #1217:
 *"until this number exists, 'near-zero marginal cost' is an assumption wearing
 the clothes of a finding."*
 
-**This layer records counts and seconds. It does not price anything.** The
-paywall quote seam (`generation_payment.quote()`, `GET /api/generate/quote`)
-remains `pricing_model: "flat_v1"` and is untouched. Converting the counts into
-dollars happens off-server against the current Bedrock and Fargate rate cards;
-the point of the instrumentation is that the conversion stops being applied to
-a guess.
+**The measurement layer records counts and seconds. It does not price
+anything.** The paywall quote seam (`generation_payment.quote()`, `GET
+/api/generate/quote`) remains `pricing_model: "flat_v1"` and is untouched.
+
+The conversion from those counts to dollars now has one home, and it is
+**admin-only and read-only**: `GET /api/metrics/private/cost` serves a measured
+`$/generation` derived from the recorded rows (see [Pricing the
+measurement](#pricing-the-measurement-generation_cost-on-the-admin-cost-endpoint)
+below). Nothing on a customer-facing path consults it — what we *charge* is
+still the flat price.
 
 ## Where it lives
 
 | Piece | File |
 |---|---|
 | The meter — accumulation, guards, snapshot shape | [`backend/archimedes/services/cost_meter.py`](../backend/archimedes/services/cost_meter.py) |
-| Token capture at the provider boundary | [`backend/archimedes/services/llm_backend.py`](../backend/archimedes/services/llm_backend.py) (every `complete()`) — plus an inert call in [`backend/archimedes/agents/portfolio_agent.py`](../backend/archimedes/agents/portfolio_agent.py), see "What is not measured" below |
+| Token capture at the provider boundary | [`backend/archimedes/services/llm_backend.py`](../backend/archimedes/services/llm_backend.py) (every `complete()`) — and nowhere else. The one inert call that used to sit in [`backend/archimedes/agents/portfolio_agent.py`](../backend/archimedes/agents/portfolio_agent.py) was deleted with its tool loop on 2026-08-31; see "What is not measured" below |
 | Stage timing + write tallies | [`backend/archimedes/agents/generation_pipeline.py`](../backend/archimedes/agents/generation_pipeline.py), [`backend/archimedes/agents/debate_engine.py`](../backend/archimedes/agents/debate_engine.py) |
 | Persistence onto the job (expires with `JOB_TTL`) | `JobStore.merge_result` in [`backend/archimedes/services/job_queue.py`](../backend/archimedes/services/job_queue.py) |
 | Durable persistence (`generation_costs`) | [`backend/archimedes/models/generation_cost.py`](../backend/archimedes/models/generation_cost.py) + migration `e2b7f4c81d93`, written from `run_generation`'s `finally` |
 | Read surfaces | `GET /api/generate/jobs/{job_id}/cost`, the `cost` field on `GET /api/generate/jobs`, `generation_cost` on `GET /api/strategies/{id}` and `GET /api/strategies/generated` |
+| Pricing arithmetic, one snapshot at a time | [`backend/archimedes/services/generation_cost_model.py`](../backend/archimedes/services/generation_cost_model.py) |
+| The measured `$/generation` aggregate (admin-only) | [`backend/archimedes/services/generation_cost_rollup.py`](../backend/archimedes/services/generation_cost_rollup.py) → `GET /api/metrics/private/cost` |
 | UI | passport card + library column via [`ui/src/generationCost.js`](../ui/src/generationCost.js) |
-| Tests | [`backend/tests/test_generation_cost_meter.py`](../backend/tests/test_generation_cost_meter.py), [`backend/tests/test_generation_cost_persistence.py`](../backend/tests/test_generation_cost_persistence.py), [`ui/test/generation-cost.test.js`](../ui/test/generation-cost.test.js) |
+| Tests | [`backend/tests/test_generation_cost_meter.py`](../backend/tests/test_generation_cost_meter.py), [`backend/tests/test_generation_cost_persistence.py`](../backend/tests/test_generation_cost_persistence.py), [`backend/tests/test_generation_cost_model.py`](../backend/tests/test_generation_cost_model.py), [`backend/tests/test_generation_cost_rollup.py`](../backend/tests/test_generation_cost_rollup.py), [`ui/test/generation-cost.test.js`](../ui/test/generation-cost.test.js) |
 
 The meter is bound to a `contextvars` context for the duration of one job, so
 the LLM boundary records usage without threading a parameter through the debate
@@ -49,22 +55,22 @@ behaviour outside a job, but it has a consequence worth stating plainly:
 **instrumenting a code path does not by itself put that path in a job's
 snapshot.** `run_generation` is the only thing that binds a meter.
 
-One instrumented call is therefore **inert today**:
-`propose_portfolio_with_tools()` in `portfolio_agent.py` carries a
-`record_llm_call`, and its raw-SDK tool-use loop genuinely does bypass
-`LLMBackend.complete()` — but that method is not on the generation pipeline's
-call graph. It now has **no callers at all**: the pipeline's two runners
-(`_run_debate_leaderboard`, `_run_fixture_candidate`) both accept an `agent`
-argument for signature parity and ignore it, and the one route that used to call
-it — `GET /api/strategies/advisor` — has been deleted. So no generation reaches
-this loop, and the call cannot contribute to any job's cost snapshot.
+**Resolved 2026-08-31 — there is no longer an inert instrumented call.** One
+used to exist: `propose_portfolio_with_tools()` in `portfolio_agent.py` carried
+a `record_llm_call`, and its raw-SDK tool-use loop genuinely bypassed
+`LLMBackend.complete()` — but the method was not on the generation pipeline's
+call graph and had **no callers at all** (the pipeline's runners
+`_run_debate_leaderboard` / `_run_fixture_candidate` accept an `agent` argument
+for signature parity and ignore it; the one route that used to call it, `GET
+/api/strategies/advisor`, was already deleted). That whole tool loop — the
+method, its four tool implementations, and the `record_llm_call` inside it — was
+deleted rather than left as instrumentation nothing reaches. `portfolio_agent.py`
+survives for its other exports (`get_portfolio_agent`, `PortfolioAgent`,
+`propose_portfolio`), which `generation_pipeline.py` and the StockBench adapter
+import; none of them are instrumented, and none of them run during generation.
 
-The method is dead code queued for the follow-up deletion PR; it survives only
-because `portfolio_agent.py`'s other exports (`get_portfolio_agent`,
-`PortfolioAgent`) are still imported by `generation_pipeline.py` and the
-StockBench adapter. Treat its `record_llm_call` as something to delete with the
-method, not as coverage to preserve. It closes no gap today, and the snapshots
-in this document do not include anything from it.
+The consequence for this document is unchanged: every measured call in a job's
+snapshot goes through `LLMBackend.complete()` under a bound meter.
 
 ## Snapshot shape (`cost_v1`)
 
@@ -240,6 +246,74 @@ for them is precisely the failure this instrumentation exists to end.
    would refuse it anyway. The table's *name* is fine; a counter label inside a
    `cost_v1` snapshot is not.
 
+## Pricing the measurement: `generation_cost` on the admin cost endpoint
+
+`GET /api/metrics/private/cost` used to return `cost_per_generation_usd: null`
+as a hard-coded DRAFT placeholder while the measurements to answer it sat in the
+table. It now returns the mean of the priced runs, plus a `generation_cost`
+block carrying the whole distribution.
+
+**The rates are not in this repo, and they never will be.** A rate card arrives
+as one JSON environment variable, `GENERATION_COST_RATE_CARD`, parsed by
+[`generation_cost_model.rate_card_from_env`](../backend/archimedes/services/generation_cost_model.py):
+
+```json
+{
+  "lane": "fargate_inline",
+  "compute_usd_per_gb_second": "0.0000133",
+  "compute_gb": "3",
+  "billing_granularity_seconds": "1",
+  "minimum_billed_seconds": "0",
+  "models": {"<model-id>": {"input_usd_per_mtok": "…", "output_usd_per_mtok": "…"}}
+}
+```
+
+Vendor prices and margin strategy are private-docs material (`CLAUDE.md` §
+Project) and vendor prices change without a deploy — both reasons point the same
+way. **With no card configured, every dollar field is `null` and no database
+read happens at all.** The example above carries no real numbers; fill it from
+the current Bedrock and Fargate price lists in the private docs repo.
+
+### What it will and will not tell you
+
+| Field | Meaning |
+|---|---|
+| `cost_per_generation_usd` (flat, top level) | The **mean** of the priced runs, or `null`. |
+| `generation_cost.cost_per_generation_usd` | `mean` / `median` / `min` / `max`, plus the `llm_mean` / `compute_mean` / `overhead_mean` split — the issue's "state the LLM and compute terms separately". |
+| `generation_cost.by_n_candidates` | The same figures bucketed by `meta.n_candidates_requested`, so **the scaling in N is read off real runs rather than assumed**. |
+| `generation_cost.jobs_priced` / `jobs_unpriceable` | How much of the table the average actually covers. |
+| `generation_cost.unpriceable_reasons` | Why the rest was excluded, by stable code (`llm_usage_incomplete`, `model_not_on_rate_card`, `unreadable_measurement`, …). |
+| `generation_cost.rate_card_configured` / `unavailable` / `truncated` | The three ways this can be an honest gap rather than a number. |
+
+Four refusals are load-bearing, each covered by a test that has been shown to
+fail when the guard is removed
+([`test_generation_cost_rollup.py`](../backend/tests/test_generation_cost_rollup.py)):
+
+1. **A missing rate card is `null`, never `$0.00`.** An absent price gets the
+   same treatment as an absent measurement.
+2. **An unpriceable run is excluded from the mean and counted out loud.** A run
+   whose `usage_complete` is `false`, or that used a model the card cannot
+   price, would drag the average *below* the measured truth if folded in —
+   precisely the issue's "do not estimate" anti-goal. It lands in
+   `jobs_unpriceable` instead.
+3. **Rows are de-duplicated by `job_id`.** The row is keyed `(job_id,
+   strategy_id)` but the measurement is the *job's*; a future K>1 must not
+   double-count one job into every average.
+4. **The rejected path is in the numbers.** Nothing filters on outcome — a run
+   that failed the rigor gate spent the same backtest compute. What is *not*
+   here is any run that died before persisting a strategy, because those never
+   get a row at all; `coverage_note` says so on every response.
+
+**It is admin-only, and that is enforced, not asserted.** The endpoint sits
+behind `PLATFORM_ADMIN_WALLETS` (401 anonymous / 403 non-admin), and
+`test_measured_generation_cost_never_reaches_a_public_surface` sweeps
+`/api/metrics`, `/api/metrics/funnel` and `/api/metrics/visitors` asserting the
+figure appears on none of them.
+
+**The rollup is structurally barred from ever being stored as a measurement.**
+Its keys are priced, so `cost_meter.assert_measurement_only` raises on it — the
+same screen that keeps `generation_costs.measurement_json` free of money.
+
 ## Measurement procedure
 
 Both runs below are `n_candidates=1` and `n_candidates>1`, so the scaling in N is
@@ -281,9 +355,12 @@ aws ecs describe-tasks --cluster <cluster> --tasks <task> \
   --query 'tasks[0].{cpu:cpu,memory:memory}'
 ```
 
-Turning `cpu_seconds` + task size into a per-generation Fargate figure, and
-`llm.total_tokens` + the model's rate card into a per-generation inference
-figure, is deliberately left outside the server. Related:
+Turning `llm.total_tokens` + `wall_seconds` into dollars is what the admin
+rollup above does, from a rate card supplied by the environment. What it
+**cannot** do is correlate that model against the actual AWS invoice: the task's
+allocated size is what Fargate bills, and per-task utilisation lives in
+CloudWatch, not in the worker process. That correlation is still outstanding on
+#1217. Related:
 [`bedrock-model-cost-comparison.md`](bedrock-model-cost-comparison.md) for the
 rate card, and [`cost-estimates/generate-llm-costs.md`](cost-estimates/generate-llm-costs.md)
 for the estimate this instrumentation exists to replace.

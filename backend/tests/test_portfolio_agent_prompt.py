@@ -16,7 +16,6 @@ string it can't stop emitting.
 from __future__ import annotations
 
 from archimedes.agents.portfolio_agent import (
-    _build_tool_user_prompt,
     _build_user_prompt,
     _format_strategies,
 )
@@ -75,22 +74,27 @@ def test_format_strategies_without_statuses_says_pending_never_candidate():
     assert "PASS" not in out
 
 
-def test_both_prompt_builders_thread_the_status_map():
+def test_prompt_builder_threads_the_status_map():
+    """``_build_user_prompt`` is the ONLY prompt builder in the module.
+
+    This test used to loop over ``(_build_user_prompt, _build_tool_user_prompt)``.
+    The tool-use prompt builder was deleted with the rest of the caller-less
+    tool loop (2026-08-31); one builder remains, and it must still thread the
+    live status map rather than the fail-closed attribute.
+    """
     strategies = [_Strategy("dddd4444", poisoned_gate=True)]
     statuses = {"dddd4444": "fail"}
-    common = {
-        "regime": "risk_on",
-        "regime_confidence": 0.8,
-        "risk_profile": "moderate",
-        "usdc_floor": 0.2,
-        "synth_budget": 0.8,
-        "market_ranking": [],
-        "strategies": strategies,
-        "scan_universe_synths": set(),
-    }
-    for builder in (_build_user_prompt, _build_tool_user_prompt):
-        prompt = builder(**common, rigor_statuses=statuses)
-        assert "rigor=FAIL (live gate)" in prompt
-        # The exact pre-fix label ("candidate" alone also appears as legitimate
-        # prose in the tool prompt's process steps).
-        assert "rigor=candidate" not in prompt
+    prompt = _build_user_prompt(
+        regime="risk_on",
+        regime_confidence=0.8,
+        risk_profile="moderate",
+        usdc_floor=0.2,
+        synth_budget=0.8,
+        market_ranking=[],
+        strategies=strategies,
+        scan_universe_synths=set(),
+        rigor_statuses=statuses,
+    )
+    assert "rigor=FAIL (live gate)" in prompt
+    # The exact pre-fix label.
+    assert "rigor=candidate" not in prompt

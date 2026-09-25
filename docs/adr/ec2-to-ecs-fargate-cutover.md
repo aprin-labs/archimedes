@@ -2,7 +2,7 @@
 
 > **Audience:** Archimedes team
 > **Status:** Accepted
-> **Date:** 2026-07-09 (executed; decided in [#1039](https://github.com/a-apin/archimedes/issues/1039))
+> **Date:** 2026-07-09 (executed; decided in [#1039](https://github.com/aprin-labs/archimedes/issues/1039))
 > **Owner:** Dan Browne
 > **Supersedes:** —
 > **Superseded-by:** —
@@ -27,7 +27,7 @@ serving host**. Three properties of that arrangement were the problem:
 
 1. **Build and serve shared one machine's RAM.** A `docker build` on the serving host
    competes with the process serving traffic. This is what produced the OOM outage chain
-   on **2026-07-06** ([#1001](https://github.com/a-apin/archimedes/issues/1001)) — the
+   on **2026-07-06** ([#1001](https://github.com/aprin-labs/archimedes/issues/1001)) — the
    proximate trigger for the whole cutover. The first fix landed in the same issue thread:
    build in CI, push to ECR, stop building images on the serving host
    (commit `d62e449`-lineage, "[infra] Build in CI, push to ECR, and stop building images
@@ -75,7 +75,7 @@ proportionate for a single service at this size.
    bake file-backed assets for Fargate (#1039)"), with the corpus PDFs excluded from the
    root build context (`4504589`).
 
-**Execution:** PRs [#1056](https://github.com/a-apin/archimedes/pull/1056)–[#1059](https://github.com/a-apin/archimedes/pull/1059),
+**Execution:** PRs [#1056](https://github.com/aprin-labs/archimedes/pull/1056)–[#1059](https://github.com/aprin-labs/archimedes/pull/1059),
 2026-07-08/09. #1041 landed the Terraform; #1056 detached EC2 from the target group
 (`6689412`, "Phase 4 cutover"); #1057 fixed the migrate task's network configuration;
 #1058 added the version stamp + rich-health CI gate and retired the EC2 deploy path
@@ -102,7 +102,7 @@ proportionate for a single service at this size.
   runner and the KB pipeline all ran as docker-compose services on EC2 and were not part
   of the web-tier task. After the cutover they had **no deploy path**. Relocation IaC
   (oracle + agent → a small dedicated EC2, KB → a scheduled Fargate task, EFS for corpus
-  artifacts) was written as PR [#1071](https://github.com/a-apin/archimedes/pull/1071)
+  artifacts) was written as PR [#1071](https://github.com/aprin-labs/archimedes/pull/1071)
   (merged 2026-07-14, `bb0c345`/`0f1d8cb`) and **applied 2026-07-28**. This was a
   foreseeable consequence of cutting over the web tier alone and it cost ~3 weeks of the
   runners having no deployment story; a future cutover should enumerate every

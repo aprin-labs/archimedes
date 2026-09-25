@@ -42,6 +42,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { apiPost } from "./api";
 import { EXECUTION_CHAIN_ID } from "./chain-config";
 import { listLinkedWallets } from "./linked-wallets";
+import { canStore } from "./storage-consent.js";
 
 const STORAGE_PREFIX = "archimedes_payment_key:";
 
@@ -64,7 +65,11 @@ export function getOrCreateSessionAccount(scaAddress) {
 	const existing = getSessionAccount(scaAddress);
 	if (existing) return existing;
 	const key = generatePrivateKey();
-	localStorage.setItem(storageKey(scaAddress), key);
+	// Strictly necessary (#1647 anti-goal 1): this IS the payment rail's
+	// signing credential, so it is disclosed in the storage inventory with
+	// its custody caveat rather than offered as a toggle that would silently
+	// break paying. canStore therefore always allows it here.
+	if (canStore(storageKey(scaAddress))) localStorage.setItem(storageKey(scaAddress), key);
 	return privateKeyToAccount(key);
 }
 

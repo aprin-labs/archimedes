@@ -16,6 +16,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Identity,
     Index,
     Integer,
     String,
@@ -31,6 +32,43 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+# ── The platform legacy-adoption account (#1283) ───────────────────────────
+#
+# A real ``auth_users`` row, created idempotently by the alembic revision that
+# adopts orphaned pre-account rows, so the ownership FK those rows carry
+# (``owner_user_id -> auth_users.id``) points at something that exists. It is
+# an OWNER, never a LOGIN:
+#
+#   * no ``auth_accounts`` credential row and no ``auth_sessions`` row is ever
+#     written for it, so nothing can authenticate as it — adopted rows are
+#     therefore readable by nobody, which is the fail-closed direction;
+#   * the address is in the RFC 6761 ``.invalid`` TLD, which by definition
+#     resolves nowhere, so no email flow can ever reach it — and because
+#     ``auth_users.email`` is UNIQUE, a signup attempting this address is
+#     rejected by the database rather than taking the account over;
+#   * every published count of ACCOUNTS or of ACCOUNTS-WHO-DID-SOMETHING
+#     excludes it by id — a bookkeeping row must never inflate a user number
+#     the product publishes. Three filters, all pinned by tests:
+#       - ``services/user_stats.py::_query_distinct_user_count`` (the public
+#         "users" figure);
+#       - ``services/engagement_metrics.py::get_account_metrics``
+#         (total / new_7d / new_30d);
+#       - ``services/engagement_metrics.py::get_repeat_generation_metrics``
+#         — filtered on ``strategy_store.owner_user_id``, not on
+#         ``auth_users.id``, because that tile counts accounts by the rows
+#         they own and the adopted rows are the ones this account owns. The
+#         adjacent ``is_example`` filter does NOT cover them: an adopted row
+#         carries a real ``owner_wallet``, so it is not house content.
+#     Anything counting owners of adopted rows in future must join this list.
+#
+# The id is fixed and documented rather than generated: the migration, its
+# downgrade, the release path, and the metrics filters all have to name the
+# same account, and a generated id would make the migration non-idempotent.
+PLATFORM_LEGACY_USER_ID = "platform-legacy"
+PLATFORM_LEGACY_EMAIL = "platform-legacy@archimedes.invalid"
+PLATFORM_LEGACY_NAME = "Archimedes Platform (legacy rows)"
+
+
 class AuthUser(Base):
     __tablename__ = "auth_users"
 
@@ -43,6 +81,24 @@ class AuthUser(Base):
     updated_at: Mapped[datetime] = mapped_column(
         "updatedAt", DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
     )
+    # #1804 — what SES told us about this address, as opposed to what the
+    # person did. ``email_verified`` above cannot carry it: false there means
+    # both "hasn't clicked yet" and "the mailbox does not exist", and the free
+    # tier gates on it, so a dead address is locked out indistinguishably from
+    # an impatient human. NULL means SES has never reported a bounce or a
+    # complaint for this address.
+    #
+    # Written by exactly one thing — ``archimedes.scripts.ses_events`` draining
+    # the SES → SNS → SQS feedback queue (``infra/ses_events.tf``). Better Auth
+    # declares the same two columns as ``user.additionalFields`` with
+    # ``input: false`` (``auth/auth.js``) so no request body can set them; it
+    # only READS them, to refuse signup and the self-service resend.
+    email_bounced_at: Mapped[datetime | None] = mapped_column("emailBouncedAt", DateTime(timezone=True), nullable=True)
+    #: ``bounce`` (permanent — the mailbox does not exist) or ``complaint``
+    #: (a human told their provider our mail is spam). Transient bounces are
+    #: NOT recorded here: a full mailbox or a temporary DNS failure is not a
+    #: fake address, and stamping one would lock out a real user.
+    email_bounce_kind: Mapped[str | None] = mapped_column("emailBounceKind", String(32), nullable=True)
 
 
 class AuthSession(Base):
@@ -98,6 +154,84 @@ class AuthVerification(Base):
     created_at: Mapped[datetime] = mapped_column("createdAt", DateTime(timezone=True), nullable=False, default=_now)
     updated_at: Mapped[datetime] = mapped_column(
         "updatedAt", DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )
+
+
+class AuthEmailDelivery(Base):
+    """One row per outbound message the auth sidecar hands to a mailer (#1748).
+
+    WHY IT EXISTS. ``POST /api/auth/send-verification-email`` answered
+    ``200 {status: true}`` forever — for an address SES had already dropped
+    onto the account suppression list, for an address whose last send threw,
+    for every address. The only trace a send left was a ``console.error`` on
+    the failure path, so nothing in the product could tell those apart and
+    nothing could tell the user. ``auth/mailer.js`` now writes one row here per
+    send and ``GET /api/auth/verification-status`` reads them back for the
+    signed-in caller's own address.
+
+    ORDER COMES FROM ``seq``, NOT ``created_at``. The status endpoint reads the
+    newest row as THE latest attempt, and that row is what decides whether the
+    owner is told "our provider accepted it" or "the last attempt was refused".
+    ``created_at`` has millisecond resolution and back-to-back sends routinely
+    share one, so ``ORDER BY created_at DESC`` is a tie the database may break
+    either way — and a per-process key only fixes that inside one process,
+    while the auth service autoscales. ``seq`` is DB-assigned
+    (``BIGINT GENERATED BY DEFAULT AS IDENTITY``) and UNIQUE, so the order is
+    total across every writer sharing the database. ``created_at`` stays: it is
+    what the 24h window and the resend countdown are computed from.
+
+    WRITTEN BY NODE, SHAPED BY ALEMBIC — the same split every other ``auth_*``
+    table already lives under. Nothing in the Python backend inserts here; this
+    model exists so the DDL has one home (migration
+    ``d4b1f7c8e206``) and so ``create_all()`` and ``alembic upgrade head``
+    cannot drift apart.
+
+    WHAT IS DELIBERATELY ABSENT: the subject, the body, the verification URL
+    (a one-time bearer sign-in credential), and the error MESSAGE. ``error``
+    holds the AWS SDK error's *name* only — a fixed vocabulary
+    (``MessageRejected``, ``AccessDeniedException``, ...) that cannot carry an
+    address, a token, or a body fragment into the log.
+
+    ``user_id`` is ON DELETE CASCADE, so deleting an account takes its delivery
+    rows — and the addresses in them — with it, matching migration
+    ``85ca5310b7a1``'s erasure policy for the other account-owned tables. It is
+    nullable only because a send is recorded even if the owning row cannot be
+    resolved; the ``email`` column is what the read path actually matches on,
+    because ``changeEmail`` can move an account's address while old rows keep
+    the address they were actually sent to.
+    """
+
+    __tablename__ = "auth_email_deliveries"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=lambda: uuid.uuid4().hex)
+    #: The write order, assigned by the database. BIGSERIAL-equivalent on
+    #: Postgres, a plain NOT NULL integer on SQLite (no IDENTITY, no sequences)
+    #: — which is only ever the alembic round-trip tests, never a real writer.
+    seq: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer(), "sqlite"), Identity(), nullable=False, unique=True
+    )
+    user_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("auth_users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    #: "verification" | "reset" | "change_email" | "account_change"
+    #: (auth/delivery-log.js DELIVERY_KINDS — that module is the vocabulary's home).
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    #: "sent" (the mailer accepted it) | "failed" (it threw). NEVER "delivered":
+    #: SES returns a MessageId for a suppressed address and then drops the mail,
+    #: which is precisely why the status endpoint also queries the suppression list.
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+
+    __table_args__ = (
+        # The status endpoint's only query: rows for one address and kind
+        # inside a 24h window, ordered by ``seq`` DESC. This index serves the
+        # WHERE — the selective half — and the ORDER BY is a sort over what
+        # survives it, which the resend limiter bounds to a handful of rows
+        # per address per day.
+        Index("ix_auth_email_deliveries_email_kind_created", "email", "kind", "created_at"),
     )
 
 

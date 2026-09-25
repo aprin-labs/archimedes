@@ -48,14 +48,12 @@ society proposes and backtests in parallel threads.
 **What the context binding does and does not reach.** A recorder is a no-op when
 no meter is bound, which is the correct behaviour outside a job — but it also
 means instrumenting a code path proves nothing on its own about whether that path
-is measured. Only ``run_generation`` binds a meter today. In particular the
-:mod:`archimedes.agents.portfolio_agent` tool-use loop carries a
-:func:`record_llm_call` that is **inert**: the method holding it,
-``propose_portfolio_with_tools()``, has no callers at all — the generation
-pipeline's runners ignore the ``agent`` argument they are handed, and the one
-route that used to call it was deleted. Nothing reaches that loop, so it
-records nothing; it is dead code queued for the follow-up deletion PR, not
-coverage this module depends on. See
+is measured. Only ``run_generation`` binds a meter today. The one previously
+documented gap here — an inert :func:`record_llm_call` inside
+:mod:`archimedes.agents.portfolio_agent`'s ``propose_portfolio_with_tools()``
+tool loop, which had no callers and therefore recorded nothing — is closed:
+that loop was **deleted** on 2026-08-31, so there is no longer a
+zero-caller instrumented path masquerading as coverage. See
 ``docs/generation-cost-instrumentation.md`` for the full coverage boundary.
 """
 

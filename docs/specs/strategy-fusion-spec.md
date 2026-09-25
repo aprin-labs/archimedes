@@ -5,7 +5,8 @@
 > [`backend/archimedes/agents/strategy_fusion.py`](../../backend/archimedes/agents/strategy_fusion.py)
 > (650 lines, feature-flagged, DB-first corpus reads with file fallback). **What ships
 > today:** the 3-input fusion engine (`POST /api/strategies/generate`) consuming
-> user brief × live market regime × 10,000-paper corpus → grounded strategy spec.
+> user brief × live market regime × the q-fin corpus (live count: `GET /health`
+> `corpus_papers` / `corpus_db_count`) → grounded strategy spec.
 > **What's deferred:** the SPECTER2 + RAG + minimal KG retrieval upgrade
 > (GitHub issue `#96`, now *unblocked* after `#95` engine v2 merged; previously
 > keyword-only selection). See also
@@ -42,8 +43,9 @@ pressure. Instead:
 
 - **Additive at the time of writing.** A new `backend/archimedes/agents/strategy_fusion.py`. (Since superseded by adoption: it is now imported by the API routes, the debate engine, and tests — this spec describes its introduction, not its current wiring.) Originally nothing imported it
   yet; wiring it into a route is a later, separately reviewable step.
-- **Flagged.** `ARCHIMEDES_FUSION_ENABLED` (default OFF). Flag-off is a hard inert path:
-  no LLM call, no corpus read, returns a self-describing sentinel.
+- **Flagged.** ~~`ARCHIMEDES_FUSION_ENABLED` (default OFF). Flag-off is a hard inert path:
+  no LLM call, no corpus read, returns a self-describing sentinel.~~ **RETIRED 2026-09-02
+  (deck Q4)** — see § The feature flag below. Fusion is unconditional.
 - **Revertible.** Deleting the module and the spec fully reverts the change. The architect,
   guardrail, construction-trace, and the on-chain flow are byte-for-byte untouched.
 - **Seam-faithful.** It mirrors the architect's `LLMBackend` Protocol seam, lazy `anthropic`
@@ -76,8 +78,9 @@ user (or an upstream agent) supplies a `FusionBrief`:
 | `asset_classes` | `list[str]` | Required-overlap filter. A paper is eligible only if its category/title/abstract evidences at least one requested class (substring + a small synonym map: `equities`, `rates`, `credit`, `fx`, `commodities`, `crypto`, `vol`, `macro`). Empty list = no asset filter (corpus-wide, still novelty-ranked). |
 | `risk_appetite` | `str` → `RiskProfile` | Maps to `RISK_PROFILE_PARAMS`. Passed into the prompt as the synthesis constraint envelope (USYC floor/ceiling, target vol, max DD). Does **not** hard-filter papers (a paper is a building block, not a risk-tagged strategy) — it shapes the synthesis, not the candidate set. |
 | `strategic_direction` | `str` | Free-text steer (e.g. *"regime-switching overlays on a carry core"*). Used for keyword-biased ranking of candidates and passed verbatim into the synthesis prompt. |
-| `max_papers` | `int` | Upper bound on fused papers. Clamped to `[2, FUSION_MAX_PAPERS]` (hard cap 6 — token + coherence budget). |
-| `min_papers` | (enforced, not user-settable below 2) | **Hard floor of 2.** A fusion of one paper is just extraction — that is the architect's job. If fewer than 2 eligible candidates survive filtering, fusion declines with a labelled, honest "insufficient corpus coverage" proposal rather than degrading to single-paper output. |
+| `max_papers` | `int` | **Retrieval width** — how many abstracts the model is shown. Clamped to `[2, FUSION_MAX_PAPERS]` (hard cap **30** since #1636; was 6). Not a citation quota. Defaults to `DEFAULT_MAX_PAPERS = 8` at every entry point (`GenerateBrief`, `FusionBrief`, `POST /api/strategies/generate`) — deliberately above the fuse target so the model has room to reject a paper honestly. |
+| `min_papers` | (enforced, not user-settable below 2) | **Hard floor of 2.** A fusion of one paper is just extraction — that is the architect's job. If fewer than 2 eligible candidates survive filtering, fusion declines with a labelled, honest "insufficient corpus coverage" proposal rather than degrading to single-paper output. **Unchanged by #1636 and deliberately so:** raising it to the fuse target would convert a thin corpus into a failed generation instead of a narrower strategy. |
+| `FUSE_TARGET_MIN` | (constant, not user-settable) | **5 — what the prompt ASKS for, never a gate** (#1636). The model must justify a shortfall in `fusion_reasoning`, naming each rejected paper. Citing fewer is accepted, recorded on `FusionProposal.is_shortfall` and in a `fusion: shortfall — …` log line carrying the used-vs-offered pair. Padding the citation list with a paper whose mechanism the model cannot name is worse than an honest 2: the 30-paper set comes off a **lexical substring** filter reranked over ≤150 candidates, so its tail is plausibly noise, and citation count is read downstream (passport, provenance record) as evidence depth. |
 
 ### Deterministic pre-LLM candidate selection
 
@@ -201,9 +204,20 @@ sentinel, never an exception.
   proposal. No crash, no fabricated papers.
 - Extra/unknown fields are ignored (forward-compatible with manifest schema growth).
 
-## The feature flag
+## The feature flag — RETIRED 2026-09-02 (deck Q4)
 
-`ARCHIMEDES_FUSION_ENABLED`, default **OFF**. Truthy = `{"1","true","yes","on"}`
+**There is no fusion flag any more.** Fusion is the unconditional generation path:
+the debate society is the sole pipeline and every proposer routes through
+`StrategyFusion.propose()`, so the OFF branch below could only make Generate
+silently return nothing while every deployed environment pinned the flag `true`.
+The reader, the OFF branch and every injection site were deleted;
+`backend/tests/test_fusion_flag_retired.py` fails if a fusion switch comes back
+under any name. `/health` no longer publishes `fusion_enabled` either — the key
+was dropped on 2026-09-03 rather than frozen at a constant `true`, since nothing
+consumed it.
+The rest of this section is kept as the historical description of what was removed.
+
+~~`ARCHIMEDES_FUSION_ENABLED`, default **OFF**.~~ Truthy = `{"1","true","yes","on"}`
 case-insensitively (the parsing convention shared with the rest of the env surface).
 Mechanism mirrors `ARCHIMEDES_STRATEGIES_DIR`: a plain `os.getenv` read, no central
 settings module (there is none in this codebase — env overrides are the established
@@ -257,11 +271,15 @@ at an in-memory `FusionProposal`. The eventual shape:
   `ReasoningTraceRegistry`, exactly as construction traces are anchored — *without
   modifying that flow now*. The anchor would bind *"this novel combination of these N
   papers was proposed at time T by this served model"*.
-- **IPFS-pin the full reasoning.** The full fusion reasoning + the resolved source paper
-  metadata pinned to IPFS, with the CID in the on-chain anchor — a public, permanent,
-  **falsifiable** novelty claim: anyone can fetch the papers, read the synthesis, and
-  argue the combination was in fact already published. Being falsifiable is the point;
-  it is the on-chain analogue of the McLean–Pontiff discipline.
+- **Public-storage pin of the full reasoning (owner-gated; not live).** The full fusion
+  reasoning + the resolved source paper metadata in a public store, with a pointer in
+  the on-chain anchor — a public, permanent, **falsifiable** novelty claim: anyone can
+  fetch the papers, read the synthesis, and argue the combination was in fact already
+  published. Being falsifiable is the point; it is the on-chain analogue of the
+  McLean–Pontiff discipline. Do not rebuild the deleted Pinata client to land this:
+  live reveal is hash-only (`docs/adr/ipfs-pinning-not-live.md`). Re-enablement needs
+  an owner-seeded JWT, `infra/ecs.tf` `secrets{}`, a rebuilt pin client, and a CID
+  proven on a public gateway.
 - **Novelty decay tracking.** Once anchored, a fusion's novelty is itself a decaying
   quantity (its own publication is the decay trigger). A future loop re-scores anchored
   fusions against newer corpus snapshots and rotates capital away from syntheses the
@@ -282,4 +300,5 @@ discipline by which this module is itself additive and flagged.
 - [x] Backend seam mirrors the architect (lazy `anthropic`, `extract_json`, fallback).
 - [x] Records `response.model` as `model`; keeps `requested_model` separately.
 - [x] Mocked-client tests; no network; self-contained fixture manifest.
-- [ ] (Future, not this PR) Route wiring, on-chain anchor, IPFS pin, novelty-decay loop.
+- [ ] (Future, not this PR) Route wiring, on-chain anchor, public-storage pin
+      (owner-gated; see `docs/adr/ipfs-pinning-not-live.md`), novelty-decay loop.

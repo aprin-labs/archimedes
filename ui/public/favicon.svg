@@ -1,4 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="4" fill="#0a0a0b"/>
-  <text x="16" y="23" text-anchor="middle" font-family="serif" font-size="22" fill="#e0a64f">Λ</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Archimedes">
+  <rect width="32" height="32" rx="5" fill="#F4F1E9"/>
+  <path d="M9 13V9h4M19 9h4v4M23 19v4h-4M13 23H9v-4" fill="none" stroke="#0D1218" stroke-width="2" stroke-linecap="square"/>
+  <circle cx="16" cy="16" r="3" fill="#4658E8"/>
 </svg>

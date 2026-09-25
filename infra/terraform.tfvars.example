@@ -56,10 +56,35 @@ platform_admin_wallets = "" # e.g. "0xabc...,0xdef..." — confirm current prod 
 # confirm whether a real value is currently applied in prod — check with Dan.
 archimedes_treasury_wallet = "" # e.g. "0x123..." — confirm current prod value with Dan first
 
-# ── Optional: CloudWatch alarm paging (cloudwatch.tf:17) ───────────────────
-# Email subscribed to the CloudWatch alarm SNS topic. Lower stakes than the
-# vars above — cloudwatch.tf is additive-only, so a reverted value only means
-# a missed page, not a stripped feature — but the same landmine class: if a
-# real address has been TF_VAR-exported and applied, put it here too so a
-# bare apply doesn't silently unsubscribe it.
-alarm_email = ""
+# ── REQUIRED: outage paging (variables.tf, issue #1818 P5) ─────────────────
+# The address you will ACTUALLY SEE an alarm at. This is the only variable in
+# this file with no default in variables.tf, and a plan errors until it is set.
+#
+# Why it exists, measured rather than assumed: #1818 P5 says "there was no
+# alarm". The account disagrees — on 2026-09-03 two alarms fired (13:38:46Z and
+# 13:39:16Z) and this topic DELIVERED six emails with zero failures to the
+# already-subscribed `alarm_email` address, during a 94-minute outage the owner
+# then discovered by loading the site. So the destination that already works is
+# not the one that reaches anybody. Pick a different channel: a mailbox you
+# watch, an SMS gateway, a PagerDuty/Opsgenie intake address.
+#
+# MUST DIFFER from alarm_email below — a `precondition` in cloudwatch.tf fails
+# the plan otherwise, because the same address in both would leave two
+# Terraform resources holding one SNS subscription ARN.
+#
+# Leaving it "" fails the variable's own validation; `--allow-empty
+# owner_alert_email` will not rescue it (apply.sh's preflight is not
+# terraform's validation). AWS emails a confirmation link on the first apply
+# and the subscription pages nobody until it is clicked — confirm it, then run
+# the alarm drill in runbooks/disaster-recovery.md § Drills.
+owner_alert_email = "" # REQUIRED — e.g. "you@example.com"; a plan errors until this is set
+
+# ── The pre-existing alarm subscriber (cloudwatch.tf:17) ───────────────────
+# CONFIRMED APPLIED as of 2026-09-03: a real address is subscribed to
+# archimedes-alerts, confirmed, and delivering (six notifications on the day of
+# the incident, zero failures). It is NOT captured here, so this is the live
+# landmine this file exists to close: a bare `terraform apply` without
+# `TF_VAR_alarm_email` sets it to "" and UNSUBSCRIBES the one destination that
+# demonstrably works. Get the applied value from Dan and put it here before any
+# apply that is not narrowly `-target`ed.
+alarm_email = "" # NOT the current prod value — confirm with Dan before applying

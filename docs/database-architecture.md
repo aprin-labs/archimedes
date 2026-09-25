@@ -7,8 +7,8 @@
 >
 > **Companion docs:** [`docs/aws-architecture.md`](archive/agora-2026-05/aws-architecture.md) (the infra
 > the stores run on), [`docs/design.md`](archive/agora-2026-05/design.md) (the system architecture),
-> [`docs/corpus-architecture.md`](corpus-architecture.md) (how the 10k-paper corpus
-> is built and where it lives), and [`backend/archimedes/chain/README.md`](../backend/archimedes/chain/README.md)
+> [`docs/corpus-architecture.md`](corpus-architecture.md) (how the q-fin paper corpus
+> is built and where it lives — live count `GET /health`, do not freeze a number), and [`backend/archimedes/chain/README.md`](../backend/archimedes/chain/README.md)
 > (the on-chain anchor that the off-chain reasoning-trace store hashes into).
 
 ---
@@ -83,6 +83,23 @@ Table list below is historical cutover inventory. Current schema additionally in
 and `wallet_link_challenges`. Better Auth user ID is canonical; wallet columns remain
 provenance/compatibility. Row counts are point-in-time, not guarantees.
 
+> **Re-checked 2026-08-31 — this table is an inventory, not a census.** It is a snapshot of
+> the 2026-06-28 cutover and it has drifted: the models imported by
+> [`backend/archimedes/db.py`](../backend/archimedes/db.py) now also include
+> `asset_daily_bars`, `strategy_daily_returns`, `strategy_backtest_fixtures`,
+> `debate_transcripts`, `generation_costs`, `generation_credits`, `controlled_wallets`,
+> `identity_events`, `wallet_identities`, `payment_receipts`, `request_count_snapshots`,
+> `strategy_generators`, and the marketplace set (`marketplace_agents`,
+> `settlement_intents`, `subscriber_liability`, `subscriber_tick_log`) — roughly fifteen
+> tables this list does not carry, consistent with the #1438 / #1429 schema-relations work.
+> Rather than re-inventory a list that will drift again by the next merge train, treat
+> `db.py`'s import block as the live source (per `docs/CONVENTIONS.md` § 4 — anything that
+> decays fast belongs in the live source, not a doc); read
+> [`database-relations.md`](database-relations.md) for the foreign-key and deletion-policy
+> picture the #1438/#1429 pair landed. What this section *is* still good for — the
+> Postgres/Redis split, the honesty notes on `papers` / `corpus_meta` / `kg_*`, and the
+> per-table purposes — was re-verified on this date and holds.
+
 | Table | Model | Rows @ cutover | Purpose |
 | --- | --- | ---: | --- |
 | `strategy_passports` | [`strategy_passport_record.py`](../backend/archimedes/models/strategy_passport_record.py) `StrategyPassportRecord` | 4 | **The unified strategy table.** One row per strategy of any origin — curated, fusion, or architect. See §2.4. |
@@ -90,13 +107,13 @@ provenance/compatibility. Row counts are point-in-time, not guarantees.
 | `strategy_store` | [`strategy_store.py`](../backend/archimedes/models/strategy_store.py) `StrategyRecord` | — | The earlier content-hashed strategy substrate (keccak256 dedup, `candidate → live → retired/rejected` lifecycle, source-paper provenance, on-chain registration tx/block, lineage `parent_id`). Coexists with `strategy_passports`; the passport table is the unified read model the API surfaces. |
 | `strategy_proposals` | [`strategy_proposal.py`](../backend/archimedes/models/strategy_proposal.py) `StrategyProposal` | 4 | **Episodic memory of every generation attempt** (T-PE.8 / issue #165) — including rigor-fails and user-rejects. Each row is content-hashed (keccak256, unique) with a `verdict` (`rigor_pass`/`rigor_fail`/`user_rejected`/`pending`), `trust_level` (`CANDIDATE`/`VALIDATED`/`RETIRED`), originating `agent`, optional `regime_tag`, and the full proposal `payload` as JSON. This is the "library compounds rather than restarts" substrate. |
 | `backtest_results` | [`backtest_store.py`](../backend/archimedes/models/backtest_store.py) `BacktestResultRecord` | 4 | **Source of truth for backtests.** One row per `(strategy_id, content_hash)` snapshot (unique constraint). Holds the full metric set (Sharpe/Sortino/CAGR/Calmar/max-DD/win-rate/profit-factor/trades), equity curve + monthly returns as JSON, the rigor-gate outputs (DSR, DSR p-value, `num_trials_in_selection`, PBO, walk-forward OOS Sharpe, look-ahead-audit flag), paper-claimed comparators, and the backtest engine + code hash + transaction-cost bps for replay provenance. |
-| `papers` | [`corpus_store.py`](../backend/archimedes/models/corpus_store.py) `PaperRecord` | **10,000** | **The q-fin paper corpus — metadata only.** One row per arXiv paper (PK = `arxiv_id`): title, authors, abstract, categories, dates, PDF URL + sha256, source. **Honesty note:** these 10k rows are *metadata*. The `cluster_id`/`topic_label`/`content_hash` columns and the KG tables below are the schema for the SPECTER2 + HDBSCAN + REBEL/SciSpacy pipeline output, but that pipeline has **not** produced an artifact yet — there are no embeddings and no knowledge graph behind these rows today (see `kg_entities`/`kg_relations` = 0). |
+| `papers` | [`corpus_store.py`](../backend/archimedes/models/corpus_store.py) `PaperRecord` | live: `/health` | **The q-fin paper corpus — metadata only.** One row per arXiv paper (PK = `arxiv_id`): title, authors, abstract, categories, dates, PDF URL + sha256, source. Do not freeze a row count here — `GET /health` `corpus_db_count` is the authority; the corpus probe can timeout. **Honesty note:** these rows are *metadata*. The `cluster_id`/`topic_label`/`content_hash` columns and the KG tables below are the schema for the SPECTER2 + HDBSCAN + REBEL/SciSpacy pipeline output, but that pipeline has **not** produced an artifact yet — there are no embeddings and no knowledge graph behind these rows today (see `kg_entities`/`kg_relations` = 0). |
 | `corpus_meta` | `corpus_store.py` `CorpusMetaRecord` | 0 | Singleton tracking corpus intake state: last intake time, corpus hash, artifact hash + build time, paper count, source. The `0` reflects that no intake run has written a meta row to the cutover DB yet. |
 | `kg_entities` | [`kg.py`](../backend/archimedes/models/kg.py) `KGEntity` | **0** | Knowledge-graph entities (canonical name + type + paper count). Schema-only until the KB pipeline runs — see the papers honesty note. |
 | `kg_relations` | `kg.py` `KGRelation` | **0** | Knowledge-graph relations (subject → relation → object, scoped to a paper, with confidence). Schema-only until the KB pipeline runs. |
 | `user_profiles` | [`user_profile.py`](../backend/archimedes/models/user_profile.py) `UserProfile` | **2** | Legacy wallet-keyed optional profile with additive unique `owner_user_id`. **The `email` column stores a Fernet-encrypted token, never plaintext**. Account count comes from `auth_users`, not this compatibility table. |
 | `vault_metadata` | [`chat.py`](../backend/archimedes/models/chat.py) `VaultMetadata` | — | Off-chain vault metadata: address (unique), display name, symbol, creator, and the JSON list of associated `strategy_ids`. The on-chain vault contract holds the financial state; this table holds what the frontend needs to render a vault. |
-| `chat_messages` | `chat.py` `ChatMessage` | — | Per-vault chat. Writes require Better Auth account plus verified linked wallet; `is_ai` marks agent messages and `verified` records proven wallet attribution. Composite index on `(vault_address, created_at)`. |
+| `chat_messages` | `chat.py` `ChatMessage` | — | **Retired 2026-08-31 — no live reader or writer.** Held per-vault chat; the service, routes and UI panel were deleted, and the ORM mapping is kept only so `init_db()` still declares the table and existing rows stay readable. Composite index on `(vault_address, created_at)`. Dropping it is a migration decision, not a code cleanup. |
 
 ### 2.4 The unified `strategy_passports` table (issue #160)
 

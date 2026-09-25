@@ -4,7 +4,9 @@ Post-#1194, account-first users never hold a SIWE session, so these routes
 gate on the Better Auth session and own rows by ``owner_user_id``. The linked
 wallet is provenance only. Pinned here:
 
-  1. every route 401s without a session;
+  1. every route 401s without a session (including /marks — a new route on
+     this router inherits the gate by construction, but "inherits" is a claim
+     and this file's job is to check claims);
   2. deploy works for an account with NO linked wallet — the exact user the
      swap exists for;
   3. ownership is user-scoped: another signed-in user gets 404 (existence is
@@ -86,6 +88,7 @@ async def test_every_route_requires_a_better_auth_session(app, monkeypatch):
         assert (await client.post("/api/paper/deployments", json={"strategy_id": "s1"})).status_code == 401
         assert (await client.get("/api/paper/deployments")).status_code == 401
         assert (await client.get("/api/paper/deployments/anything")).status_code == 401
+        assert (await client.get("/api/paper/deployments/anything/marks")).status_code == 401
         assert (await client.post("/api/paper/deployments/anything/stop")).status_code == 401
 
 
@@ -133,6 +136,7 @@ async def test_ownership_is_user_scoped_and_existence_is_private(app, monkeypatc
     _sign_in(monkeypatch, "user-b")
     async with _client(app) as client:
         assert (await client.get(f"/api/paper/deployments/{dep_id}")).status_code == 404
+        assert (await client.get(f"/api/paper/deployments/{dep_id}/marks")).status_code == 404
         assert (await client.post(f"/api/paper/deployments/{dep_id}/stop")).status_code == 404
         assert (await client.get("/api/paper/deployments")).json()["deployments"] == []
 

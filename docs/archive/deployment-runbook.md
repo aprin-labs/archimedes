@@ -2,8 +2,11 @@
 
 > **ARCHIVED 2026-07-28 — historical. DO NOT EXECUTE.**
 > This procedure routes traffic to EC2 instance `i-01803d3abc271d39b`, which was detached
-> from the ALB target group during the 2026-07-09 Fargate cutover (`infra/alb.tf`). Following
-> it during an incident would operate on a host serving no traffic.
+> from the ALB target group during the 2026-07-09 Fargate cutover (`infra/alb.tf`) and then
+> **decommissioned outright on 2026-08-19** — stopped, snapshotted
+> (`snap-02edf9e4a9ac7f201`) and its terraform deleted (`infra/main.tf`, PR #1265). Every
+> command below now names an instance that no longer exists; the SSM calls would fail rather
+> than mislead, but the runbook is history, not a fallback.
 > Current rollback procedure: [`infra/runbooks/ecs-fargate-cutover.md`](../../infra/runbooks/ecs-fargate-cutover.md) § rollback and
 > [`infra/runbooks/disaster-recovery.md`](../../infra/runbooks/disaster-recovery.md).
 > **A Fargate-era break-glass runbook has not yet been written — see [`docs/runbooks/README.md`](../runbooks/README.md).**

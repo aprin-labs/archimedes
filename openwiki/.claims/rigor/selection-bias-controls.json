@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:9edd7423dd2c51378177e2c026169297c7de0d345fc2aaa850b15b7ed5e11c96",
+  "claims": [
+    {
+      "id": "claim_1196472e673c48b4ad17696ef6b5d85c",
+      "statement": "DSR corrects two distinct biases in the ordinary Sharpe ratio: multiple-testing inflation, where the maximum observed Sharpe over N candidates is upward-biased even when every candidate is pure noise, and non-normality, where negative skew and excess kurtosis both inflate the apparent significance of a positive Sharpe.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L51-L75",
+          "version": "repo-lines-v1:sha256:917ae93725d3d79e05c183f8ea5b4b3a0fdc14f24d4b8e1a68f47003e79bcfa0:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFjN2I5Zjc2NzgyOGY5MDI2M2I5NmRmZTRjNGZlOTYxNzM2YTcyYTNlNzFiOWFmZTQ3YTc3ZmVhZTk4YWQ5NzciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkzZjU2MjJjN2UzYTJlNDJkMTIwOGE4N2RkM2QwZWZjZjQyYjA4ZGE5YzE5ZTY0ODhiODgzMDczOTY5OWFkNDAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFjYmQ5Mzg4NjI5NjNiMTliMTBiMjM3Njc2Njk2NjUyNmZmNjk2NzJmMTM5Zjg2ZGZhMzAyNDY0Y2MwMzA1YmQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2fa2914c7fa14f5f94e426fc749db7f7",
+      "statement": "The DSR denominator's (gamma4 - 1)/4 coefficient is derived for the raw Pearson kurtosis convention where a normal distribution gives 3, and passing Fisher excess kurtosis instead would bias the denominator by a constant (3/4)*SR^2 and skew every DSR — the code calls scipy's kurtosis with fisher=False deliberately.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L76-L122",
+          "version": "repo-lines-v1:sha256:cc6815402a6fc5dbb30ed165e760da7f8cb6a54a97eaa27b889280a38af21397:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZlYTU0ZjVkOGVlZWRlNTkwYWI2MDE0YTUxN2Y0OTRhYjcxN2IxYWIzNTUzMDVlNTY1Y2QyNjdhMDVjMTE1MzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE0MDIzYTAzZWJjNzljZjQxNjg3ZGUwNmNlZWNhMzI1NGYzM2E2MzhmNDRiZWZhOWUxOTgxODg5MWI1MjdjYmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ0ZDAwMjM3YTM0YTU4NzdlZjJjOTI3NmJiMjQ4MDQ1NDlhYzE3MjhiM2ZhOTYxMDJiN2I5ZWE0MTYyZjIzODIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_889e9bb180884927baa90527cd859cf6",
+      "statement": "DSR requires at least 4 bars to form skew and kurtosis and returns nothing below that, on a degenerate constant series, or on a non-positive denominator — but statistical power requires far more than that floor, with the spec's reference cases using 504, 1260, and 2520 bars.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L123-L134",
+          "version": "repo-lines-v1:sha256:1baf7897fd8601aa6ba4b5434c8b7256fc8ded736d80d5c12e9859dc77c71da4:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlNjMwODdiNjg0M2U2MWQ2ODcxOTNjNjc2ZTRjYmMxMzRkOWU5YjVkNGFjNGE4NDc0ODEzM2M2YzNjYjNhOWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg1ZmJhZTBhMWJjOGRjOThmZjc1Yjg0N2IwMjY4OWVjNTRlZGE1NWY5ODUyZTczZWY2YTAwOTYyMTAzNGNmNjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ1Njc2ZWE3MGU1N2YxOWE1MWE0OWM4MGMxODgxZWYxZTM3ODk3OGE2YzFlNGJmOGU0OWNmNDgxNmI3OTBiNzEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6d916f2dd5584d39a329dcb14b92d963",
+      "statement": "The effective-N correction converts a nominal trial count under an equicorrelation model so correlated parameter variants are not counted as independent tests, clamps negative diversifying correlations to zero as a conservative no-penalty-relief default, and evaluates the two-quantile expected-maximum approximation at max(2, N_eff) with a linear taper to zero across N_eff between 1 and 2 because the approximation diverges as N approaches 1.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L135-L154",
+          "version": "repo-lines-v1:sha256:5683c3dfbe2237bd4352d58e121dc8d3eabdd1b923197b350f1b94f1e465fd2e:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJhODUzOGVkZmVhZTFlNzA4ZDJlYTdkMTMzMWU2OGJiZWRhNWVlODg2OThjOWY1N2VkNGNjNWM3NTdiZDAwZGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAzYzMyMTJhNjM0NWZkMWE2ZjFiM2FiYjRiZWZhNjViOTY1Yzg4YzA1YTIxMzY5NzkwMDY3YzJkYTA5MzdmMWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk2ZGJlZDk3ZjJhOWEwNTgyZGQ1YTc0MmE5YmM0Y2IyMzgwNTlhNzQxNzc1MDU4ZTMyZTM5ZmM2NWEzMjA2MDcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7a3dd843cae5495987939028c5a5e102",
+      "statement": "PBO answers a different question from DSR: DSR corrects the winner's own Sharpe, while PBO asks whether the selection procedure itself is overfit, making it a property of the whole library rather than of one strategy.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L186-L194",
+          "version": "repo-lines-v1:sha256:a9242e49fcdeeb008ba072168b7028ba034dc2b3a67f0b5c2b29bf9cd061bb12:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYTg0NjlhNzI0NjRkOGQ4YTJiM2YzMmJjYzI5ZTNiODJlYzYwMmI1ODQ2ZDllOTliZTUzZmI4ZDliODU5YzFiYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDFiYTQ3MTljODBiNmZlOTExYjA5MWE3YzA1MTI0YjY0ZWVlY2U5NjRlMDljMDU4ZWY4Zjk4MDVkYWNhNTQ2YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjgzYjZiNzVhNDQyYzYwMGUyNzM3NTVhZWNiZmIyNzllYWI0MDM4ODFmZjBmN2NkYjc1YWViNjYyMzNhMWY4YSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiY2Q2Mjc2OWNjMjdlYzM0Mjc3ODBiODEyZDQ0ZThiNDYxNTMzMWVkY2ZlNTRjNGIxZmY0YjRlOGQ0Nzk4Nzc3YiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_55785df2dabe495ab99f8ad0e0b03300",
+      "statement": "CSCV stacks aligned daily returns into a T-by-N matrix, partitions T rows into S equal time blocks, enumerates every way to choose S/2 blocks as in-sample, ranks strategies in-sample and looks up the winner's out-of-sample rank, and reports PBO as the fraction of splits in which the in-sample winner landed in the bottom half out-of-sample.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L195-L217",
+          "version": "repo-lines-v1:sha256:2faa1761157056b3306be253147ffd5db06b7bcced802dd85d2311ac7375fec2:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBhYjhjMGFkNTk4Mjk3MGU5OWMxODllMmRhN2IzNWU1ZDdlYWUzZTMyZjc0MzZjM2ViZjAzYzdhZDA0YzM1NjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE0MmRhYjI1M2M5YzE5OGU1YjAzYzEwNzNlNDVjNjcyMDllNTgwOWNhNjMxYWE5MjZlZmM2ZjYyNmRlYTA0MTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM2ZTNiNWQyZjQzNmY4NGVhZjBjNDA0MmE0ZWFmOGMwNWY4OWU3YjJhZjc4OTk0ZWExOWYyNzI0ZGM3NDgzMjEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ee9fb90073b2462297a48f536203bdeb",
+      "statement": "The PBO implementation documents three limitations: library-level coupling means a strategy's verdict shifts when a neighbour is added or removed, small N makes the out-of-sample rank quantile coarse, and equal-length blocking drops up to S-1 trailing bars.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L218-L236",
+          "version": "repo-lines-v1:sha256:1d66f69fd34b3046a32c49c2efe5467d276bae3a2417ebeb79a81a1c4dcb5396:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZmOGEwZjBlMWVjNjEwYzdiZTZjNzdhOTRjYjkwZWIwOGQxMTA5ZDFhNzBhY2JhYzAxODlhM2NkZWRhZDM0YTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQwMmYzODcwNDY0ODI3NTY5N2E2NWNlODg3ZDkzM2RkMjljODU4ZGI1OTA0NGYzNTBiNzZiYjUwOGVmZGE2YzYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjIxMzlkMzVhZDY2ZDIwYWIxMGRmMGVhYmU1MmM5ODhkM2RkZjJiYTM2NDI3ODczZGUxNjZmMjIwNzA0NDdhODkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_553b6a3984c247ca8a6a7976f25f7c43",
+      "statement": "The walk-forward check is a single chronological hold-out rather than a rolling re-estimation, with no per-window refit and no purge or embargo gap at the train/test boundary, so a lookback indicator's state can straddle the split.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L239-L274",
+          "version": "repo-lines-v1:sha256:647bf7d65687c724455bd77a86d5f116c2cb1a6cc3e4e077f3ed814891840df5:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcxODMwY2Y3NzYwZmFiOWUxZWM4ZDg1OTRkZTBiMDM2ZmZhYWM2ZDg5ODIxNmExMDM5ZTA2ZTM3ZDg2ZTljYTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhZWJiNTYxYjE2MTVlZmVhMDVkMGYxZGRiMDAzNzBkZDYwYWE1NzYyZWYxN2RjYWRmNjNiNjhiNzk1OGExMDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d9685d7304ad420287d3f9d0aba6f869",
+      "statement": "CPCV is mathematically invalid on a single static one-dimensional return series because it would generate identical paths, so the function returns nothing unless a real two-dimensional combinatorial out-of-sample matrix is supplied and the gate reports the check as MISSING rather than silently passing.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L259-L274",
+          "version": "repo-lines-v1:sha256:06e447b48d38bd43c3c97eb835246677e14f8e596be1af4aa622e445c25a8c7a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZmYzY0N2I4ODgyY2YzMDM4ODllNjNjOWE5OGM1YWFmYjgzYjZmNTk2ZTQ3ZDdjZmQ4NzgxN2MxNzdhMWE4NjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE5ODMzZWUwZjc2MDc4NDQ3OWZhZmQ1MzgzYzcxOTI1M2E3ZjY5YjMwN2ZjZWI3Y2Y0ZWY4YzBhMTYzNzdlMGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhZWJiNTYxYjE2MTVlZmVhMDVkMGYxZGRiMDAzNzBkZDYwYWE1NzYyZWYxN2RjYWRmNjNiNjhiNzk1OGExMDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_115bcc53998848ed8364b72349268375",
+      "statement": "The look-ahead audit parses strategy source with Python's ast module and flags forecast-named calls, negative pandas shifts, and positive integer feed indexing outright, while flagging negative subscripts only for manual review because they are safe in backtrader and unsafe in pandas and the audit cannot resolve the calling context.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L277-L298",
+          "version": "repo-lines-v1:sha256:06c9bedf29aa9f89f24f421aed63a25378107a8dc84c3cb33b7aec2282e97df2:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI2ZTliMjc2Nzg2MTU1N2E2NjA1NzBjYWMzZjgzZTk3MGU1Zjg0NDA4ZmQ4YTM4NTEyMGIwNDA3ZTAxYjk4ZjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYyZGViZDg2ZGU2MGNlYjUyYTE2MTM2N2Q1NzE1MTc0YmE5MzA0ZjljYzU4ODY1NDBlMzAyYjE0ZjQ3YTc0OTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d562c52968e54b97b0bec5e746b771d9",
+      "statement": "FDR and FWER are documented as the frame for the library-screening question rather than as the binding gate: the per-strategy DSR is the binding control because it already encodes multiple testing through the N-trial deflation.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L301-L344",
+          "version": "repo-lines-v1:sha256:64bc8bd31a670fee658fbe2ee6cd9452d1e983c63790235bf913fd29a1007583:eyJzZWxlY3RlZExpbmVDb3VudCI6NDQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjYmZiNGZiMGY0M2ZjOGExZmEyM2NlMWMxMGViODljMzc0YzQ5MjBlNWJmNTVlNDQ2N2NjYTgxMDg3ZTEwYzEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE4NGFjMTZjMzNhNDhiMzE2OTI0YjMxMmMxMTljNDM4NzgzZGZhMjQ5ZDk4MjA4ODQzM2FjMGNkNjliZjIyYWIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_19d1a73d281b4afa8a9e942a300577d3",
+      "statement": "The circular block bootstrap is the distribution-free alternative to the closed-form Lo (2002) standard error, chosen because the naive i.i.d. bootstrap destroys the autocorrelation and volatility clustering of financial returns; it wraps the series into a circle and resamples contiguous blocks whose length should grow with the autocorrelation horizon.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L347-L371",
+          "version": "repo-lines-v1:sha256:cc5491857de64a0c4ba029233ebc667ed2064e4514974451e0dc4f43d25150ad:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRjMGEzYTk4Y2Y0NTEzZjM4NWZkMThkNzdlMDAzMzZjNzY0ZTQzYjE5YmQxZjQxYzcyNDllOGM3ZWZmNzEzMWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjliYjdiNjdiYWYxOWVkMGE1ZDE5MTU3ZDY2OTY3M2ZlMWEyNDI1ZmI5YTU2NTI0MDIzM2ZhYWZmNjBjMTQ3ZWYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ed19e368ce984bc49ff209b6fda8eab2",
+      "statement": "Two disclosure rules are described as architectural rather than optional: paper-claim deltas are surfaced on every passport rather than collapsed into an aggregate score, and price-based proxies are disclosed in the strategy file where the implementation diverges from the paper's universe or data.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L566-L585",
+          "version": "repo-lines-v1:sha256:d1e9a26dd52d5bae8c5b45e3ce77e4376aec3fb2d970564b1f7d285030dedea2:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkyZTAyNDczZWQyZTNjODcyOWJmOGU0M2I3NTVmNWEwM2ZjMzBiMmRkMTFhOTlmNGMzODZiMGM2M2ZjM2Y5MDgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFkMThmZGM1OWNkODJkMTM5N2E0MWI1ZmE0OWU5ZWNjOWExZGFlODNhMGY3Y2RmZGMyZTI3NDRhMjA1YmZiY2MiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMxYmIxMTIzZTAwNmNlOGYwZDBiOGVkODIyYTQxMTYyYjY3OThiN2RkNDgyNTljMjdhZGRkMzdkNjUxODc3YTQifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.4.3",
+    "at": "2026-08-31T05:55:43.566Z"
+  }
+}

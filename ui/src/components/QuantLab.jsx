@@ -228,15 +228,16 @@ export default function QuantLab() {
 
   return (
     <div className="quant-lab">
-      <div className="max-w-[720px] mb-6">
-        <h2 className="serif text-[2rem] mb-2.5">Quant Lab</h2>
-        <p className="body">
+      <header className="app-page-heading">
+        <p className="app-eyebrow">Risk and diagnostics</p>
+        <h1>Quant Lab</h1>
+        <p>
           Risk, optimization, and backtest diagnostics computed from the live library: persisted
           backtest returns are live today. Vault-allocation drift and the recorded-trade log activate
           once a vault is deployed; until then, those two panels render a synthetic sample and say so
           on their badge.
         </p>
-      </div>
+      </header>
 
       {/* Subject selector + live-data status line */}
       <div className="card-flat" style={{ padding: 16, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>

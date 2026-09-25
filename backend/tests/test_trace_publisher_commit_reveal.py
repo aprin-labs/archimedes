@@ -131,12 +131,14 @@ class TestCommit:
 class TestFinalizeCommitRevertHandling:
     """#714 follow-up: a reverted commit must never surface a stale trace_id.
 
-    ``getTracesByVault()[-1]`` is a reasonable last-resort guess ONLY when the
-    receipt confirms the tx succeeded but the ``TraceCommitted`` event couldn't be
-    decoded. A confirmed revert (``status == 0`` — the #1047-class failure mode:
-    the client builds a call shape the deployed bytecode doesn't expose) must
-    short-circuit straight to ``trace_id=None`` instead, or the fallback would
-    silently hand back an unrelated, already-committed trace's id.
+    A confirmed revert (``status == 0`` — the #1047-class failure mode: the client
+    builds a call shape the deployed bytecode doesn't expose) must short-circuit
+    straight to ``trace_id=None``, before any id-recovery route runs at all.
+
+    (#1604 removed the ``getTracesByVault()[-1]`` recency fallback these tests
+    originally guarded against; ``getTracesByVault`` must now never be reached from
+    the commit path under ANY receipt outcome. The assertions below keep watching
+    it, so a reintroduction fails here as well as in ``TestCommitIdIsCommitSpecific``.)
     """
 
     def test_reverted_commit_does_not_fall_back_to_stale_trace_id(self, supported_loader, caplog):
@@ -177,10 +179,15 @@ class TestFinalizeCommitRevertHandling:
             # stream would claim the commit succeeded.
             assert "reverted on-chain (status=0)" in caplog.text
 
-    def test_successful_commit_with_undecodable_event_still_uses_fallback(self, supported_loader):
-        """Regression guard: only a confirmed revert skips the fallback — a
-        genuinely successful receipt (status=1) whose event can't be decoded
-        should still use getTracesByVault() as before."""
+    def test_successful_commit_with_undecodable_event_never_guesses_newest_id(self, supported_loader, caplog):
+        """#1604: a successful receipt whose event won't decode, with every
+        commit-specific route unavailable, resolves to a loud None — NOT to the
+        vault's newest trace id.
+
+        Pre-#1604 this returned 9 (``getTracesByVault()[-1]``), which is only
+        correct by coincidence: it is whichever commit for this vault happens to
+        be newest at read time, not this one.
+        """
         with (
             patch("archimedes.chain.trace_publisher.circle_signer") as mock_signer,
             patch("archimedes.chain.trace_publisher.chain_client") as mock_client,
@@ -195,18 +202,208 @@ class TestFinalizeCommitRevertHandling:
             supported_loader.trace_registry.functions.getTracesByVault.return_value.call = AsyncMock(
                 return_value=[7, 8, 9]
             )
+            # Both commit-specific routes come up empty: no matching log in the
+            # block, and no outstanding pending commitment.
+            supported_loader.trace_registry.events.TraceCommitted.return_value.get_logs = AsyncMock(return_value=[])
+            supported_loader.trace_registry.functions.pendingTradeCommitment.return_value.call = AsyncMock(
+                return_value=0
+            )
             from archimedes.chain.trace_publisher import TracePublisher
 
             trace = _make_trace()
             trace.compute_hash()
-            trace_id, tx, block, reverted = asyncio.run(
-                TracePublisher(loader=supported_loader).commit(trace, 2_000_000_000, b"\x55" * 32)
-            )
+            with caplog.at_level(logging.ERROR, logger="archimedes.chain.trace_publisher"):
+                trace_id, tx, block, reverted = asyncio.run(
+                    TracePublisher(loader=supported_loader).commit(trace, 2_000_000_000, b"\x55" * 32)
+                )
 
-            assert trace_id == 9  # last element of the fallback lookup
+            assert trace_id is None  # NOT 9
             assert tx == "0xOK"
             assert block == 101
             assert reverted is False
+            assert "no resolvable trace id" in caplog.text
+            supported_loader.trace_registry.functions.getTracesByVault.assert_not_called()
+
+
+class TestCommitIdIsCommitSpecific:
+    """#1604 — the id a commit resolves to must be THIS commit's, never "newest".
+
+    Önder's 2026-08-20 review note (kept out of #1095's scope, forked out of
+    #714's close-out): when the receipt's ``TraceCommitted`` event can't be
+    decoded, ``_finalize_commit`` used to fall back to
+    ``getTracesByVault(vault)[-1]``. With two commits for the same vault in
+    flight and the FIRST one's event undecodable, that binds decision A's trace
+    to commit B's id — silent provenance mis-attribution, which is strictly worse
+    than a loud None on the one surface whose product claim IS provenance.
+
+    The scenario below is the mis-attribution, made hermetic: two commits land in
+    the same block for the same vault, A's receipt event is undecodable, and B is
+    the newest id for the vault.
+    """
+
+    VAULT = "0x1234567890abcdef1234567890abcdef12345678"
+    BLOCK = 500
+    TX_A = "0xaaa1"
+    TX_B = "0xbbb2"
+    TRACE_A = 101
+    TRACE_B = 102
+    TRADE_A = b"\xa1" * 32
+    TRADE_B = b"\xb2" * 32
+
+    def _racing_loader(self, hash_a: bytes, hash_b: bytes, *, logs=None):
+        """Registry double for the two-commits-in-one-block race.
+
+        ``getTracesByVault`` returns ``[A, B]`` — so the removed recency fallback
+        would answer ``B`` (102) for BOTH commits. The block-``BLOCK`` log re-read
+        returns both commits' ``TraceCommitted`` entries, deliberately WITHOUT
+        honouring ``argument_filters``: that models an RPC that ignores server-side
+        topic filtering, and forces the disambiguation to come from the tx-hash
+        match rather than from the filter.
+        """
+        loader = MagicMock()
+        loader.trace_registry = MagicMock()
+        # A's receipt event is undecodable — the defect's precondition.
+        loader.trace_registry.events.TraceCommitted.return_value.process_log.side_effect = ValueError("undecodable")
+        entries = (
+            logs
+            if logs is not None
+            else [
+                # bytes tx hash (HexBytes shape, as web3 returns it) …
+                {"transactionHash": bytes.fromhex("bbb2"), "args": {"traceId": self.TRACE_B, "contentHash": hash_b}},
+                # … and a str one, mixed-case with 0x — both must normalize.
+                {"transactionHash": "0xAAA1", "args": {"traceId": self.TRACE_A, "contentHash": hash_a}},
+            ]
+        )
+        loader.trace_registry.events.TraceCommitted.return_value.get_logs = AsyncMock(return_value=entries)
+        loader.trace_registry.functions.getTracesByVault.return_value.call = AsyncMock(
+            return_value=[self.TRACE_A, self.TRACE_B]
+        )
+        loader.trace_registry.functions.pendingTradeCommitment.return_value.call = AsyncMock(return_value=0)
+        return loader
+
+    def _run_commit_a(self, loader, trace):
+        with (
+            patch("archimedes.chain.trace_publisher.circle_signer") as mock_signer,
+            patch("archimedes.chain.trace_publisher.chain_client") as mock_client,
+        ):
+            mock_signer.is_configured = True
+            mock_signer.execute_contract = AsyncMock(return_value=self.TX_A)
+            mock_client.to_checksum = lambda x: x
+            mock_client.settings = MagicMock(reasoning_trace_registry_address="0xregistry", chain_id=5042002)
+            mock_client.w3.eth.wait_for_transaction_receipt = AsyncMock(
+                return_value=MagicMock(blockNumber=self.BLOCK, status=1, logs=[MagicMock()])
+            )
+            from archimedes.chain.trace_publisher import TracePublisher
+
+            return asyncio.run(TracePublisher(loader=loader).commit(trace, 2_000_000_000, self.TRADE_A))
+
+    def test_concurrent_same_vault_commits_do_not_cross_attribute(self):
+        """The headline guard: decision A must never receive commit B's id."""
+        trace_a = _make_trace(id="decision-A", vault_address=self.VAULT)
+        hash_a = bytes.fromhex(trace_a.compute_hash().removeprefix("0x"))
+        hash_b = bytes.fromhex("cd" * 32)  # some other decision's content hash
+        loader = self._racing_loader(hash_a, hash_b)
+
+        trace_id, tx, block, reverted = self._run_commit_a(loader, trace_a)
+
+        assert trace_id == self.TRACE_A, "decision A must bind to ITS OWN commit's trace id"
+        assert trace_id != self.TRACE_B, "the newest-for-vault id belongs to commit B, not to decision A"
+        assert (tx, block, reverted) == (self.TX_A, self.BLOCK, False)
+        # The re-read is bounded to the single known commit block (the
+        # find_reveal_tx precedent) — never an open-ended range.
+        _, kwargs = loader.trace_registry.events.TraceCommitted.return_value.get_logs.call_args
+        assert kwargs["from_block"] == self.BLOCK
+        assert kwargs["to_block"] == self.BLOCK
+        assert kwargs["argument_filters"] == {"contentHash": hash_a}
+        # And the recency lookup is not merely out-ranked, it is gone.
+        loader.trace_registry.functions.getTracesByVault.assert_not_called()
+
+    def test_pending_trade_commitment_binds_when_log_reread_unavailable(self):
+        """Route 2: no usable logs, but the caller's own tradeId still binds exactly.
+
+        ``getTracesByVault`` would still answer B here; ``pendingTradeCommitment``
+        answers A, because the registry keys the outstanding commitment by the
+        tradeId the caller passed in (#589 forbids a second live commitment for
+        the same key).
+        """
+        trace_a = _make_trace(id="decision-A", vault_address=self.VAULT)
+        hash_a = bytes.fromhex(trace_a.compute_hash().removeprefix("0x"))
+        loader = self._racing_loader(hash_a, b"", logs=[])  # log re-read finds nothing
+        loader.trace_registry.functions.pendingTradeCommitment.return_value.call = AsyncMock(return_value=self.TRACE_A)
+        loader.trace_registry.functions.getCommitment.return_value.call = AsyncMock(
+            return_value=[hash_a, "0xagent", self.VAULT, self.BLOCK, 2_000_000_000, False, 0, ""]
+        )
+
+        trace_id, _, _, _ = self._run_commit_a(loader, trace_a)
+
+        assert trace_id == self.TRACE_A
+        args, _ = loader.trace_registry.functions.pendingTradeCommitment.call_args
+        assert args == (self.VAULT, self.TRADE_A), "must be keyed by THIS commit's tradeId"
+        loader.trace_registry.functions.getTracesByVault.assert_not_called()
+
+    def test_pending_pointer_with_foreign_content_hash_is_refused(self, caplog):
+        """Adversarial: a stale/foreign pending pointer must NOT be bound.
+
+        Feeds route 2 a candidate whose on-chain commitment carries someone
+        else's content hash — exactly the shape the removed fallback would have
+        swallowed. The verified route rejects it and returns a loud None.
+        """
+        trace_a = _make_trace(id="decision-A", vault_address=self.VAULT)
+        hash_a = bytes.fromhex(trace_a.compute_hash().removeprefix("0x"))
+        foreign_hash = bytes.fromhex("ef" * 32)
+        loader = self._racing_loader(hash_a, b"", logs=[])
+        loader.trace_registry.functions.pendingTradeCommitment.return_value.call = AsyncMock(return_value=self.TRACE_B)
+        loader.trace_registry.functions.getCommitment.return_value.call = AsyncMock(
+            return_value=[foreign_hash, "0xagent", self.VAULT, self.BLOCK, 2_000_000_000, False, 0, ""]
+        )
+
+        with caplog.at_level(logging.ERROR, logger="archimedes.chain.trace_publisher"):
+            trace_id, _, _, _ = self._run_commit_a(loader, trace_a)
+
+        assert trace_id is None, "a commitment whose content hash isn't ours must never be bound"
+        assert "refusing to bind" in caplog.text
+        assert "no resolvable trace id" in caplog.text
+
+    def test_log_entry_for_a_different_tx_in_the_same_block_is_skipped(self):
+        """Only B's log is present in A's commit block — resolve to None, not B."""
+        trace_a = _make_trace(id="decision-A", vault_address=self.VAULT)
+        trace_a.compute_hash()
+        loader = self._racing_loader(
+            b"",
+            b"",
+            logs=[{"transactionHash": "0xBBB2", "args": {"traceId": self.TRACE_B, "contentHash": b""}}],
+        )
+
+        trace_id, _, _, _ = self._run_commit_a(loader, trace_a)
+
+        assert trace_id is None
+        assert trace_id != self.TRACE_B
+
+    def test_unreadable_receipt_block_does_not_reopen_the_recency_guess(self, caplog):
+        """No block number => route 1 can't run; route 2 empty => loud None."""
+        trace_a = _make_trace(id="decision-A", vault_address=self.VAULT)
+        trace_a.compute_hash()
+        loader = self._racing_loader(b"", b"")
+        with (
+            patch("archimedes.chain.trace_publisher.circle_signer") as mock_signer,
+            patch("archimedes.chain.trace_publisher.chain_client") as mock_client,
+        ):
+            mock_signer.is_configured = True
+            mock_signer.execute_contract = AsyncMock(return_value=self.TX_A)
+            mock_client.to_checksum = lambda x: x
+            mock_client.settings = MagicMock(reasoning_trace_registry_address="0xregistry", chain_id=5042002)
+            mock_client.w3.eth.wait_for_transaction_receipt = AsyncMock(side_effect=Exception("RPC timeout"))
+            from archimedes.chain.trace_publisher import TracePublisher
+
+            with caplog.at_level(logging.ERROR, logger="archimedes.chain.trace_publisher"):
+                trace_id, tx, block, reverted = asyncio.run(
+                    TracePublisher(loader=loader).commit(trace_a, 2_000_000_000, self.TRADE_A)
+                )
+
+        assert (trace_id, tx, block, reverted) == (None, self.TX_A, None, False)
+        assert "no resolvable trace id" in caplog.text
+        loader.trace_registry.events.TraceCommitted.return_value.get_logs.assert_not_called()
+        loader.trace_registry.functions.getTracesByVault.assert_not_called()
 
 
 class TestReveal:
@@ -222,17 +419,17 @@ class TestReveal:
 
             trace = _make_trace()
             trace.compute_hash()
-            cid = "ipfs://bafytest"
+            pointer = ""  # live path is hash-only (#1526); the ABI still forwards whatever we pass
 
             reveal_tx, block = asyncio.run(
-                TracePublisher(loader=supported_loader).reveal(42, trace, storage_pointer=cid)
+                TracePublisher(loader=supported_loader).reveal(42, trace, storage_pointer=pointer)
             )
 
             assert (reveal_tx, block) == ("0xREVEAL", 100)
             _, kwargs = mock_signer.execute_contract.call_args
             assert kwargs["abi_function"] == "reveal(uint256,string,bytes)"
             assert kwargs["abi_params"][0] == "42"
-            assert kwargs["abi_params"][1] == cid  # the IPFS CID is the storage pointer
+            assert kwargs["abi_params"][1] == pointer
 
     def test_reveal_returns_none_without_trace_id(self, supported_loader):
         with (

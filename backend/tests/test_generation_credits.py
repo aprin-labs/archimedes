@@ -67,6 +67,22 @@ def _use_tmp_db(tmp_path):
     yield from redirect_to_tmp_sqlite(tmp_path)
 
 
+@pytest.fixture(autouse=True)
+def _paid_tier_only(monkeypatch):
+    """Switch the #1643 free allowance OFF for this whole file.
+
+    Every assertion here is about what happens once money moves, which #1643
+    leaves untouched from generation #4 onward. Under the default allowance of
+    3 the first three calls in each test would be served free and no credit
+    would ever be claimed — the tests would not fail loudly so much as stop
+    measuring the ledger they name. ``FREE_GENERATIONS_PER_ACCOUNT=0`` is the
+    documented switch that restores the pre-#1643 gate exactly. The free path
+    has its own file: ``test_free_generation_gate.py``, which includes the
+    paid-tier-after-exhaustion case under the real default allowance.
+    """
+    monkeypatch.setenv("FREE_GENERATIONS_PER_ACCOUNT", "0")
+
+
 @dataclass
 class _FakePaymentInfo:
     """Mirrors circlekit.x402.PaymentInfo exactly; ``amount`` is raw base units."""
@@ -113,6 +129,7 @@ def _paywall_on(monkeypatch) -> AsyncMock:
     monkeypatch.setenv("GENERATION_PAYMENT_RECIPIENT", RECIPIENT)
     monkeypatch.setenv("PAYMENTS_DRY_RUN", "false")
     monkeypatch.delenv("GENERATION_PAYMENTS_DRY_RUN", raising=False)
+    monkeypatch.delenv("PAYMENTS_HALT", raising=False)  # hermetic: #1240 must not leak in from a shell/.env
     settle = AsyncMock(return_value=_FakePaymentInfo())
     monkeypatch.setattr(generation_payment, "enforce_generation_payment", settle)
     return settle
@@ -560,3 +577,125 @@ def test_credit_and_receipt_agree_on_the_price(monkeypatch):
         assert credit.price_usd == receipt.price_usd == "$2.00"
         assert credit.amount_base_units == receipt.amount_base_units
         assert credit.settlement_ref == receipt.settlement_ref
+
+
+# ── 6. The #1240 kill switch meets the ledger ────────────────────────────
+
+
+class TestPaymentsHaltAndTheLedger:
+    """PAYMENTS_HALT (#1240) stops money moving. The ledger records money that
+    already moved, so it is deliberately NOT gated — this class is where that
+    reasoning is checked rather than asserted in a comment.
+
+    Unlike the rest of this file these tests run the REAL
+    ``enforce_generation_payment``, because the interaction under test is
+    exactly the one between the paywall's 503 and ``_paywall_with_credit``'s
+    claim/void bookkeeping.
+    """
+
+    @staticmethod
+    def _live(monkeypatch) -> None:
+        monkeypatch.setenv("GENERATION_PAYMENT_REQUIRED", "true")
+        monkeypatch.setenv("GENERATION_PAYMENT_RECIPIENT", RECIPIENT)
+        monkeypatch.setenv("PAYMENTS_DRY_RUN", "false")
+        monkeypatch.delenv("GENERATION_PAYMENTS_DRY_RUN", raising=False)
+        monkeypatch.delenv("PAYMENTS_HALT", raising=False)
+
+    def test_halt_refuses_the_paid_start_and_leaves_no_pending_claim(self, monkeypatch):
+        """503, and — the part that matters — no PENDING row survives.
+
+        A claim left pending reads as ``in_flight`` forever and locks that
+        Idempotency-Key out permanently. ``_paywall_with_credit``'s
+        ``except BaseException: void(credit_id)`` catches the 503 the same way
+        it catches a 402, so the halt window costs the payer nothing.
+        """
+        self._live(monkeypatch)
+        monkeypatch.setenv("PAYMENTS_HALT", "true")
+        store_patch, task_patch = _harness(_mock_store())
+        with store_patch, task_patch, _client() as client:
+            resp = client.post(
+                "/api/generate/start",
+                json=_BODY,
+                cookies=auth_cookies(),
+                headers={"Idempotency-Key": "halted-key", "Payment-Signature": "any-value"},
+            )
+        assert resp.status_code == 503
+        assert resp.json()["detail"]["reason"] == "payments_halted"
+        rows = _credits()
+        assert [r.status for r in rows] == [CREDIT_VOID]
+        assert CREDIT_PENDING not in {r.status for r in rows}
+
+    def test_the_same_key_works_once_the_halt_is_lifted(self, monkeypatch):
+        """Adversarial companion AND the payoff of the void above: identical
+        request, identical key, switch off — 202. Proves the 503 came from the
+        switch and that it burned nothing on the way out."""
+        self._live(monkeypatch)
+        monkeypatch.setenv("PAYMENTS_HALT", "true")
+        store_patch, task_patch = _harness(_mock_store())
+        with store_patch, task_patch, _client() as client:
+            assert (
+                client.post(
+                    "/api/generate/start",
+                    json=_BODY,
+                    cookies=auth_cookies(),
+                    headers={"Idempotency-Key": "reused-key", "Payment-Signature": "any-value"},
+                ).status_code
+                == 503
+            )
+
+        monkeypatch.delenv("PAYMENTS_HALT", raising=False)
+        settle = AsyncMock(return_value=_FakePaymentInfo())
+        monkeypatch.setattr(generation_payment, "enforce_generation_payment", settle)
+        store_patch, task_patch = _harness(_mock_store("job-after-halt"))
+        with store_patch, task_patch, _client() as client:
+            resp = client.post(
+                "/api/generate/start",
+                json=_BODY,
+                cookies=auth_cookies(),
+                headers={"Idempotency-Key": "reused-key", "Payment-Signature": "any-value"},
+            )
+        assert resp.status_code == 202, resp.text
+        assert settle.await_count == 1
+        assert CREDIT_CONSUMED in {r.status for r in _credits()}
+
+    def test_an_already_bought_credit_still_delivers_while_halted(self, monkeypatch):
+        """The reason ``consume`` is not gated. This payer's money moved before
+        the switch was flipped; spending the credit they already own moves
+        nothing and takes no Circle call. Freezing the ledger would withhold a
+        generation that is already paid for — the opposite of what a kill switch
+        is for."""
+        self._live(monkeypatch)
+        settle = AsyncMock(return_value=_FakePaymentInfo())
+        monkeypatch.setattr(generation_payment, "enforce_generation_payment", settle)
+        owner = _route_owner_id(settle)
+
+        with get_session() as session:
+            _, credit = claim_credit(session, user_id=owner, idempotency_key=None)
+            mark_credit_settled(
+                session,
+                credit.id,
+                payer_wallet=PAYER_A,
+                amount_base_units=2_000_000,
+                price_usd="$2.00",
+                network="eip155:5042002",
+                settlement_ref="paid-before-the-halt",
+            )
+            session.commit()
+            credit_id = credit.id
+
+        # Now halt, and use the REAL paywall — if the run reached it, it would 503.
+        monkeypatch.setenv("PAYMENTS_HALT", "true")
+        monkeypatch.setattr(generation_payment, "enforce_generation_payment", _refuse_if_reached)
+        store_patch, task_patch = _harness(_mock_store("job-on-credit"))
+        with store_patch, task_patch, _client() as client:
+            resp = client.post("/api/generate/start", json=_BODY, cookies=auth_cookies())
+        assert resp.status_code == 202, resp.text
+
+        with get_session() as session:
+            spent = session.get(GenerationCreditRecord, credit_id)
+            assert spent.status == CREDIT_CONSUMED
+            assert spent.job_id == "job-on-credit"
+
+
+async def _refuse_if_reached(*_args, **_kwargs):
+    raise AssertionError("the paywall must not be reached when an unspent credit covers the run")

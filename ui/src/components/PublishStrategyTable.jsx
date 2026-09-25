@@ -8,15 +8,8 @@
  * to pick and publish a strategy.
  */
 import { useState } from 'react'
+import MetricValue from './MetricValue'
 
-function fmt(v, decimals = 2) {
-  if (v == null || !Number.isFinite(v)) return '—'
-  return v.toFixed(decimals)
-}
-function fmtPct(v) {
-  if (v == null || !Number.isFinite(v)) return '—'
-  return `${(v * 100).toFixed(1)}%`
-}
 function fmtUsd(n, fractionDigits = 0) {
   if (n == null || !Number.isFinite(n)) return '—'
   return `$${n.toLocaleString(undefined, { minimumFractionDigits: fractionDigits, maximumFractionDigits: fractionDigits })}`
@@ -85,14 +78,20 @@ function StrategyRow({ s, onSelect }) {
         <td>
           <span className="tag tag-muted">{statusLabel(s.status)}</span>
         </td>
-        <td className="mono" style={{ textAlign: 'right' }}>{fmt(s.sharpe_ratio)}</td>
-        {/* Color/class checks use Number.isFinite to match what fmtPct/fmtUsd
-            actually render — a NaN/Infinity CAGR renders "—" and must not
-            carry a positive/negative color (review). Math.abs on drawdown
-            avoids a double negative when the backend ships it signed. */}
-        <td className={`mono ${!Number.isFinite(s.cagr) ? '' : s.cagr >= 0 ? 'positive' : 'negative'}`} style={{ textAlign: 'right' }}>{fmtPct(s.cagr)}</td>
+        <td className="mono" style={{ textAlign: 'right' }}>
+          <MetricValue metric="sharpe_ratio" value={s.sharpe_ratio} row={s} surface="Publish table" />
+        </td>
+        {/* Color/class checks use Number.isFinite to match what MetricValue
+            actually renders — a NaN/Infinity CAGR renders "—" and must not
+            carry a positive/negative color (review). The Math.abs that used to
+            sit on the drawdown cell is gone: it turned a contract-violating
+            SIGNED drawdown into a plausible-looking positive one instead of
+            reporting that the value was outside its domain (#1651). */}
+        <td className={`mono ${!Number.isFinite(s.cagr) ? '' : s.cagr >= 0 ? 'positive' : 'negative'}`} style={{ textAlign: 'right' }}>
+          <MetricValue metric="cagr" value={s.cagr} row={s} surface="Publish table" />
+        </td>
         <td className="mono negative" style={{ textAlign: 'right' }}>
-          {s.max_drawdown != null ? `−${fmtPct(Math.abs(s.max_drawdown))}` : '—'}
+          <MetricValue metric="max_drawdown" value={s.max_drawdown} row={s} surface="Publish table" />
         </td>
         <td className="mono" style={{ textAlign: 'right', color: !Number.isFinite(s.cagr) ? 'var(--text-3)' : s.cagr >= 0 ? 'var(--positive)' : 'var(--negative)' }}>{fmtUsd(endValue)}</td>
         <td style={{ textAlign: 'right', padding: '6px 10px' }}>

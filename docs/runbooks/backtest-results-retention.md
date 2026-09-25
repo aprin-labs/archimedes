@@ -84,7 +84,8 @@ independent work is `--keep-recent-n 0`.
 ## 3. Archive
 
 Requires `ARCHIVE_BUCKET` (and standard AWS credential resolution — same boto3 credential
-chain as `services/s3_artifact_store.py`; `AWS_REGION` defaults to `us-east-1`).
+chain the script builds at `archimedes/scripts/archive_backtest_results.py:321`; `AWS_REGION`
+defaults to `us-east-1`).
 
 ```bash
 ARCHIVE_BUCKET=archimedes-backtest-archive-prod \

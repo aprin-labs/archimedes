@@ -6,17 +6,17 @@ Three small, fail-soft helpers are the entire write surface for the ledger:
     Upserts the acting wallet into ``wallet_identities`` (D1) if it isn't
     already anchored, then appends one row to ``identity_events`` (D2). Every
     write point (linked-wallet verify, generation start/complete, strategy publish,
-    vault create, chat post, marketplace publish/subscribe/unsubscribe) calls
-    this instead of hand-rolling its own INSERT.
+    vault create, marketplace publish/subscribe/unsubscribe) calls this instead
+    of hand-rolling its own INSERT.
   - ``register_controlled_wallet`` — upsert into ``controlled_wallets``
     (D1a/D3) for every address the SYSTEM operates: the trading-agent /
     marketplace-engine signer, the treasury wallet, and each per-user Circle
     DCW (publisher settlement / subscriber payment).
   - ``ensure_wallet_identity`` — anchor a wallet into ``wallet_identities``
     BEFORE a caller's own FK-constrained insert, for write paths that accept
-    an identity not yet present in the legacy ledger (see
-    ``chat_service.post_message``). Request routes resolve human wallets from
-    proof-linked accounts; system wallets use controlled-wallet registration.
+    an identity not yet present in the legacy ledger. Request routes resolve
+    human wallets from proof-linked accounts; system wallets use
+    controlled-wallet registration.
 
 All three open their OWN session, isolated from any caller-held session or
 transaction, and NEVER raise — a telemetry write must be invisible to the
@@ -129,7 +129,7 @@ def ensure_wallet_identity(wallet: str | None, actor_class: str = "human") -> No
 
     Call this BEFORE inserting a row whose column FKs to
     ``wallet_identities.wallet_address`` when the wallet may not have gone
-    through SIWE yet (e.g. chat's unverified body-supplied wallet). Calling
+    through SIWE yet. Calling
     ``emit_identity_event`` afterwards for the same wallet is then a fast
     no-op anchor-check, not a duplicate insert. A no-op when ``wallet`` is
     falsy. Never raises — see module docstring.

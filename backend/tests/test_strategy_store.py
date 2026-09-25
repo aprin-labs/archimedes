@@ -6,6 +6,7 @@ import json
 
 import pytest
 from archimedes.models.chat import Base
+from archimedes.models.paper_assoc import assert_assoc
 from archimedes.models.strategy_store import (
     StrategyRecord,
     _compute_content_hash,
@@ -79,7 +80,14 @@ class TestUpsertStrategy:
         assert r.id
         assert r.generation_method == "fusion"
         assert r.status == "candidate"
-        assert json.loads(r.source_papers) == PAPERS_A
+        # assoc/v1 (#1637): the column holds ONE normalized shape whichever
+        # writer produced it, so the stored value is no longer the caller's
+        # literal input. Identity (arxiv_id + role) is preserved; the legacy
+        # `sha256` key is carried as `content_hash`.
+        stored = json.loads(r.source_papers)
+        assert [assert_assoc(a) and a["arxiv_id"] for a in stored] == [p["arxiv_id"] for p in PAPERS_A]
+        assert [a["content_hash"] for a in stored] == [p["sha256"] for p in PAPERS_A]
+        assert all(a["role"] == "cited" for a in stored)
 
     def test_idempotent_same_content(self, session):
         r1 = upsert_strategy(
@@ -249,7 +257,9 @@ class TestToDict:
         )
         d = r.to_dict()
         assert d["generation_method"] == "fusion"
-        assert d["source_papers"] == PAPERS_A
+        # assoc/v1 (#1637) — see test_insert_new.
+        assert [a["arxiv_id"] for a in d["source_papers"]] == [p["arxiv_id"] for p in PAPERS_A]
+        assert [a["content_hash"] for a in d["source_papers"]] == [p["sha256"] for p in PAPERS_A]
         assert d["asset_universe"] == ["SPY", "TSLA"]
         assert d["risk_profile"] == "aggressive"
         assert d["status"] == "candidate"

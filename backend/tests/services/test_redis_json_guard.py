@@ -59,7 +59,13 @@ async def test_list_traces_skips_malformed_entry():
     store = AgentStateStore()
     store._redis = AsyncMock()
     store._redis.zrevrange = AsyncMock(return_value=["hash1"])
+    # Both read shapes are stubbed with the same corrupt body: `list_traces`
+    # batches with MGET (#1577), the single-key readers still use GET, and a
+    # bare AsyncMock would answer an unstubbed `mget` with an empty-iterating
+    # MagicMock — passing this test vacuously, without a malformed row ever
+    # reaching the guard.
     store._redis.get = AsyncMock(return_value="{corrupted")
+    store._redis.mget = AsyncMock(return_value=["{corrupted"])
     traces, total = await store.list_traces()
     assert traces == [] and total == 0  # skipped, not a 500
 

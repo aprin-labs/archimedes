@@ -4,132 +4,134 @@
 
 /* ─── segmented control ─── */
 .pap-segmented {
-  display: inline-flex;
-  background: var(--glass-hover);
-  border: 1px solid var(--glass-border);
-  border-radius: 8px;
-  padding: 3px;
-  gap: 3px;
-  flex-wrap: wrap;
+	display: inline-flex;
+	background: var(--glass-hover);
+	border: 1px solid var(--glass-border);
+	border-radius: 8px;
+	padding: 3px;
+	gap: 3px;
+	flex-wrap: wrap;
 }
 .pap-seg-btn {
-  border: none;
-  background: transparent;
-  color: var(--text-2);
-  font-size: 0.82rem;
-  font-weight: 500;
-  padding: 7px 18px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+	border: none;
+	background: transparent;
+	color: var(--text-2);
+	font-size: 0.82rem;
+	font-weight: 500;
+	padding: 7px 18px;
+	border-radius: 6px;
+	cursor: pointer;
+	transition:
+		background 0.15s,
+		color 0.15s;
 }
 .pap-seg-btn:hover {
-  color: var(--text-1);
+	color: var(--text-1);
 }
 .pap-seg-btn.active {
-  background: var(--accent);
-  color: #000;
-  font-weight: 700;
+	background: var(--accent);
+	color: #000;
+	font-weight: 700;
 }
 
 /* ─── Kelly widget ─── */
 .pap-kelly-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  margin-bottom: 18px;
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 16px;
+	margin-bottom: 18px;
 }
 .pap-field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
 }
 .pap-field input {
-  background: var(--glass);
-  border: 1px solid var(--glass-border);
-  border-radius: 6px;
-  padding: 9px 12px;
-  color: var(--text-1);
-  font-family: var(--mono);
-  font-size: 0.92rem;
-  outline: none;
+	background: var(--glass);
+	border: 1px solid var(--glass-border);
+	border-radius: 6px;
+	padding: 9px 12px;
+	color: var(--text-1);
+	font-family: var(--mono);
+	font-size: 0.92rem;
+	outline: 2px solid transparent;
 }
 .pap-field input:focus {
-  border-color: var(--accent);
+	border-color: var(--accent);
 }
 .pap-kelly-out {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  padding: 16px;
-  background: var(--glass);
-  border-radius: 8px;
-  border: 1px solid var(--glass-border);
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 16px;
+	padding: 16px;
+	background: var(--glass);
+	border-radius: 8px;
+	border: 1px solid var(--glass-border);
 }
 
 /* ─── allocation drift bars ─── */
 .pap-drift-row {
-  margin-bottom: 18px;
+	margin-bottom: 18px;
 }
 .pap-drift-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 6px;
 }
 .pap-drift-track {
-  position: relative;
-  height: 14px;
-  background: var(--glass-hover);
-  border-radius: 4px;
-  overflow: visible;
+	position: relative;
+	height: 14px;
+	background: var(--glass-hover);
+	border-radius: 4px;
+	overflow: visible;
 }
 .pap-drift-fill {
-  height: 100%;
-  background: var(--accent);
-  border-radius: 4px;
-  transition: width 0.4s ease;
+	height: 100%;
+	background: var(--accent);
+	border-radius: 4px;
+	transition: width 0.4s ease;
 }
 .pap-drift-target {
-  position: absolute;
-  top: -3px;
-  bottom: -3px;
-  width: 2px;
-  background: var(--text-1);
-  transform: translateX(-1px);
-  z-index: 2;
+	position: absolute;
+	top: -3px;
+	bottom: -3px;
+	width: 2px;
+	background: var(--text-1);
+	transform: translateX(-1px);
+	z-index: 2;
 }
 .pap-drift-legend {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 5px;
-  color: var(--text-4);
+	display: flex;
+	justify-content: space-between;
+	margin-top: 5px;
+	color: var(--text-4);
 }
 
 /* optimizer result weights */
 .pap-weights {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
 }
 .pap-weight-row {
-  display: grid;
-  grid-template-columns: 64px 1fr 56px;
-  align-items: center;
-  gap: 10px;
+	display: grid;
+	grid-template-columns: 64px 1fr 56px;
+	align-items: center;
+	gap: 10px;
 }
 .pap-weight-track {
-  height: 8px;
-  background: var(--glass-hover);
-  border-radius: 4px;
-  overflow: hidden;
+	height: 8px;
+	background: var(--glass-hover);
+	border-radius: 4px;
+	overflow: hidden;
 }
 .pap-weight-fill {
-  height: 100%;
-  background: var(--accent);
-  border-radius: 4px;
-  transition: width 0.4s ease;
+	height: 100%;
+	background: var(--accent);
+	border-radius: 4px;
+	transition: width 0.4s ease;
 }
 .pap-weight-row .caption {
-  text-align: right;
+	text-align: right;
 }

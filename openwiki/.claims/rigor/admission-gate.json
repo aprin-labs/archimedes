@@ -1,0 +1,158 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:73752f718be6c196552d579b95f24db328e84c1c46ce66575003da703f9e73be",
+  "claims": [
+    {
+      "id": "claim_c81fac6eb33b4658925a2b445371324b",
+      "statement": "Tier-1 admission requires all four controls to pass simultaneously: DSR p-value at or above 0.90, PBO below 0.5, walk-forward OOS Sharpe above 0 with an OOS-to-IS ratio at or above 0.5 (plus CPCV positive fraction at or above 0.5 when computable), and a look-ahead audit that passes.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L22-L37",
+          "version": "repo-lines-v1:sha256:4140904ba0baccdbbaafe6e0f51ba9ee6f648e056704609ec0fc8a675b55256c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRjZGNlODQ3ZTg3NjdhMDkyODViMTk5ZDQzNWQ0MGUyNjM4NWI3MjAwODI1YzYyYTNhYTk0MTQ3Njc0YzU1MGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdkODExNWU5OWRjODAyZjhiODliMmNlY2U1YzM1NmYwOTU2MTdkMmZiYWIyMzc4NjNjOGYzZTg1MGYyNmI1NmIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5a19c6f29a2b417a98846cfc12bcd49a",
+      "statement": "On the curated library num_trials is 1, so the expected best-of-N term is zero and DSR runs undeflated with no multiple-testing correction; the reason given is that there was no search of ours to charge for and promoting a strategy into a larger library must not retroactively move its score.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L38-L71",
+          "version": "repo-lines-v1:sha256:9c3b9fcb7f7d98e8ee5419ae05ede4eacfe0e741904d2431b4683452bb983bc1:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0YTdkYTNmOWU4NGZiZWE2NmY1ZDI0MDQwOTVmN2E0YmUzM2YyYjlmNGRkYjc4OWQ0OTdkODE5ZmQyNTYwNDkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhiOTAwYzE2OTFmYTAwNGRiYzNjZjYzNzZkOGYwYzIxNGM5OGY2ZWFkZmM4YjU3Y2MzY2IzODQxNmFmY2E0ZjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZiNGRkYTI1NjQ0YTg2OTNiMWViMWM2NzY5NzUyY2Y0NWJhYzc0ZGU5YTkwY2QyZjNmYjg4NzQxN2ZlOGVkOTkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d4ef76a40bf14c3d82446f22cf9039e5",
+      "statement": "The board-level selection bias a user incurs by picking the best of N displayed strategies is disclosed rather than corrected: the Benjamini-Hochberg helpers exist with zero non-test callers, so the gate must not be described as correcting selection bias across the library.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L38-L71",
+          "version": "repo-lines-v1:sha256:9c3b9fcb7f7d98e8ee5419ae05ede4eacfe0e741904d2431b4683452bb983bc1:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0YTdkYTNmOWU4NGZiZWE2NmY1ZDI0MDQwOTVmN2E0YmUzM2YyYjlmNGRkYjc4OWQ0OTdkODE5ZmQyNTYwNDkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhiOTAwYzE2OTFmYTAwNGRiYzNjZjYzNzZkOGYwYzIxNGM5OGY2ZWFkZmM4YjU3Y2MzY2IzODQxNmFmY2E0ZjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZiNGRkYTI1NjQ0YTg2OTNiMWViMWM2NzY5NzUyY2Y0NWJhYzc0ZGU5YTkwY2QyZjNmYjg4NzQxN2ZlOGVkOTkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ca6f628e986d4dcc9be4389d97b7abd8",
+      "statement": "PBO is a library-level property rather than a per-strategy score: one value is computed per analytics-engine run and attached to every strategy in it, and a value at or above 0.5 means the in-sample-optimal strategy is expected to underperform the out-of-sample median.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L72-L83",
+          "version": "repo-lines-v1:sha256:1880079f0ea22c8d8a36b6071bf994f6091a5ba32d906c4201b85e8f2f8f9822:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFjMGViODM2ZjAyNWFhNzA3NjBlM2Q2ZjdhYTAxN2U0N2ZiYjkwZjFmM2Y4NjliYTgwYjUzNTA1ZmQyZTczMjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM5YjE0OGMyZWMwMDE4MGFjMzBhN2ZiZDAzNWI2NTE2ZGJjNjk4OWVhNGFlNjdkMGJjZWRjMzBhMmU1NTNiY2QiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE3NWJiOTczM2ViZjAyYjEyODZhYjM0YTdlY2UwYTEzOWI2YmFiYTdlMzFlMjdhYzNkMTdmYmEyMzExZGRhOWYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_10a8ad232ac34606ba85bbfdcdde3089",
+      "statement": "The walk-forward check has two parts — an absolute floor that no negative out-of-sample Sharpe can pass, and a cliff check requiring the out-of-sample edge to retain at least half the in-sample edge — with the in-sample Sharpe computed on the first 70% slice only so the ratio cannot be inflated by leaking held-out data into the denominator.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L84-L98",
+          "version": "repo-lines-v1:sha256:4300843d9cba3e2f6528886523c4ba54d4402147440e24d6b700eabd7a12f758:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU0NzljMjViYmJjMmIzZWFlODUxMWQ0ZDkxMzgwZDEzYmExMTZhMmY0ZDgxNTk4MmUzYWVmNmI1ZWRlMGRkMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZjZTc5Y2E0Y2ZiMjFjOTE3OTkxOGNjMWYyNGRmNTY3YjFjNGNjNmJlMjliMDA1OWMzYWEyZmE1MDYxNTA3MzEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY3YTM1Y2JhZGJmYTg4ZWMyMzBmOTc0OWRmMmQxNDU4NmM1ZmY5MGUyYTYzMTYxZmFmYTY2NTA0OTRmZGYyNDQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a96eea4f857d4c71be1c7c1228544a96",
+      "statement": "The look-ahead audit must return zero warnings to pass, any flagged forward-data access blocks admission until a reviewer resolves it, and a strategy that cannot be parsed also fails because a SyntaxError returns passed=False rather than being skipped.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L99-L107",
+          "version": "repo-lines-v1:sha256:d3ad4afb9e583d384b7501d6cf9681a1bd08cf5b738bc945e14ac2a3de5c3976:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZTI2NTQ2NjFmZjYwNmM0OTJhMjVlMDVjNmYzZTBhNWM3ODUxZmFkZGE2YTBlYjJjYzczOTQ4YWNhNWU1NDJlYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNzIxMzliYzhhNGEyNTk3ZTA2MzNhYTdjOGJiZjUzZjJmYWU4N2E3YjdmYzVlOGJhYWY4MDY1MzZiY2QyOTRiOSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTI1MDZjN2U5YWY0ZWI0ZDFkYjZhYTA3ZjdlYmY0ODIxYjAzYTU5MDliNGY5ZjMzNjRlZDJlNmU0ODU1ZWExZSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTIyYmUwZGIwOGMxZWNhOWNhMmUwNjJiOGRmNzRkY2RmNjI4MjMxN2ZjM2ViMDM4Yjg2ZWY4OTk1ZThjZTA5OCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_e4b6c430e4d54d3880c2f42537f1a804",
+      "statement": "The CPCV path-stability check reports MISSING rather than silently passing when no real combinatorial out-of-sample matrix is available.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L84-L98",
+          "version": "repo-lines-v1:sha256:4300843d9cba3e2f6528886523c4ba54d4402147440e24d6b700eabd7a12f758:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU0NzljMjViYmJjMmIzZWFlODUxMWQ0ZDkxMzgwZDEzYmExMTZhMmY0ZDgxNTk4MmUzYWVmNmI1ZWRlMGRkMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZjZTc5Y2E0Y2ZiMjFjOTE3OTkxOGNjMWYyNGRmNTY3YjFjNGNjNmJlMjliMDA1OWMzYWEyZmE1MDYxNTA3MzEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY3YTM1Y2JhZGJmYTg4ZWMyMzBmOTc0OWRmMmQxNDU4NmM1ZmY5MGUyYTYzMTYxZmFmYTY2NTA0OTRmZGYyNDQifQ"
+        },
+        {
+          "resource": "repo://docs/quant/methodology.md#L259-L274",
+          "version": "repo-lines-v1:sha256:06e447b48d38bd43c3c97eb835246677e14f8e596be1af4aa622e445c25a8c7a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZmYzY0N2I4ODgyY2YzMDM4ODllNjNjOWE5OGM1YWFmYjgzYjZmNTk2ZTQ3ZDdjZmQ4NzgxN2MxNzdhMWE4NjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE5ODMzZWUwZjc2MDc4NDQ3OWZhZmQ1MzgzYzcxOTI1M2E3ZjY5YjMwN2ZjZWI3Y2Y0ZWY4YzBhMTYzNzdlMGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhZWJiNTYxYjE2MTVlZmVhMDVkMGYxZGRiMDAzNzBkZDYwYWE1NzYyZWYxN2RjYWRmNjNiNjhiNzk1OGExMDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8143aad0fa6b496fa289a814bc19df98",
+      "statement": "The total-trades-at-least-10 requirement is an analytics-engine data-sufficiency precondition applied upstream of the four statistical controls, not a fifth statistical gate.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L108-L117",
+          "version": "repo-lines-v1:sha256:e2ee396df3cb33a84636fe3fdbeb140d3838ee5a86b4d6d05dbf0eea5d9670df:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE4YmRhZjZjMjlmZjMxNjBmYzlmMzhiMzAzNjczMDVjODY5MWJmNmE1ZDlkYjc0MTgzNjZiY2IxZDI3MDY1ZTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVjMzFhMWU4ZTI3NDdlOWQ5MzhmNDFmZjk5ZmE2M2I0MjI3OGI4M2I2Y2ZjYTQzZjk3MTEwNmU2NzRlNjlhOTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYzZlY2FhYTcyMTcyZmNlMTBlNmQ1ZDJkZjg3OTA2NTAwZTkzNmE2NGU3ZjdmZWEyOWI4NzFhMWJjMDA2MDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_20c37b9465094c39b16ba9dde719638b",
+      "statement": "A strategy enters the library as CANDIDATE with its numbers visible but is not eligible for deployment or full agent autonomy; promotion to VALIDATED requires every control to pass, and a control returning None for insufficient or degenerate data leaves the strategy a CANDIDATE.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L118-L160",
+          "version": "repo-lines-v1:sha256:d9e1502acfbc03afad6096f39330db431938346b4c45910a1e03a7ed4e6e739a:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJiZGY2MjdhNzM5NWVlNmE2Njk5NjJjZmEzNDU2YjlmMWQxODk1NWNmODhjZTIyMDYyNDQ1NGViNmVlZWEwYTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ0YzlkNmE3NDJjNmY5ZWIxYzJkOThmZDYwZDRmNDE0MDkwMDM1ZjUzY2RhODNkYTk5NDdjMzIwNDQ5ZGUxMTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM4MzI1YmNlZGMzYzc5ZDc0YWIxOGVjYjMwODM2N2ZjMDg2MDVmY2IxODJjYjEzZmFjOTQ5Yjc2ZTczYzg2NzcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ac2c894f97cf4584b2404545b8b763ab",
+      "statement": "Gate failure is rendered rather than hidden: each control shows as PASS with its value, FAIL with the value and the threshold, or MISSING, and the UI shows this for candidates and validated strategies alike, with paper-claim deltas surfaced alongside instead of collapsed into an aggregate score.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L160-L177",
+          "version": "repo-lines-v1:sha256:01848f73e9a1aba6d93ad4dd984cf68b4e6148103464f64ba54f50770e405ca8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ0YzlkNmE3NDJjNmY5ZWIxYzJkOThmZDYwZDRmNDE0MDkwMDM1ZjUzY2RhODNkYTk5NDdjMzIwNDQ5ZGUxMTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE5YzYzZGIzYmU5NDhkMjM3ZjhjMDhmNGQ3OGQyMmM5NWEwZDVjZWYzOGVjMTdjOWI0ZDczM2FhNGQwZDVkNGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZmNGNmMDJiYjhiZTA5NjE5OTY0NTViZDEyMjhlMjhkOTE3ZTViZGVkN2I4NmI1MDgxZGZjMTU5YzM0NDUwMjgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e92285b495a548999c977ec6ab0e7898",
+      "statement": "Validation is a standing property rather than a one-time stamp: because PBO is library-level, adding or removing a strategy can change every member's verdict, and a re-run that pushes a previously-passing strategy past a threshold returns it to CANDIDATE automatically.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L160-L177",
+          "version": "repo-lines-v1:sha256:01848f73e9a1aba6d93ad4dd984cf68b4e6148103464f64ba54f50770e405ca8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ0YzlkNmE3NDJjNmY5ZWIxYzJkOThmZDYwZDRmNDE0MDkwMDM1ZjUzY2RhODNkYTk5NDdjMzIwNDQ5ZGUxMTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE5YzYzZGIzYmU5NDhkMjM3ZjhjMDhmNGQ3OGQyMmM5NWEwZDVjZWYzOGVjMTdjOWI0ZDczM2FhNGQwZDVkNGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZmNGNmMDJiYjhiZTA5NjE5OTY0NTViZDEyMjhlMjhkOTE3ZTViZGVkN2I4NmI1MDgxZGZjMTU5YzM0NDUwMjgifQ"
+        },
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L248-L259",
+          "version": "repo-lines-v1:sha256:8e11a75867b2f143a29cdf31703520110ba94c20b9692dba86c610635c5c972f:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE2ZGE4ZTA1OWFhMTlkZGMxY2EzYzBkZTBkOGE1YzVmNWEwYmIxNWE2ZTkyMTBlN2U5ZmZjZjNiYWY1NWU3ZTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRlNzYzZWJhNWEwYjVlOWI5MmFiOTdhODg3NDhkZTY5NmQ0ZTkwNjk5MzJiZmQ1ZjcyMmUzNWY1YjM2NTgyODYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI0YTM2OTIwZDg5Y2NiOGZhNWM0Mjc2NmEyZmFkZGI5NTBmMjlhMmQxMWMwMzExZGI0OGE4NjU1NjMzYjkxNmEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_47347015e00b47cca54f093d4b3cf804",
+      "statement": "How many library strategies currently pass all four gates is deliberately not recorded in the docs, because the live rigor gate is the only authority on which strategies currently pass.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L160-L177",
+          "version": "repo-lines-v1:sha256:01848f73e9a1aba6d93ad4dd984cf68b4e6148103464f64ba54f50770e405ca8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ0YzlkNmE3NDJjNmY5ZWIxYzJkOThmZDYwZDRmNDE0MDkwMDM1ZjUzY2RhODNkYTk5NDdjMzIwNDQ5ZGUxMTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE5YzYzZGIzYmU5NDhkMjM3ZjhjMDhmNGQ3OGQyMmM5NWEwZDVjZWYzOGVjMTdjOWI0ZDczM2FhNGQwZDVkNGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZmNGNmMDJiYjhiZTA5NjE5OTY0NTViZDEyMjhlMjhkOTE3ZTViZGVkN2I4NmI1MDgxZGZjMTU5YzM0NDUwMjgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b277ecd9344b4e54a7484f2af98c075a",
+      "statement": "Two exceptions to the gate are permitted and both are documented reviewer decisions rather than threshold weakening: a measured diversification benefit against a marginally lower DSR, and an uncomputable CPCV on a short but sound series — in both cases the number is never altered, the decision is documented, and the caveat is visible on the passport.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L178-L220",
+          "version": "repo-lines-v1:sha256:8f9bcae5a771f2dc7e2ac352abf626546f447237887b590dd67c32ba4e2878b8:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMxZDliMjkyMTFmYWM4MmQxMzEzYzA3NDI1ZjRlY2IwYWY4NjdiN2RlN2ZkMzJjZmQ3ZjAwNjE1ZTRiOTg0MTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZhNmUxYTFiOTk1MTVlNzA4ZjMwNmU5NzQwNmE5ODBjZjExMjEwMGIyOTUxNDQzNTFhY2IzYjk1ZjIyZDZkNzIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0dfd35cef57c407a9a050c7eaad36ac2",
+      "statement": "Monitoring continues after admission on three axes: live realised returns checked against the backtest's Sharpe confidence band, regime drift defended by the regime-conditional gamma multiplier, and a PBO recompute plus gate re-run on every library mutation.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L221-L259",
+          "version": "repo-lines-v1:sha256:18ff3c3c16d3629ac71ef23ddd4243b9dd7b7d4b3df84bb8d79220139581721d:eyJzZWxlY3RlZExpbmVDb3VudCI6MzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE4NGMxYjJmYjk5YjNhZGIwZDc2MTBmYWFjZDRhYzNkNTYxMDI3N2FjYjBjOTJjODQ1MmMyM2I0YTUyZTJhYTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI0YTM2OTIwZDg5Y2NiOGZhNWM0Mjc2NmEyZmFkZGI5NTBmMjlhMmQxMWMwMzExZGI0OGE4NjU1NjMzYjkxNmEifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.4.3",
+    "at": "2026-08-31T05:55:43.566Z"
+  }
+}

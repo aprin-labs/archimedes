@@ -12,7 +12,6 @@ from archimedes.services.dsl_to_backtrader import (
 )
 from archimedes.services.strategy_dsl import (
     FABER_2007_SPEC,
-    DSLError,
     validate_strategy_spec,
 )
 
@@ -41,13 +40,30 @@ class TestInterpretsReferenceExamples:
         assert "SMA_200" in cls.__name__ or "Tactical" in cls.__name__
 
 
-class TestRejectsLookAheadUnsafe:
-    """Interpreter must reject specs with look_ahead_safe=false."""
+class TestLegacyLookAheadDeclarationIsIgnored:
+    """The interpreter no longer gates on a self-declared look-ahead flag.
 
-    def test_rejects_look_ahead_unsafe(self):
-        unsafe_spec = {**FABER_2007_SPEC, "look_ahead_safe": False}
-        with pytest.raises(DSLError, match="look_ahead_safe=false"):
-            validate_strategy_spec(unsafe_spec)
+    It used to refuse any spec carrying ``look_ahead_safe: false`` — which made
+    the mirror-image claim, that ``true`` meant something, look load-bearing. A
+    persisted legacy spec must now interpret in either direction, and the
+    interpreted class must carry no trace of the declaration.
+    """
+
+    @pytest.mark.parametrize("declared", [True, False])
+    def test_legacy_declaration_neither_blocks_nor_reaches_the_strategy_class(self, declared):
+        legacy = {**FABER_2007_SPEC, "look_ahead_safe": declared}
+        spec = validate_strategy_spec(legacy)
+        cls = interpret_spec(spec)
+        assert not hasattr(spec, "look_ahead_safe")
+        assert not hasattr(cls, "look_ahead_safe")
+
+    def test_variant_interpretation_carries_no_declaration(self):
+        """interpret_variant rebuilds a StrategySpec by hand — the removed field
+        must not creep back in through that constructor.
+        """
+        spec = validate_strategy_spec({**FABER_2007_SPEC, "look_ahead_safe": True})
+        cls = interpret_variant(spec, {"sma_200": 150})
+        assert not hasattr(cls, "look_ahead_safe")
 
 
 class TestConditionEvaluation:

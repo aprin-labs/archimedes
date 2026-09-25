@@ -55,15 +55,15 @@ from archimedes.chain.client import chain_client
 from archimedes.chain.constants import MAX_MANAGEMENT_FEE_BPS, MAX_PERFORMANCE_FEE_BPS
 from archimedes.chain.executor import InsufficientLiquidityError, chain_executor, compute_trade_id
 from archimedes.chain.oracle_updater import OracleUpdater
-from archimedes.chain.provenance_publisher import pin_public_provenance
 from archimedes.chain.trace_publisher import trace_publisher
 from archimedes.chain.v_check import VCheck
+from archimedes.execution import core as execution_core
+from archimedes.execution.venue import ChainVenue
 from archimedes.interfaces.math import IRegimeDetector
 from archimedes.models.portfolio import (
     Portfolio,
     RiskProfile,
     TargetAllocation,
-    TradeDirection,
     TradeOrder,
 )
 from archimedes.models.regime import EnsembleConsensus, RegimeClassification
@@ -81,11 +81,6 @@ from archimedes.services.strategy_signal_evaluator import (
 )
 from archimedes.services.vix_regime_detector import VixRegimeDetector
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    stream=sys.stdout,
-)
 logger = logging.getLogger(__name__)
 
 INTERVAL = int(os.getenv("AGENT_INTERVAL_SECONDS", "300"))
@@ -135,36 +130,11 @@ RUNNER_NAME = "agent_runner"
 LEASE_TTL_MS = int(os.getenv("AGENT_LEASE_TTL_MS", "180000"))  # 3 min
 LEASE_RENEW_INTERVAL_S = int(os.getenv("AGENT_LEASE_RENEW_S", "50"))  # ~ttl/3
 
-# Drift threshold for rebalance trigger.
-#
-# CADENCE GATE FIRST, DRIFT THRESHOLD WITHIN THE OPEN WINDOW (divergence audit
-# F3). These are two different gates on two different objects and they compose
-# in this order:
-#
-#   1. CADENCE, per strategy, upstream of here. A DSL strategy declares
-#      ``rebalance_frequency`` (daily / weekly / monthly). The live evaluator
-#      now honours it — strategy_signal_evaluator._replay_position_state only
-#      re-decides entry/exit on cadence-eligible bars and HOLDS the position
-#      through the rest, mirroring DSLStrategy._should_rebalance in the
-#      backtest. A monthly strategy therefore emits the SAME per-asset weight on
-#      every one of the ~288 ticks a day between its decision bars, so it
-#      contributes no new drift here. Before that fix the live path never read
-#      ``rebalance_frequency`` at all and a monthly spec was effectively re-run
-#      every tick, with _DRIFT_THRESHOLD as the only thing standing between it
-#      and a trade.
-#
-#      Note the gate holds the strategy's VOTE rather than skipping it:
-#      aggregate_signals averages every bound strategy's weight, so a strategy
-#      that simply stopped emitting on off-cadence ticks would silently change
-#      every OTHER co-bound strategy's effective allocation in the vault.
-#
-#   2. DRIFT, per vault, below. Once the vault's aggregated target weights are
-#      built, a leg only trades when it has drifted at least this far from the
-#      target. This is a cost/no-op filter on an ALREADY cadence-gated target —
-#      it does not, and must not, decide WHEN a strategy is allowed to change
-#      its mind. A vault binding a daily strategy alongside a monthly one still
-#      rebalances daily, because the daily strategy is due; that is correct.
-_DRIFT_THRESHOLD = 0.15
+# Drift threshold for rebalance trigger. The constant and the reasoning behind
+# it moved to ``execution.core.DRIFT_THRESHOLD`` (#1410) so the paper venue
+# cannot run a different one; re-exported under the old name because this
+# module's tests and comments refer to it.
+_DRIFT_THRESHOLD = execution_core.DRIFT_THRESHOLD
 
 # The exogenous market regime is detected each tick by VixRegimeDetector
 # (issue #660) and written to KEY_REGIME. This is the value used only when that
@@ -345,6 +315,13 @@ class StrategyRunner:
         self.portfolio_constructor: PortfolioConstructor = PortfolioConstructor()
         self._synth_addrs = chain_client.settings.synth_addresses
         self._usdc_addr = chain_client.settings.usdc_address
+        # The vault side of the #1410 executor boundary. Built from the SAME
+        # snapshotted address maps this runner has always used, so target
+        # construction resolves exactly the addresses it did before.
+        self.venue = ChainVenue(
+            usdc_address=self._usdc_addr,
+            synth_addresses=self._synth_addrs,
+        )
         self._known_vaults: set[str] = set()  # Vaults we've already seen
         # Dedup: track last reasoning per vault to avoid publishing identical traces
         self._last_reasoning: dict[str, str] = {}  # vault_address → reasoning text
@@ -1339,27 +1316,13 @@ class StrategyRunner:
     def _weights_to_targets(
         self, weights: dict[str, float], all_signals: list[StrategySignals] | None = None
     ) -> list[TargetAllocation]:
-        """Convert weight dict → TargetAllocation list."""
-        # Build symbol → strategy_ids map from signals
-        symbol_strategies: dict[str, list[str]] = {}
-        if all_signals:
-            for ss in all_signals:
-                for sig in ss.signals:
-                    symbol_strategies.setdefault(sig.asset, []).append(ss.strategy_id)
+        """Convert weight dict → TargetAllocation list.
 
-        targets: list[TargetAllocation] = []
-        for symbol, weight in weights.items():
-            token_address = self._usdc_addr if symbol == "USDC" else self._synth_addrs.get(symbol, "")
-
-            targets.append(
-                TargetAllocation(
-                    symbol=symbol,
-                    token_address=token_address,
-                    weight=weight,
-                    strategy_ids=symbol_strategies.get(symbol, []),
-                )
-            )
-        return targets
+        Delegates to the venue-independent core (#1410). The body that used to
+        live here now runs for the paper venue too, which is the whole point —
+        a copy kept here would be free to drift from the one paper trades on.
+        """
+        return execution_core.weights_to_targets(weights, all_signals, self.venue)
 
     # ─── Trade computation ─────────────────────────────────────────
 
@@ -1370,55 +1333,11 @@ class StrategyRunner:
     ) -> list[TradeOrder]:
         """Diff current portfolio vs target weights → trade list.
 
-        Second of the two gates described at ``_DRIFT_THRESHOLD``: the targets
-        arriving here are already cadence-gated per strategy by the evaluator, so
-        this is purely a cost filter on how far the vault has drifted — never the
-        thing that decides when a strategy may change its mind.
+        Delegates to ``execution.core.compute_trades`` (#1410) — same body, same
+        ``DRIFT_THRESHOLD``, now shared with the paper venue and, via the same
+        import, the marketplace path (#1719).
         """
-        current_weights = portfolio.weights_dict
-        target_map = {t.symbol: t for t in targets}
-
-        # Holdings whose oracle price couldn't be read report weight 0 BY
-        # CONSTRUCTION (#1080) — the balance is real, the value is unknown.
-        # Trading on that fake 0 would buy more of an unpriceable asset every
-        # tick (current 0 vs target >0, forever) or size a blind sell. Skip.
-        unpriced = {h.symbol for h in portfolio.holdings if not getattr(h, "priced", True)}
-
-        trades: list[TradeOrder] = []
-        all_symbols = set(target_map.keys()) | set(current_weights.keys())
-
-        for sym in all_symbols:
-            if sym in unpriced:
-                logger.warning(
-                    "vault %s: skipping trade for %s — oracle price unavailable; holding weight "
-                    "is 0 by construction, not truth; refusing to size a trade against it (#1080)",
-                    portfolio.vault_address[:10],
-                    sym,
-                )
-                continue
-            current_w = current_weights.get(sym, 0.0)
-            target = target_map.get(sym)
-            target_w = target.weight if target else 0.0
-            token_addr = target.token_address if target else ""
-
-            drift = target_w - current_w
-            if abs(drift) < _DRIFT_THRESHOLD:
-                continue
-
-            usdc_value = abs(drift) * portfolio.total_value_usdc
-            direction = TradeDirection.BUY if drift > 0 else TradeDirection.SELL
-
-            trades.append(
-                TradeOrder(
-                    symbol=sym,
-                    token_address=token_addr,
-                    direction=direction,
-                    amount=round(usdc_value, 6),
-                    estimated_usdc_value=round(usdc_value, 2),
-                )
-            )
-
-        return trades
+        return execution_core.compute_trades(portfolio, targets)
 
     # ─── Commit-Reveal Trace ────────────────────────────────────
 
@@ -1604,20 +1523,20 @@ class StrategyRunner:
         trade_block: int | None = None,
         claimed_execution_time: int | None = None,
     ) -> None:
-        """Reveal phase: pin public provenance to IPFS, then reveal the SAME trace.
+        """Reveal phase: publish the SAME committed trace on-chain after settlement.
 
         ``trace`` is the exact object committed in the commit phase — we do NOT rebuild
         it, and we must NOT touch any field in ``_HASH_FIELDS`` (``portfolio_after``
         included: mutating it here was the #903 "Hash mismatch" revert). Only the
         non-hashed settlement annotations below are safe to set. Steps:
-          1. Pin the PUBLIC provenance layer (papers/methodology/rigor — not executable
-             params) to IPFS → CID. Degrades loudly to hash-only if PINATA_JWT is unset.
-          2. Wait out the remainder of the claimedExecutionTime window — the contract
+          1. Wait out the remainder of the claimedExecutionTime window — the contract
              requires reveal-block timestamp >= claimedExecutionTime, and trades settle
              in seconds on Arc, so an immediate reveal is structurally too early (#903).
-          3. reveal(trace_id, cid, canonicalBytes) — contract recomputes keccak256 and
-             enforces commit block < execution < reveal block.
-          4. Fall back to publishTrace if the deployed registry is pre-v1.5 (#588).
+          2. reveal(trace_id, storagePointer="", canonicalBytes) — hash-only. The
+             registry's ``storagePointer`` is empty: we do not pin traces to a public
+             gateway. The on-chain keccak256 is the integrity anchor; the full JSON
+             lives in the off-chain store. Re-enabling a pin needs the owner to seed a
+             live JWT in SSM and rebuild this path (``docs/adr/ipfs-pinning-not-live.md``).
         """
         # Annotate the (already-committed) trace with trade settlement data. These
         # fields are NOT in the hashed canonical set (_HASH_FIELDS), so adding them
@@ -1631,17 +1550,8 @@ class StrategyRunner:
 
         reveal_tx = None
         reveal_block = None
-        ipfs_cid = None
         if not DRY_RUN:
-            # ── 1. Pin public provenance to IPFS (loud-degrade if unconfigured) ──
-            try:
-                ipfs_cid, _payload = await pin_public_provenance(trace)
-                if ipfs_cid:
-                    logger.info("[tick %s] Public provenance pinned: cid=%s", tick_id, ipfs_cid)
-            except Exception as e:
-                logger.error("[tick %s] IPFS pin FAILED (continuing hash-only): %s", tick_id, e)
-
-            # ── 2. Reveal on-chain, anchoring the CID as the storage pointer ──
+            # Hash-only reveal: storagePointer is empty. We do not pin.
             # #1043: gated on the lease AFTER the claimedExecutionTime wait
             # (below) so a loss that happens DURING that wait — which can run
             # up to ~_COMMIT_EXECUTION_LEAD_S + skew seconds, independent of
@@ -1660,9 +1570,7 @@ class StrategyRunner:
                             )
                             await asyncio.sleep(wait_s)
                     if self._lease_ok:
-                        reveal_tx, reveal_block = await trace_publisher.reveal(
-                            trace_id, trace, storage_pointer=ipfs_cid or ""
-                        )
+                        reveal_tx, reveal_block = await trace_publisher.reveal(trace_id, trace, storage_pointer="")
                     else:
                         logger.error(
                             "[tick %s] LEASE NOT HELD — skipping on-chain REVEAL this cycle "
@@ -1687,16 +1595,15 @@ class StrategyRunner:
                     )
                 if reveal_tx:
                     logger.info(
-                        "[tick %s] REVEAL anchored: tx=%s block=%s cid=%s",
+                        "[tick %s] REVEAL anchored: tx=%s block=%s (hash-only storagePointer)",
                         tick_id,
                         reveal_tx[:16],
                         reveal_block,
-                        ipfs_cid,
                     )
             except Exception as e:
                 logger.error("[tick %s] REVEAL publish FAILED: %s", tick_id, e)
 
-        # Persist off-chain with full temporal binding + IPFS pointer
+        # Persist off-chain with full temporal binding. storagePointer is empty.
         try:
             off_chain_data = {
                 "id": trace.id,
@@ -1720,8 +1627,10 @@ class StrategyRunner:
                 "trace_hash": trace.trace_hash,
                 "arc_tx_hash": reveal_tx,
                 "is_verified": reveal_tx is not None,
-                # IPFS provenance pointer (T1.4)
-                "ipfs_cid": ipfs_cid,
+                # Registry storagePointer. Empty on the live path (#1526): we do not
+                # pin. Historical records and on-chain backfill may still populate
+                # this field; the name is leftover from the unused pin design.
+                "ipfs_cid": None,
                 # Temporal binding fields. The "chain" source — and any True binding —
                 # require the REAL commit-reveal path: trace_id is non-None ONLY when
                 # ReasoningTraceRegistry.commit() minted an on-chain id. Gating on
@@ -1929,14 +1838,19 @@ class StrategyRunner:
         # that can never change. Checking it here is a cheap, zero-attempt
         # short-circuit straight to terminal instead. Skipped (falls through
         # to the normal path) when the signer can't be CONFIRMED
-        # (``backend_signer_address_confirmed`` returns None — always true on
-        # the Circle path, where the only address available, WALLET_ADDRESS,
-        # is a hand-maintained mirror of the real signer rather than a
-        # cryptographic derivation of it, see executor.py) or the commitment
-        # carries no committer — never guess, only reject a CONFIRMED
-        # mismatch, because terminal here is irreversible and a false
-        # positive would permanently kill a perfectly recoverable reveal.
-        configured_addr = chain_executor.backend_signer_address_confirmed()
+        # (``backend_signer_address_confirmed`` returns None) or the
+        # commitment carries no committer — never guess, only reject a
+        # CONFIRMED mismatch, because terminal here is irreversible and a
+        # false positive would permanently kill a perfectly recoverable
+        # reveal.
+        #
+        # On the Circle path (the only prod signer) that confirmation is a
+        # bounded read of GET /wallets/{WALLET_ID} asking Circle what the
+        # signing wallet's address is (#1412) — NOT the hand-maintained
+        # WALLET_ADDRESS mirror, which could drift stale and read as a
+        # rotation that never happened. If Circle can't answer, the answer is
+        # None and this check simply does not fire.
+        configured_addr = await chain_executor.backend_signer_address_confirmed()
         committer = commitment.get("committer")
         if configured_addr and committer and str(committer).lower() != str(configured_addr).lower():
             await self._reconcile_terminal(
@@ -1964,9 +1878,9 @@ class StrategyRunner:
             return
 
         # ── The retry itself, from the persisted canonical bytes ──
-        # storage_pointer is NOT part of the hash binding, so a missing CID can
-        # never block verification: reuse the pinned one when we have it,
-        # otherwise reveal hash-only rather than failing the reconciliation.
+        # storage_pointer is NOT part of the hash binding, so an empty pointer
+        # can never block verification. Reuse a historical pointer if the
+        # record already has one; otherwise reveal hash-only (#1526).
         storage_pointer = record.get("ipfs_cid") or ""
         try:
             reveal_tx, reveal_block = await trace_publisher.reveal(onchain_id, trace, storage_pointer=storage_pointer)
@@ -2488,6 +2402,22 @@ if __name__ == "__main__":
     # Lives under __main__ so importing this module in tests never loads .env.
     # (Copilot #765)
     from dotenv import load_dotenv
+
+    # Root-logger config lives here for the same reason: an importable module
+    # must not reconfigure its importer's root logger, and this one is imported
+    # (by 7 test modules today, and by anything that reaches for
+    # StrategyRunner — dev.sh's import check does). It ran at import time until
+    # #1719. Nothing in the API process imports this module: the marketplace
+    # adapter calls `execution.core.compute_trades` directly, so this is
+    # hygiene, not a fix for a live import chain. Both prod entrypoints are
+    # `python -m archimedes.chain.agent_runner` (docker-compose.yml,
+    # infra/runner-user-data.sh), which still lands here, so the standalone
+    # runner logs exactly as before.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        stream=sys.stdout,
+    )
 
     load_dotenv("../.env", override=False)
     load_dotenv(".env", override=False)

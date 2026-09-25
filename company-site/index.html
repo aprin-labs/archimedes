@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>APRIN Labs</title>
+<meta name="description" content="APRIN Labs is a research-driven studio. Archimedes, our flagship product, turns quantitative finance literature into rigor-gated strategies. It does not trade and does not promise returns.">
+
+<script>
+  // Single source of truth for outbound links on this page. Leave a value as ''
+  // until it exists in the real world (Discord invite, X handle, etc.) — an
+  // empty entry renders nothing: no anchor, no icon, no placeholder, no gap.
+  const LINKS = {
+    github: 'https://github.com/aprin-labs',
+    discord: '',
+    x: ''
+  };
+
+  function renderLinks() {
+    const row = document.getElementById('link-row');
+    if (!row) return;
+
+    const order = [
+      { key: 'github', label: 'GitHub' },
+      { key: 'discord', label: 'Discord' },
+      { key: 'x', label: 'X' }
+    ];
+
+    order.forEach(function (entry) {
+      const url = LINKS[entry.key];
+      if (!url) return; // not live yet — skip entirely, no dead link
+      const a = document.createElement('a');
+      a.href = url;
+      a.textContent = entry.label;
+      a.className = 'link-pill';
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      row.appendChild(a);
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', renderLinks);
+</script>
+
+<style>
+  :root {
+    --bg: #f7f6f3;
+    --bg-elevated: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #5b5b58;
+    --border: #e2e0da;
+    --accent: #1f4d3d;
+    --accent-contrast: #ffffff;
+    --link-pill-bg: #ffffff;
+    --link-pill-border: #d8d6cf;
+    --shadow: 0 1px 2px rgba(20, 20, 18, 0.04), 0 8px 24px rgba(20, 20, 18, 0.06);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12130f;
+      --bg-elevated: #191b16;
+      --fg: #f0efe9;
+      --muted: #a5a49b;
+      --border: #2b2d26;
+      --accent: #6fbf9c;
+      --accent-contrast: #0d130f;
+      --link-pill-bg: #1c1e18;
+      --link-pill-border: #34362d;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 4.5rem 1.5rem 3rem;
+  }
+
+  header {
+    margin-bottom: 2.75rem;
+  }
+
+  .wordmark {
+    font-size: 2.1rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0 0 0.35rem;
+  }
+
+  .expansion {
+    font-size: 0.95rem;
+    color: var(--muted);
+    margin: 0 0 1.5rem;
+  }
+
+  .lede {
+    font-size: 1.1rem;
+    max-width: 56ch;
+    margin: 0;
+  }
+
+  section {
+    margin-bottom: 2.5rem;
+  }
+
+  h2 {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin: 0 0 0.9rem;
+    font-weight: 600;
+  }
+
+  .card {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1.75rem;
+    box-shadow: var(--shadow);
+  }
+
+  .card h3 {
+    margin: 0 0 0.5rem;
+    font-size: 1.3rem;
+  }
+
+  .card p {
+    margin: 0 0 1.1rem;
+    color: var(--muted);
+    max-width: 52ch;
+  }
+
+  .card-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: var(--accent-contrast);
+    background: var(--accent);
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.95rem;
+    padding: 0.55rem 1rem;
+    border-radius: 8px;
+  }
+
+  .card-link:hover,
+  .card-link:focus-visible {
+    opacity: 0.88;
+  }
+
+  .card-link .arrow {
+    transition: transform 0.15s ease;
+  }
+
+  .card-link:hover .arrow {
+    transform: translateX(2px);
+  }
+
+  #link-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+  }
+
+  .link-pill {
+    display: inline-block;
+    color: var(--fg);
+    background: var(--link-pill-bg);
+    border: 1px solid var(--link-pill-border);
+    text-decoration: none;
+    font-size: 0.9rem;
+    font-weight: 500;
+    padding: 0.45rem 0.9rem;
+    border-radius: 999px;
+  }
+
+  .link-pill:hover,
+  .link-pill:focus-visible {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  footer {
+    border-top: 1px solid var(--border);
+    padding-top: 1.5rem;
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <p class="wordmark">APRIN Labs</p>
+      <p class="expansion">Agora Portfolio Research Intelligence Network</p>
+      <p class="lede">
+        APRIN Labs is a research-driven trading-intelligence studio. We build systems
+        that turn quantitative finance research into transparent, rigor-tested trading
+        strategies.
+      </p>
+    </header>
+
+    <section>
+      <h2>Product</h2>
+      <div class="card">
+        <h3>Archimedes</h3>
+        <p>
+          Literature-to-strategy generation, backed by a statistical rigor gate, currently
+          paper trading on Arc testnet.
+        </p>
+        <a class="card-link" href="https://archimedes-arc.com">
+          Visit archimedes-arc.com <span class="arrow">&rarr;</span>
+        </a>
+      </div>
+    </section>
+
+    <footer>
+      <div id="link-row"></div>
+      <p>&copy; 2026 APRIN Labs</p>
+    </footer>
+  </div>
+</body>
+</html>

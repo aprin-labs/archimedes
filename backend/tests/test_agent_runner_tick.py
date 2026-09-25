@@ -526,7 +526,7 @@ class TestCommitRevealDryRun:
 
     async def test_reveal_trace_dry_run_persists_off_chain(self, runner_env):
         runner, m = runner_env
-        # Build a trace via commit, then reveal it (DRY_RUN → no IPFS/chain).
+        # Build a trace via commit, then reveal it (DRY_RUN → no chain).
         trace, trace_id, *_ = await runner._commit_trace(
             "0xVault",
             [self._trade()],

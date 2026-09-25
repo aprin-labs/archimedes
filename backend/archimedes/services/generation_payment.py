@@ -1,7 +1,27 @@
 """x402 paywall for strategy generation (Dan's directive, 2026-08-19).
 
-Generation REQUIRES wallet connection + payment — for humans and agents alike,
-no free path — while paper trading stays free. The 402 response *is* the
+**Policy correction, 2026-08-31 (#1643).** This docstring used to state that
+generation required a wallet connection and a payment for humans and agents
+alike, with no free allowance whatsoever. That is no longer what the code
+does, so the claim is deleted rather than softened — a docstring that
+contradicts shipped behaviour is the "claims must be true" defect, not a
+stylistic one. The owner's product review kept the *account*
+requirement absolute (``require_current_user`` gates every generation, and
+there is no wallet-only-without-account path) but made the *wallet* optional
+for a small lifetime allowance: the first ``FREE_GENERATIONS_PER_ACCOUNT``
+(default 3) generations on an account need neither a linked wallet nor a
+payment. **Amended the same day (owner decision D1, recorded on #1653): that
+allowance unlocks on a VERIFIED email, not on account creation alone** — an
+unverified account has the wallet + payment path below and nothing else, which
+is precisely the pre-#1643 behaviour. Nothing in THIS module implements that —
+the allowance is claimed in
+``api/generate_routes.start_generation`` from
+``services/free_generations.py``, ahead of the wallet check and this paywall —
+and nothing in this module changed: from generation #4 onward every rule below
+applies exactly as written.
+
+Generation past the free allowance requires wallet connection + payment — for
+humans and agents alike — while paper trading stays free. The 402 response *is* the
 quote-approval flow: it carries the full payment requirements in the
 ``PAYMENT-REQUIRED`` header (and a human-readable quote in the JSON body), the
 client signs and retries with a ``Payment-Signature`` header, and the server
@@ -21,6 +41,13 @@ before ever being asked to pay.
 still quotes (402 without a payment header — so the approval UX is exercised
 end to end) but accepts a presented payment WITHOUT verify/settle, loudly.
 No real value can move while the custody migration (#975) is pending.
+
+``PAYMENTS_HALT`` (#1240 kill switch) is NOT the same shape as dry-run here,
+unlike on the marketplace tick-charging rail: this is a metered pay-per-call
+API with no pre-existing subscriber relationship, so a halted charge REFUSES
+service (503) instead of accepting an unverified header for free — comping
+the paid product (and dropping the payer-binding check with it) is not what
+an operator flipping a kill switch wants.
 
 Pricing is flat (``GENERATION_PRICE_USD``, default $2.00 testnet USDC — one $20 faucet drip = 10 generations) behind
 ``quote()`` — the single seam #1217's measured per-generation budget replaces
@@ -66,6 +93,32 @@ def _payments_dry_run() -> bool:
     if raw is None:
         raw = os.getenv("PAYMENTS_DRY_RUN", "true")
     return raw.lower() in ("1", "true", "yes")
+
+
+def _payments_halted() -> bool:
+    """#1240 kill switch — see marketplace.config.payments_halted's docstring.
+
+    This surface needs the switch MORE than the marketplace tick-charging rail
+    does, and for a reason that is easy to state wrong. In prod today
+    (infra/ecs.tf money-switch block) the global PAYMENTS_DRY_RUN is "true";
+    what makes this path settle real value is the generation-scoped override
+    GENERATION_PAYMENTS_DRY_RUN="false" (the 2026-08-20 split, #1428) plus
+    GENERATION_PAYMENT_REQUIRED="true". So this is the only rail currently
+    moving real money — while the marketplace sweeps and withdraws stay dry
+    behind the global, blocked on #975.
+
+    The consequence for the kill switch: _payments_dry_run() above, which is
+    what stops value moving everywhere else, is deliberately False here. This
+    is therefore the one place where PAYMENTS_HALT is not a redundant second
+    belt but the only no-redeploy way to stop a live charge.
+
+    (Do not restate this as "the one surface allowed to run
+    PAYMENTS_DRY_RUN=false" — that was true of the original scope decision,
+    but the split replaced the mechanism, and the global is true in prod.)
+    """
+    from archimedes.marketplace.config import payments_halted
+
+    return payments_halted()
 
 
 def _recipient() -> str:
@@ -114,6 +167,7 @@ def quote() -> dict:
         "chain": gateway_chain(),
         "recipient": _recipient() or None,
         "dry_run": _payments_dry_run(),
+        "halted": _payments_halted(),
         "how": (
             "POST /api/generate/start without a Payment-Signature header returns 402 "
             "with these requirements in the PAYMENT-REQUIRED header; sign them "
@@ -180,6 +234,27 @@ async def enforce_generation_payment(request: Request, linked_wallet: str):
             "PAYMENTS_DRY_RUN — generation payment header accepted UNVERIFIED and UNSETTLED (no value moved)"
         )
         return None
+
+    if _payments_halted():
+        # #1240 kill switch — but on THIS surface (unlike the marketplace
+        # tick-charging rail) halting must REFUSE service, not give the paid
+        # product away. This is a metered pay-per-call API with no pre-existing
+        # subscription relationship, so "no real charge" here doesn't mean
+        # "let the tick continue as if it had paid" — it means "we cannot take
+        # payment right now." Accepting ANY Payment-Signature value unverified
+        # (the marketplace rail's own "treated as no-op" shape) would have
+        # served the paid product for free AND dropped the payer-binding check
+        # above's guarantee for the whole halt window — the honest reading of
+        # a kill switch on a paid surface is to refuse, not to comp it.
+        logger.warning("PAYMENTS_HALT active — refusing generation payment (service unavailable, not free)")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "reason": "payments_halted",
+                "message": "Generation payments are temporarily halted by an operator kill switch. "
+                "Please try again later.",
+            },
+        )
 
     from circlekit.x402 import decode_payment_header
 

@@ -3,58 +3,102 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Archimedes — Agentic trading, grounded in research</title>
-    <meta name="description" content="Tell Archimedes what you want in plain English. It fuses your intent with the quant-finance literature, live market data, and statistical rigor — into an autonomous trading strategy that runs in a non-custodial vault on Arc, with every decision hashed and verifiable on-chain." />
-    <meta property="og:title" content="Archimedes — Your Intent. Our Rigor." />
-    <meta property="og:description" content="Agentic trading, grounded in research. An autonomous portfolio agent that fuses your intent with the quant-finance literature and statistical rigor, then runs in a non-custodial vault on Arc." />
+    <title>Archimedes | Research-grounded portfolio strategies</title>
+    <meta
+      name="description"
+      content="Describe a portfolio goal. Archimedes generates a research-grounded strategy, tests it for selection bias against a rigor gate, and lets you inspect the evidence. Running on Arc public testnet."
+    />
+    <link
+      rel="preload"
+      href="/fonts/gabarito-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <!-- Plain fallback first (browsers without media support read it; the
+         media-scoped pair below wins where supported). Matches the manifest. -->
+    <meta name="theme-color" content="#15131D" />
+    <meta
+      name="theme-color"
+      content="#EFEDFF"
+      media="(prefers-color-scheme: light)"
+    />
+    <meta
+      name="theme-color"
+      content="#15131D"
+      media="(prefers-color-scheme: dark)"
+    />
+
+    <meta
+      property="og:title"
+      content="Archimedes | Research-grounded portfolio strategies"
+    />
+    <meta
+      property="og:description"
+      content="Generate a cited strategy, see exactly why it passes or fails, and read the evidence underneath the verdict."
+    />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://archimedes-arc.com/" />
+    <meta property="og:site_name" content="Archimedes" />
+    <meta
+      property="og:image"
+      content="https://archimedes-arc.com/og-image.png"
+    />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="Archimedes strategy generation workspace showing a research brief and visible rigor pipeline."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="Archimedes | Research-grounded portfolio strategies"
+    />
+    <meta
+      name="twitter:description"
+      content="Generate a cited strategy, inspect the rigor verdict, and read the evidence underneath. Generation is not anchored on-chain."
+    />
+    <meta
+      name="twitter:image"
+      content="https://archimedes-arc.com/og-image.png"
+    />
+
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
-    <meta name="theme-color" content="#0a0a0b" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@500;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
     <script>
       (function () {
         try {
-          var stored = localStorage.getItem('archimedes.theme');
-          document.documentElement.setAttribute('data-theme', stored === 'light' ? 'light' : 'dark');
-          // Keep the browser chrome (address bar / task switcher) in sync with
-          // the resolved theme -- the static #0a0a0b in <head> above is the
-          // dark-theme default; on a stored light preference, repaint it to
-          // App.css's light --canvas (#fafaf7) before first paint.
-          if (stored === 'light') {
-            var meta = document.querySelector('meta[name="theme-color"]');
-            if (meta) meta.setAttribute('content', '#fafaf7');
+          var stored = localStorage.getItem("archimedes.theme");
+          var systemDark = window.matchMedia(
+            "(prefers-color-scheme: dark)",
+          ).matches;
+          var theme = stored;
+          if (theme !== "dark" && theme !== "light") {
+            theme = systemDark ? "dark" : "light";
           }
-        } catch (e) {}
+          document.documentElement.setAttribute("data-theme", theme);
+        } catch (error) {
+          document.documentElement.setAttribute("data-theme", "light");
+        }
       })();
     </script>
-    <!-- Static JSON-LD for non-JS fetchers (search engines, AI agents/crawlers). Additive
-         only -- does not affect rendering or existing meta/OG tags above. -->
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
         "@type": "WebApplication",
         "name": "Archimedes",
         "applicationCategory": "FinanceApplication",
-        "description": "Tell Archimedes what you want in plain English. It fuses your intent with the quant-finance literature, live market data, and statistical rigor \u2014 into an autonomous trading strategy that runs in a non-custodial vault on Arc, with every decision hashed and verifiable on-chain.",
+        "description": "A research-grounded strategy-generation instrument with visible selection-bias checks on Arc public testnet. Generation is not anchored on-chain.",
         "url": "https://archimedes-arc.com/",
         "operatingSystem": "Web",
-        "offers": {
-          "@type": "Offer",
-          "price": "0",
-          "priceCurrency": "USD"
-        },
         "potentialAction": {
-          "@type": "Action",
-          "name": "Generate strategy",
-          "description": "Describe an investment intent in plain English and get back a research-grounded, rigor-gated portfolio strategy.",
-          "target": "https://archimedes-arc.com/generate"
+          "@type": "CreateAction",
+          "name": "Generate a strategy",
+          "target": "https://archimedes-arc.com/app/generate"
         }
       }
     </script>
@@ -64,4 +108,3 @@
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
-<!-- built 1779052952 -->

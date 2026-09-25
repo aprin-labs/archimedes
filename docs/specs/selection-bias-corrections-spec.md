@@ -32,7 +32,7 @@ Three corrections, each populating specific fields on
 [`backend/archimedes/models/backtest.py`](../../backend/archimedes/models/backtest.py)
 `BacktestResult`:
 
-1. **Deflated Sharpe Ratio (DSR)** — excess Sharpe tested at 90% one-sided
+1. **Deflated Sharpe Ratio (DSR)** — excess Sharpe tested at 95% one-sided
    confidence under standard errors robust to non-normality and
    autocorrelation, deflated by the expected best-of-`N` **only where a
    candidate pool exists** (Bailey & López de Prado 2014). On the curated
@@ -145,9 +145,14 @@ the additive count is the conservative, defensible deflation. It can only make t
 **stricter** (anti-goal compliant): with `n_candidates ≥ 1` it is always `≥ library_size`,
 the prior (under-deflating) value.
 
-**Why not effective-N (correlation-adjusted) here.** `compute_dsr` already accepts an
-`average_correlation` and can deflate by effective *independent* trials
-`N_eff = N / (1 + (N-1)ρ̄)` — the principled refinement when candidates are correlated
+**Why not correlation-adjusted deflation here.** *(#1558/#1559, 2026-08-31: this
+paragraph originally named `N_eff = N / (1 + (N-1)ρ̄)` as the correlation refinement.
+That form — the Kish design effect — was never the correlated `E[max]`; the shipped
+correction scales the independent-trial `E[max]` by `√(1−ρ̄)`. The reasoning below is
+unaffected: it turns on shipping the additive count first, not on which correlation
+form the refinement uses.)* `compute_dsr` already accepts an
+`average_correlation` and can deflate by scaling `E[max]` by `√(1−ρ̄)`
+— the principled refinement when candidates are correlated
 (same brief, overlapping universes). We deliberately ship the **simple additive count
 first** (smaller blast radius, strictly conservative) and leave the candidate-pool
 correlation correction as a follow-up; over-deflation (treating correlated candidates as
@@ -223,7 +228,8 @@ independent searches they aren't.
 
 **What ships.** The live society path (`agents/generation_pipeline.py`) estimates ρ̄ from
 the candidate pool's own return series via `compute_average_pairwise_correlation` (no
-change to that function or to `compute_dsr`'s `N_eff` formula — both are reused as-is) and
+change to that function or to `compute_dsr`'s correlation term — both are reused as-is;
+that term was the `N_eff` form when this addendum was written and is `√(1−ρ̄)` as of #1559) and
 feeds it into the same `compute_dsr` call each candidate's DSR was already computed with,
 at the same `num_trials`. `_patch_dsr_with_pool_correlation` runs once every candidate's
 return series is known (mirroring the existing `_patch_pbo` two-pass shape: DSR is first
@@ -238,8 +244,10 @@ from their own CSCV evaluator over a parameter-variant grid, not the buy-and-hol
 series this correlation estimate is scoped to, and are excluded from the pool the same way
 `_patch_pbo` already excludes them from cross-candidate PBO.
 
-**Why this can only relax, never loosen past the no-correction floor.** `N_eff = N / (1 +
-(N-1)ρ̄)` satisfies `1 ≤ N_eff ≤ N` for any `ρ̄ ∈ [0, 1]`, so the corrected DSR p-value sits
+**Why this can only relax, never loosen past the no-correction floor.** *(#1559: argued
+here from `1 ≤ N_eff ≤ N`; the conclusion is unchanged under the shipped form, but the
+premise is now `0 ≤ √(1−ρ̄) ≤ 1`, which shrinks `E[max]` by at most a factor of one.)*
+`√(1−ρ̄)` satisfies `0 ≤ √(1−ρ̄) ≤ 1` for any `ρ̄ ∈ [0, 1]`, so the corrected DSR p-value sits
 between the ρ̄=0 (approach A) value and the value at `num_trials=1` (no multiple-testing
 penalty at all) — it never exceeds the latter, so the gate is never made looser than the
 IID-Sharpe baseline. At ρ̄→1 (candidates fully collapse to one effective trial) the
@@ -410,14 +418,15 @@ The critical distinction: only some checks are risk-tolerance knobs.
 
 | Level | Label | DSR p ≥ | PBO < | OOS/IS ≥ |
 | ----- | ----------- | ------- | ----- | -------- |
-| 1 | Conservative | 0.90 | 0.50 | 0.50 |
+| 1 | Conservative | 0.95 | 0.50 | 0.50 |
 | 2 | Balanced | 0.80 | 0.55 | 0.45 |
 | 3 | Moderate | 0.70 | 0.60 | 0.40 |
 | 4 | Aggressive | 0.60 | 0.65 | 0.35 |
 | 5 | Speculative | 0.50 | 0.70 | 0.30 |
 
-> The level-1 DSR bar is **0.90** (recalibrated from the historical 0.95 on
-> 2026-07-05, a deliberate team decision). Thresholds relax monotonically with
+> The level-1 DSR bar is **0.95** — `rigor_profiles.DSR_P_BADGE_MIN`, the one place the
+> number is written down (#1794, owner call 2026-09-03; PR #901's lower bar is retired).
+> Thresholds relax monotonically with
 > level, so "passes at level L" is monotonic in L and a well-defined
 > `min_passing_level` exists (`RigorGateResult.min_passing_level`).
 
@@ -464,10 +473,45 @@ at level L plus its `min_passing_level`.
 
 **Scope note (v1).** Curated library strategies (real returns + source) are
 re-graded live at any level. *Generated* strategies remain badge-gated for
-deployment in v1 — their look-ahead provenance is a closed-DSL self-attestation
-rather than the AST audit the live re-grade runs, so re-grading them at a looser
-level would be apples-to-oranges; wiring generated strategies into the live
-per-level path is a follow-up.
+deployment in v1 — but **not** for the reason this note used to give.
+
+The reason recorded here through 2026-08-30 was that a generated strategy's
+look-ahead provenance was "a closed-DSL self-attestation rather than the AST
+audit the live re-grade runs". That is no longer true.
+[`dsl_lookahead_audit.py`](../../backend/archimedes/services/dsl_lookahead_audit.py)
+replaced the self-declared `look_ahead_safe` boolean with a structural proof in
+three parts: an AST pass over the DSL interpreter proving every bar-indexed read
+carries an offset ≤ 0 (bar *t* or earlier); a walk of the validated spec proving
+it uses nothing outside that audited surface; and the broker
+cheat-on-close/cheat-on-open check charged on the real `cerebro` the backtest
+ran. The verdict is four-state — `pass` / `fail` / `pending` (nothing was
+audited) / `degenerate` (the audit ran and could not decide) — and **only `pass`
+clears the LEAK criterion**. The LLM's own boolean does not survive in any form:
+`look_ahead_safe` is deleted from the DSL schema, the `StrategySpec` dataclass
+and the generation prompt, so there is no declaration left to read back.
+
+Two consequences worth stating plainly, because they pull in opposite
+directions and both are deliberate:
+
+- **Deployability is fail-closed.** `pending` and `degenerate` block the gate
+  exactly as hard as `fail`. An audit that reached no verdict is not evidence.
+- **Rendering is honest.** Those same states must be *shown* as "not audited" /
+  "undecidable", never as a failure, because nothing found a leak — nothing
+  concluded. The four-state `look_ahead_status` is the single vocabulary every
+  surface reads (there is no second render vocabulary to keep in sync), and
+  `gate_details["look_ahead"]` renders those legs as
+  `NOT_RUN (…) — blocks admission (fail-closed)` /
+  `DEGENERATE (…) — blocks admission (fail-closed)` rather than `FAIL`.
+- **Persisted rows get the same treatment.** `GET /api/selection-bias/gate/{id}`
+  for a generated strategy grades stored columns, not a live spec, so it reads
+  `look_ahead_audit_source` alongside the boolean: a row whose provenance is the
+  retired `self_attested` (the boolean *was* the LLM's declaration) or
+  `dsl_audit_not_run` is `pending`, not a pass — a stored `True` from the old
+  self-attested path no longer deploys anything.
+
+What still keeps generated strategies badge-gated is the remaining wiring: the
+live *per-level* re-grade path takes curated strategies only. That is a
+follow-up, and it is now the whole of the reason.
 
 ## 6. Board-level Benjamini-Hochberg FDR correction (#1185, 2026-08-20)
 
@@ -488,10 +532,12 @@ section restores it and records the scope decision the deletion sidestepped.
 explicitly).** `rigor_evaluator.compute_board_level_fdr` is **ADVISORY /
 annotation only** — it computes a real BH-FDR-adjusted significance figure
 across the current leaderboard cohort's DSR p-values and surfaces it
-(`GET /api/selection-bias/gate` → `RigorGateResponse.board_level_fdr` +
-per-strategy `StrategyRigorResult.board_fdr_significant` /
-`board_fdr_adjusted_p` / `board_fdr_confidence`), but it is **not** wired into `passes_all` /
-`blocked_by_floor` at any strictness level. Three reasons, in order of
+(`GET /api/leaderboard` → `LeaderboardResponse.board_level_fdr` + per-row
+`LeaderboardEntry.board_fdr_significant` / `board_fdr_adjusted_p` /
+`board_fdr_confidence` — **relocated there from the per-strategy gate by
+#1564, see §6.1**), but it is **not** wired into `passes_all` /
+`blocked_by_floor` at any strictness level, and it is not an input to the
+leaderboard's `conviction_score` either. Three reasons, in order of
 weight:
 
 1. **Admission-policy calls belong to the rigor lane (Dan/Önder), not to an
@@ -530,9 +576,62 @@ correction and omitted from the result — never assigned a fabricated verdict,
 matching every other MISSING convention in this gate. Default `fdr_level =
 rigor_evaluator.DEFAULT_BOARD_FDR_LEVEL` (`0.05`), independently chosen (BH
 convention) — NOT derived from the DSR badge's `dsr_p_min`. Computed fresh on
-every `/gate` request over the exact cohort being served (same reconciliation
-pattern as `library_pbo`), so a rigor-cache hit can never serve a stale board
-composition's correction.
+every board request over the exact cohort being served, so a rigor-cache hit
+can never serve a stale board composition's correction.
+
+### 6.1 Placement and rendering (#1564, 2026-08-31)
+
+**Owner decision (Dan).** *The strategy passport carries only information about
+the strategy itself; the Leaderboard is the one cross-strategy surface.
+Relational metrics must not ride per-strategy responses.* Board-level FDR is
+relational by construction — the same strategy's `board_fdr_significant` flips
+as unrelated strategies join or leave the cohort, which is the library-coupled
+verdict [`../adr/num-trials-self-containment.md`](../adr/num-trials-self-containment.md)
+Decision #3 already rejected.
+
+**Where it lives now.** `GET /api/leaderboard` only. `GET
+/api/selection-bias/gate` and `GET /api/selection-bias/gate/{id}` carry no
+`board_fdr` or `board_level_fdr` key —
+`test_selection_bias_routes.py::TestBoardFdrStaysOffThePerStrategyGate` scans
+both the response models and a live response shape and fails if one reappears.
+
+**Cache.** No new scheduler and no cache of its own. The `dsr_p_value`s it
+corrects arrive on already-built `StrategyResponse` objects, which since
+[#1746](https://github.com/aprin-labs/archimedes/issues/1746) / PR-B are READ off
+each strategy's stored grade on `strategy_passports` (one batched query, no gate
+run) rather than recomputed per request; the BH itself (pure numpy over a few
+hundred floats) recomputes per request so the correction always matches the
+cohort actually served. Note what that makes true: every p-value in the cohort
+was produced by a gate run whose version the row records, so a board mixing two
+gate vintages is visible (`gate_version`) rather than silently averaged over.
+
+**Cohort = the whole board, before filters and before `limit`.** Load-bearing:
+BH's adjusted p is `p_(k)·m/k`, so a smaller *m* makes every row look *more*
+significant. If *m* tracked the filtered/paged view, a reader could narrow
+`regime_tag` or shrink `limit` until a row went significant — manufacturing the
+exact selection effect the correction exists to price in. Pinned by
+`test_leaderboard_board_fdr.py::test_correction_is_invariant_to_limit` /
+`..._to_regime_and_min_rigor_filters`, each with an anti-vacuity test proving
+the shrink really would flip the verdict.
+
+**Rendering (the other half of the owner's call: "render it honestly, as best
+we can").** The research board gets a `Board FDR` column plus a board-level
+line. When nothing clears — the state prod is in, per Önder's pull on #1555 —
+it reads *"Not yet distinguishable from selection noise at board level."* A row
+with no finite `dsr_p_value` was never corrected and renders an **em-dash**,
+never a verdict; `None` is not `False`. Guarded in
+`ui/test/leaderboard-board-fdr.test.js`.
+
+**`library_pbo` STAYS on the per-strategy result** (the call #1564 item 3
+asked for; it was flagged as the same impurity class and is not one). It is
+byte-identical for every strategy in a selection set, so it is a *disclosure*,
+not a per-strategy verdict — nothing about strategy A's passport changes
+because of strategy B. And it is the scope label for a number the same
+response already shows: on the curated path `pbo_score` comes from
+`compute_pbo`, which assigns one library-wide CSCV value to every strategy.
+Removing `library_pbo` would delete the label and leave the labelled number —
+strictly less honest, and it would purify nothing. Pinned by
+`test_selection_bias_routes.py::TestLibraryPboStaysOnThePassport`.
 
 ## API surface
 

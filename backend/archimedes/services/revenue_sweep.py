@@ -42,6 +42,17 @@ Deliberately independent of PAYMENTS_DRY_RUN / GENERATION_PAYMENTS_DRY_RUN:
 those gate CHARGING USERS; this moves the platform's own already-settled
 funds between the platform's own venues (Gateway balance → the same DCW's
 token balance) under the accepted DCW-custodial-INTERIM posture (#958).
+
+``PAYMENTS_HALT`` (#1240) is the exception to that independence, and the
+distinction is not a contradiction: the dry-run switches ask "may we charge a
+user?", to which this module's honest answer is "not my question". The kill
+switch asks the different question "may a Circle call move USDC right now?",
+and here the answer is unambiguously yes it would — ``GatewayClient.withdraw``
+signs a burn intent and lands an on-chain ``gatewayMint``. That is the same
+transfer class ``settlement.sweep_publisher`` already refuses while halted, so
+refusing it here too is what makes the switch mean one thing everywhere.
+``check_revenue`` stays live while halted on purpose: reading a balance moves
+nothing, and an operator mid-incident needs to see the number.
 """
 
 from __future__ import annotations
@@ -59,6 +70,7 @@ from archimedes.marketplace.config import (
     format_usdc,
     gateway_chain,
     gateway_sweep_amount,
+    payments_halted,
 )
 
 logger = logging.getLogger(__name__)
@@ -116,8 +128,23 @@ async def sweep_revenue(min_usdc: Decimal | None = None) -> dict:
     """Withdraw the available Gateway balance, less Circle's fee reserve, to
     the DCW's token balance when it meets the threshold. Returns a structured
     outcome either way — callers log it; the scheduler loop never raises out
-    of a tick."""
+    of a tick.
+
+    Refuses before ``_client()`` while ``PAYMENTS_HALT`` is set (#1240): the
+    gate belongs in the callee so BOTH entry points — the unattended hourly
+    loop and the operator CLI — are covered by construction, and so a future
+    third caller cannot forget it. The CLI is included deliberately: the same
+    operator set the switch, the refusal is loud, and un-setting one env var
+    is a cheaper mistake to recover from than a withdrawal nobody wanted.
+    ``--check`` is untouched and still works while halted."""
     threshold = min_usdc if min_usdc is not None else _min_usdc()
+    if payments_halted():
+        logger.warning("revenue sweep: PAYMENTS_HALT active — refusing to withdraw (no Circle call made)")
+        return {
+            "swept": False,
+            "reason": "PAYMENTS_HALT active — operator kill switch; unset it to sweep",
+            "halted": True,
+        }
     client = _client()
     balances = await client.get_gateway_balance()
     available = Decimal(balances.available) / _USDC

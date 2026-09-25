@@ -1,26 +1,47 @@
-# Archimedes — Docker Compose for production deployment on EC2
+# Archimedes — Docker Compose for LOCAL development
 # Usage: docker compose up --build -d
 #
-# Image refs (issue #1039, P1 — "stop the bleeding"): the app-tier services
-# below (nginx, backend, oracle, agent, kb-runner) now carry an explicit
-# `image:` in addition to `build:`. This is what lets `docker compose pull`
-# do something useful — without an `image:` key, compose has nothing to pull
-# and a bare `docker compose pull && up -d` would silently no-op, still
-# forcing a local `--build` (the exact OOM-on-serving-host failure mode this
-# issue exists to kill; see #1001). `build:` is left in place on purpose so
-# local dev (`docker compose up --build -d`) is completely unaffected — it
-# builds fresh from the Dockerfile and tags the image with the same name the
-# `image:` key declares, purely a local tag, no registry push happens unless
-# you explicitly run `docker compose push`.
+# ── Image refs: local-only by construction (issue #1044, leak 3) ───────────
+# `build:` is authoritative here. Every app-tier service resolves to a
+# project-scoped, registry-less tag:
 #
-# ECR_REGISTRY / IMAGE_TAG are read from `.env` (or the shell env); the
-# defaults below point at the live account/region and `:latest`. CI
-# (.github/workflows/deploy.yml, `build-and-push` job) builds + validates +
-# pushes both `archimedes-backend` and `archimedes-nginx` to ECR tagged by
-# commit SHA *and* `latest`; the box's deploy step sets IMAGE_TAG to the
-# deployed commit SHA before `docker compose pull`, so `latest` is a fallback
-# for anyone pulling by hand. See docs/deployment.md § "Production deploy
-# flow" and infra/README.md for the ECR repos (Terraform, issue #1039 chunk 2).
+#     image: ${COMPOSE_PROJECT_NAME:-archimedes}-backend:local
+#
+# Two failure modes made that shape necessary, and both were live:
+#
+#  1. REACHING PRODUCTION. These keys used to default to
+#     `${ECR_REGISTRY:-037613907429.dkr.ecr.us-east-1.amazonaws.com}/…:${IMAGE_TAG:-latest}`,
+#     and neither variable was defined anywhere in `.env.example` — so on a
+#     fresh clone the defaults always won. `docker compose up` WITHOUT
+#     `--build` (and `docker compose pull`) then made a real request to the
+#     production registry; on an ECR-authenticated machine it succeeds and the
+#     developer runs the last image CI pushed to prod while believing they are
+#     running their working tree. Nothing warns. A registry-less name cannot
+#     resolve anywhere, so the only thing that can satisfy it is a local build.
+#
+#  2. CROSS-CHECKOUT TAG THEFT. `build:` tags the image with whatever `image:`
+#     names, and image tags are machine-global while compose projects are not.
+#     Every worktree on the box therefore built into the SAME tag, so the last
+#     checkout to run `--build` silently owned it and a bare `up` in any other
+#     checkout adopted that foreign build. `COMPOSE_PROJECT_NAME` (which
+#     compose derives from the directory, or `-p`) scopes the tag per checkout;
+#     the `:-archimedes` fallback keeps the historical name for the canonical
+#     clone. `migrate`/`oracle`/`agent`/`kb-runner` deliberately share the
+#     `-backend:local` tag with `backend` so the image is still built once.
+#
+# THE ECR PULL PATH STILL EXISTS — it is now opt-in. `docker-compose.ecr.yml`
+# restores the registry-qualified refs and REQUIRES `ECR_REGISTRY` and
+# `IMAGE_TAG` to be set (no defaults, so a forgotten variable errors instead of
+# silently selecting production `:latest`):
+#
+#     ECR_REGISTRY=… IMAGE_TAG=<sha> \
+#       docker compose -f docker-compose.yml -f docker-compose.ecr.yml pull
+#
+# Note that nothing in CI or production consumes these keys today: since the
+# Fargate cutover, `.github/workflows/deploy.yml` registers ECS task
+# definitions with explicit image URIs and `deploy-runners.yml` uses raw
+# `docker pull`/`docker tag` over SSM. Compose is a local-development tool.
+# Guarded by backend/tests/test_compose_no_prod_image_default.py.
 #
 # ── Compose profiles in this file (two independent gates) ──────────────────
 #   `localdb` — postgres + redis, LOCAL DEV ONLY (see the "Data stores" note
@@ -106,7 +127,7 @@ services:
   # never creates PostgreSQL tables. Base-file dependencies stay optional so
   # production can omit localdb; docker-compose.local.yml makes them strict.
   migrate:
-    image: ${ECR_REGISTRY:-037613907429.dkr.ecr.us-east-1.amazonaws.com}/archimedes-backend:${IMAGE_TAG:-latest}
+    image: ${COMPOSE_PROJECT_NAME:-archimedes}-backend:local
     profiles: ["localdb"]
     build:
       context: .
@@ -120,7 +141,7 @@ services:
 
   # ---------- Reverse proxy + Frontend ----------
   nginx:
-    image: ${ECR_REGISTRY:-037613907429.dkr.ecr.us-east-1.amazonaws.com}/archimedes-nginx:${IMAGE_TAG:-latest}
+    image: ${COMPOSE_PROJECT_NAME:-archimedes}-nginx:local
     build:
       context: .
       dockerfile: nginx/Dockerfile
@@ -155,7 +176,7 @@ services:
 
   # ---------- Better Auth ----------
   auth:
-    image: ${ECR_REGISTRY:-037613907429.dkr.ecr.us-east-1.amazonaws.com}/archimedes-auth:${IMAGE_TAG:-latest}
+    image: ${COMPOSE_PROJECT_NAME:-archimedes}-auth:local
     build:
       context: ./auth
     restart: unless-stopped
@@ -186,7 +207,7 @@ services:
 
   # ---------- Oracle (price feeder) ----------
   oracle:
-    image: ${ECR_REGISTRY:-037613907429.dkr.ecr.us-east-1.amazonaws.com}/archimedes-backend:${IMAGE_TAG:-latest}
+    image: ${COMPOSE_PROJECT_NAME:-archimedes}-backend:local
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -231,7 +252,7 @@ services:
 
   # ---------- Strategy Agent (autonomous portfolio runner) ----------
   agent:
-    image: ${ECR_REGISTRY:-037613907429.dkr.ecr.us-east-1.amazonaws.com}/archimedes-backend:${IMAGE_TAG:-latest}
+    image: ${COMPOSE_PROJECT_NAME:-archimedes}-backend:local
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -278,7 +299,7 @@ services:
 
   # ---------- Backend API ----------
   backend:
-    image: ${ECR_REGISTRY:-037613907429.dkr.ecr.us-east-1.amazonaws.com}/archimedes-backend:${IMAGE_TAG:-latest}
+    image: ${COMPOSE_PROJECT_NAME:-archimedes}-backend:local
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -302,7 +323,6 @@ services:
       ARC_ASSET_REGISTRY_ADDRESS: ${ARC_ASSET_REGISTRY_ADDRESS:-0x2d44550711137916df6175587d17886281a0fbc7}
       ARCHIMEDES_STRATEGIES_DIR: /app/analytics-engine/strategies
       ARCHIMEDES_CORPUS_MANIFEST: /app/data/corpus/manifest.jsonl
-      ARCHIMEDES_FUSION_ENABLED: ${ARCHIMEDES_FUSION_ENABLED:-true}
       KB_ARTIFACT_DIR: /app/data/corpus-artifact
       PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:-}
       BETTER_AUTH_INTERNAL_URL: http://auth:3000
@@ -310,12 +330,27 @@ services:
       FEATURE_QUANT: ${FEATURE_QUANT:-}
       EMAIL_ENCRYPTION_KEY: ${EMAIL_ENCRYPTION_KEY:-}
       # Production secret loading: load_ssm_secrets() (main.py, at import time)
-      # reads /archimedes/prod/* from SSM via the EC2 instance role at startup
-      # and injects them into the env (e.g. EMAIL_ENCRYPTION_KEY, which prod mode
-      # fail-closes on). It is a NO-OP unless AWS_SSM_PATH_PREFIX is set, and the
-      # region must match where the params live (us-east-1). This keeps the
-      # secret out of .env and CI. Local dev has no AWS creds → it no-ops safely.
-      AWS_SSM_PATH_PREFIX: ${AWS_SSM_PATH_PREFIX:-/archimedes/prod/}
+      # reads AWS_SSM_PATH_PREFIX/* from SSM and injects the values into the
+      # env (e.g. EMAIL_ENCRYPTION_KEY, which prod mode fail-closes on). Two
+      # independent things must both be true for that fetch to happen:
+      #   1. PUBLIC_DOMAIN is set — main.py's "am I production" gate (#1044).
+      #      This is the one that actually stops the fetch, and it is why prod
+      #      sets PUBLIC_DOMAIN alongside the prefix in infra/ecs.tf:516-519.
+      #   2. AWS_SSM_PATH_PREFIX is non-empty — secrets_service returns 0 on a
+      #      blank prefix.
+      # The default below is BLANK, not /archimedes/prod/. It used to be the
+      # prod path, which silently un-did .env.example's blank default: compose
+      # `:-` substitutes on empty as well as unset, so the shipped
+      # `AWS_SSM_PATH_PREFIX=` resolved back to the real prod prefix inside the
+      # container and left the PUBLIC_DOMAIN gate as the only thing between a
+      # local `docker compose up` and production secrets. Defence in depth is
+      # the point: neither layer may quietly disarm the other.
+      # Production does NOT get this value from compose — post-Fargate, prod is
+      # an ECS task definition (infra/ecs.tf, infra/ecs_migrate.tf) that sets
+      # the prefix explicitly; compose is local-only. Exporting
+      # AWS_SSM_PATH_PREFIX (plus PUBLIC_DOMAIN) still opts a compose run in,
+      # for anyone deliberately mimicking prod.
+      AWS_SSM_PATH_PREFIX: ${AWS_SSM_PATH_PREFIX:-}
       AWS_REGION: ${AWS_REGION:-us-east-1}
     env_file:
       - .env
@@ -358,7 +393,7 @@ services:
   #
   # #1043 — gated behind the `runners` profile; see the file-header note.
   kb-runner:
-    image: ${ECR_REGISTRY:-037613907429.dkr.ecr.us-east-1.amazonaws.com}/archimedes-backend:${IMAGE_TAG:-latest}
+    image: ${COMPOSE_PROJECT_NAME:-archimedes}-backend:local
     profiles: ["runners"]
     build:
       context: .

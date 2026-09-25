@@ -27,9 +27,11 @@ from archimedes.services.redis_state import (
     KEY_REGIME,
     KEY_SIWE_NONCE_PREFIX,
     KEY_TRACE_INDEX,
+    KEY_TRACE_PREFIX,
     KEY_TRACE_RECONCILE_FIRST_SEEN,
     KEY_TRACE_RECONCILE_PENDING,
     KEY_TRACE_RECONCILE_TERMINAL,
+    TRACE_MGET_BATCH,
     AgentStateStore,
     is_dangling_reveal,
 )
@@ -39,6 +41,7 @@ def _fake_redis() -> MagicMock:
     """Build an AsyncMock-flavored Redis client."""
     r = MagicMock()
     r.get = AsyncMock(return_value=None)
+    r.mget = AsyncMock(return_value=[])
     r.set = AsyncMock()
     r.setex = AsyncMock()
     r.getdel = AsyncMock(return_value=None)
@@ -66,6 +69,33 @@ async def _store_with_fake_redis() -> tuple[AgentStateStore, MagicMock]:
     fake = _fake_redis()
     store._redis = fake  # bypass _get_redis lazy init
     return store, fake
+
+
+def _seed_trace_bodies(fake: MagicMock, bodies: dict[str, str]) -> None:
+    """Back BOTH ``get`` and ``mget`` with one key → raw-JSON map.
+
+    Faithful to the real client on the two points the read paths depend on:
+    ``MGET`` returns one slot per requested key, **in request order**, holding
+    ``None`` where the key is absent — the same value a ``GET`` on that key
+    would have returned.
+
+    Both methods are stubbed even though ``list_traces`` now only calls
+    ``mget``, per CLAUDE.md rule 5's corollary: a double that covers only the
+    branch under test silently drops a sibling's calls (``get_trace`` and
+    ``list_recent_traces`` still read one key at a time). It is also what lets
+    the round-trip regression test below fail on the *round-trip count* rather
+    than on a missing row, since the reverted per-key loop still resolves
+    every body correctly against this same map.
+    """
+
+    async def _get(key: str):
+        return bodies.get(key)
+
+    async def _mget(keys):
+        return [bodies.get(k) for k in keys]
+
+    fake.get = AsyncMock(side_effect=_get)
+    fake.mget = AsyncMock(side_effect=_mget)
 
 
 def _classification(regime: Regime = Regime.RISK_ON, confidence: float = 0.8) -> RegimeClassification:
@@ -317,10 +347,103 @@ class TestTraces:
             {"vault_address": "0xV", "decision_type": "skip"},
             {"vault_address": "0xOTHER", "decision_type": "rebalance"},
         ]
-        fake.get = AsyncMock(side_effect=[json.dumps(t) for t in traces])
+        _seed_trace_bodies(fake, {f"{KEY_TRACE_PREFIX}h{i + 1}": json.dumps(t) for i, t in enumerate(traces)})
         window, total = await store.list_traces(vault_address="0xV", decision_type="rebalance")
         assert total == 1
         assert window[0]["decision_type"] == "rebalance"
+
+    @pytest.mark.asyncio
+    async def test_list_traces_batches_body_reads_into_one_mget(self) -> None:
+        """#1577: the body reads are ONE batched round trip, not one per trace.
+
+        The pre-#1577 loop awaited a separate ``GET`` per member of the whole
+        index — on the TLS ElastiCache connection that is a full round trip
+        each, and the index is read unwindowed, so the cost scaled with all of
+        history rather than with the page.
+
+        The body map is shared by ``get`` and ``mget`` (see
+        ``_seed_trace_bodies``) precisely so the reverted implementation still
+        returns all 50 rows: the only thing that changes when the fix is
+        reverted is the round-trip count asserted here.
+        """
+        store, fake = await _store_with_fake_redis()
+        n = 50
+        fake.zrevrange.return_value = [f"h{i}" for i in range(n)]
+        _seed_trace_bodies(
+            fake,
+            {f"{KEY_TRACE_PREFIX}h{i}": json.dumps({"id": f"t{i}", "vault_address": "0xV"}) for i in range(n)},
+        )
+
+        window, total = await store.list_traces(limit=n)
+
+        # Every row really was read and parsed — the batching is not "cheap"
+        # because it quietly dropped work.
+        assert total == n
+        assert [t["id"] for t in window] == [f"t{i}" for i in range(n)]
+        # ONE batched call for 50 bodies, and zero single-key reads.
+        assert fake.mget.await_count == 1, "the body reads were not batched"
+        assert fake.get.await_count == 0, f"{fake.get.await_count} sequential GETs — one per trace is the bug"
+
+    @pytest.mark.asyncio
+    async def test_list_traces_mget_is_chunked_and_preserves_index_order(self) -> None:
+        """Batches are bounded at ``TRACE_MGET_BATCH`` and walked in order.
+
+        The chunking is why the claim is ``1 + ceil(N / TRACE_MGET_BATCH)``
+        round trips rather than exactly one: this read is unbounded at the
+        index, and a single index-sized MGET would block Redis' one thread for
+        every other client. Ordering is load-bearing — the newest-first
+        contract callers page against comes from ``zrevrange``, and it must
+        survive being cut into batches.
+        """
+        store, fake = await _store_with_fake_redis()
+        n = TRACE_MGET_BATCH * 2 + 7
+        fake.zrevrange.return_value = [f"h{i}" for i in range(n)]
+        _seed_trace_bodies(
+            fake,
+            {f"{KEY_TRACE_PREFIX}h{i}": json.dumps({"id": f"t{i}", "vault_address": "0xV"}) for i in range(n)},
+        )
+
+        window, total = await store.list_traces(limit=n)
+
+        assert total == n
+        assert [t["id"] for t in window] == [f"t{i}" for i in range(n)]  # newest-first order intact
+        assert fake.mget.await_count == 3  # ceil(1007 / 500), not 1007 and not 1
+        # No batch exceeds the bound.
+        assert all(len(call.args[0]) <= TRACE_MGET_BATCH for call in fake.mget.await_args_list)
+
+    @pytest.mark.asyncio
+    async def test_list_traces_empty_index_issues_no_body_read(self) -> None:
+        """An empty index must not send ``MGET`` with zero keys — real Redis
+        answers that with ``ERR wrong number of arguments``, which would turn
+        the quietest case (no traces yet) into a 500."""
+        store, fake = await _store_with_fake_redis()
+        fake.zrevrange.return_value = []
+
+        window, total = await store.list_traces()
+
+        assert (window, total) == ([], 0)
+        assert fake.mget.await_count == 0
+
+    @pytest.mark.asyncio
+    async def test_list_traces_tolerates_missing_and_malformed_rows(self) -> None:
+        """A hash whose blob is gone (``None`` in the MGET slot) and a blob
+        that no longer parses are both skipped, exactly as the per-key loop
+        skipped them — a corrupt row never breaks the listing."""
+        store, fake = await _store_with_fake_redis()
+        fake.zrevrange.return_value = ["h1", "h2", "h3"]
+        _seed_trace_bodies(
+            fake,
+            {
+                # h1 absent entirely → MGET returns None in its slot
+                f"{KEY_TRACE_PREFIX}h2": "{not json",
+                f"{KEY_TRACE_PREFIX}h3": json.dumps({"id": "t3", "vault_address": "0xV"}),
+            },
+        )
+
+        window, total = await store.list_traces()
+
+        assert [t["id"] for t in window] == ["t3"]
+        assert total == 1
 
     @pytest.mark.asyncio
     async def test_list_recent_traces_bounds_the_range_at_the_index(self) -> None:
@@ -350,7 +473,7 @@ class TestTraces:
     async def test_get_last_trace_returns_first(self) -> None:
         store, fake = await _store_with_fake_redis()
         fake.zrevrange.return_value = ["h1"]
-        fake.get = AsyncMock(side_effect=[json.dumps({"vault_address": "0xV", "id": "t1"})])
+        _seed_trace_bodies(fake, {f"{KEY_TRACE_PREFIX}h1": json.dumps({"vault_address": "0xV", "id": "t1"})})
         result = await store.get_last_trace("0xV")
         assert result["id"] == "t1"
 

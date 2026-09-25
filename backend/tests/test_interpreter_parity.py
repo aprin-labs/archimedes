@@ -24,21 +24,41 @@ SCOPE, stated exactly (the honest part):
     factor (1 - 2/(N+1))^k drives them together, so parity is asserted after
     a burn-in with a tight tolerance. If either side's seeding changes, the
     burn-in bound breaks here first.
-  * PINNED ASYMMETRIC: realized_vol computes live and RAISES in the backtest
-    (audit F6). The asymmetry itself is asserted, so both the silent arrival
-    of a backtest implementation (must then be promoted to PINNED EQUAL) and
-    a live-side removal are caught.
+  * PINNED EQUAL (was PINNED ASYMMETRIC, audit F6): realized_vol used to
+    compute live and RAISE in the backtest. The backtest now implements it with
+    the same ddof=1 estimator, so the asymmetry pin was retired and the
+    indicator promoted into the parity block above.
   * PINNED WITH A ONE-BAR EXECUTION OFFSET: the stateful/cadence cases compare
     DECISIONS, not fills. backtrader submits the order on the decision bar and
     the broker fills it at the next bar's open, so the backtest's observable
     position at bar t+1 is the state its FSM decided at bar t. That offset is an
     execution convention, not an interpreter divergence, and the helpers below
     state it explicitly rather than hiding it in a fudge factor.
+  * PINNED EQUAL: equal_weight and inverse_vol SIZING. Both sides call the same
+    module-level functions (dsl_to_backtrader.slot_weight / sizing_realized_vol
+    / inverse_vol_weight) over the same price window, so the weight is equal by
+    construction rather than by coincidence — the live path used to return a
+    flat 1.0 for both while the backtest sized them, an N-fold exposure gap on
+    the same spec. ONE input class still diverges and is pinned BY NAME below
+    (test_single_name_inverse_vol_divergence_is_pinned_by_name): a slot of 1.0
+    (single-name universe, or the sleeve runners' universe_slots=1) on an asset
+    calmer than the reference asks for up to 2.0x; the backtest broker
+    margin-rejects it and goes flat, the live twin reports a clamped 1.0 and
+    says so in its reason. Unreachable for two or more names. The comparison is
+    made AT THE ENTRY BAR on purpose: the backtest sizes once at entry and
+    freezes the share count, the live side recomputes each decision bar, so for
+    a vol-scaled type the two agree there and drift afterwards. That is the
+    unification plan's open D4 (sizing TIMING) question, which inverse_vol now
+    inherits from volatility_target and which this file does not claim to close.
+    equal_weight has no such seam — 1/N does not move.
   * DELIBERATELY OUT: volatility_target SIZING parity — the backtest sizes off a
     20-bar RMS of returns capped at 2.0x, the live path off a 22-bar sample
     stdev capped at 1.0x. Both sides now agree on WHEN a vol-targeted strategy
     is in the market (the cases below cover that); how much they buy once in is
-    a separate, still-open divergence and is not asserted here.
+    a separate, still-open divergence and is not asserted here. It is the LAST
+    unpinned sizing divergence, and it is deliberately not fixed in the same
+    change that pinned the other two: moving that estimator moves published
+    volatility_target numbers.
   * DELIBERATELY OUT: window-age position membership — the live replay derives
     position from the visible rolling window, so an entry older than the
     window's left edge is invisible (backtest long, live flat). Unreachable
@@ -60,7 +80,7 @@ import backtrader as bt
 import pandas as pd
 import pytest
 from archimedes.services.dsl_to_backtrader import _eval_condition, _make_indicator, interpret_spec
-from archimedes.services.strategy_dsl import DSLError, validate_strategy_spec
+from archimedes.services.strategy_dsl import INDICATOR_NAMES, validate_strategy_spec
 from archimedes.services.strategy_signal_evaluator import (
     Signal,
     _compute_indicator_series,
@@ -164,6 +184,20 @@ def test_momentum_parity_per_bar(period):
     price ratio offset by exactly 1.0 — mutation-verified: reverting the -1.0
     in dsl_to_backtrader fails every bar here."""
     _compare("momentum", period, burn_in=period + 1, rel=1e-9)
+
+
+@pytest.mark.parametrize("period", [10, 20])
+def test_realized_vol_parity_per_bar(period):
+    """Post-F6: the backtest now HAS a realized_vol, and it equals the live one.
+
+    Promoted here from the pinned-ASYMMETRIC section below, which existed only
+    to catch this arrival. The estimator had to be written by hand
+    (``RealizedVolAnnualized``) rather than taken from
+    ``bt.indicators.StandardDeviation``: the live side is
+    ``pct_change().tail(N).std()``, pandas ``.std()`` is ddof=1, and
+    backtrader's built-in is ddof=0 — a sqrt(N/(N-1)) gap on every bar, 5.4% at
+    N=20. Mutation check: switching the ddof to N fails every bar here."""
+    _compare("realized_vol", period, burn_in=period + 2, rel=1e-9)
 
 
 def test_flat_state_daily_entry_decision_parity():
@@ -414,17 +448,148 @@ def test_ema_converges_after_seed_burn_in(period):
     _compare("ema", period, burn_in=period * 6, rel=1e-4)
 
 
-# ── Pinned ASYMMETRIC (F6) ──────────────────────────────────────────────────
+# ── No asymmetric indicators remain (F6 closed) ─────────────────────────────
 
 
-def test_realized_vol_is_live_only_and_that_asymmetry_is_pinned():
-    """realized_vol validates in the DSL grammar, computes on the live path,
-    and RAISES in the backtest interpreter (audit F6). Pinning the asymmetry
-    cuts both ways: if a backtest implementation quietly lands, this fails and
-    the indicator must be promoted to the pinned-EQUAL section above; if the
-    live side loses it, the strategy-affecting removal is caught too."""
-    live = _compute_indicator_value("realized_vol", 20, pd.Series(_SERIES[:60]))
-    assert isinstance(live, float) and not math.isnan(live) and live > 0
+# ── Pinned EQUAL: equal_weight / inverse_vol SIZING ─────────────────────────
 
-    with pytest.raises(DSLError):
-        _make_indicator(None, "realized_vol", 20)
+_SIZING_WARMUP = 25
+
+
+def _sizing_spec(ps: dict, universe: list[str]) -> dict:
+    """A spec whose only interesting decision is the size.
+
+    ``sma_25 > 0`` is a tautology on positive closes; it exists to hold the first
+    entry back past the 20-bar sizing lookback so the vol scale is real rather
+    than the unscaled fallback. The exit is never true, so the position is
+    entered once and held — the run has exactly one sizing decision to compare.
+    """
+    return {
+        "name": f"sizing-{ps['type']}",
+        "asset_universe": universe,
+        "rebalance_frequency": "daily",
+        "entry": {"gt": [f"sma_{_SIZING_WARMUP}", 0]},
+        "exit": {"lt": ["close", 0]},
+        "position_sizing": ps,
+        "source_arxiv_ids": ["0000.0000"],
+        "look_ahead_safe": True,
+    }
+
+
+def _bt_entry_weight(spec_dict: dict) -> tuple[int, float]:
+    """(entry bar index, fraction of the account the BACKTEST asked for).
+
+    Captures the ``order_target_percent`` REQUEST rather than the resulting
+    position, and divides out the 0.99 exposure buffer — the buffer is an
+    execution allowance, not part of the spec's sizing, and the live evaluator
+    has no equivalent. Reading the request is also what keeps the single-name
+    inverse_vol case measurable: that one asks for more than 1.0 and the cash
+    broker refuses it, so a fill-based reading would be 0.0.
+    """
+    idx = pd.bdate_range("2024-01-02", periods=_N_BARS)
+    close = pd.Series(_SERIES, index=idx)
+    df = pd.DataFrame({"Open": close, "High": close, "Low": close, "Close": close, "Volume": 0.0}, index=idx)
+
+    strategy_cls = interpret_spec(validate_strategy_spec(spec_dict))
+    recorded: list[tuple[int, float]] = []
+
+    class Probe(strategy_cls):
+        def order_target_percent(self, data=None, target=0.0, **kwargs):
+            recorded.append((len(self) - 1, float(target)))
+            return super().order_target_percent(data=data, target=target, **kwargs)
+
+    cerebro = bt.Cerebro(stdstats=False)
+    cerebro.adddata(bt.feeds.PandasData(dataname=df))
+    cerebro.addstrategy(Probe)
+    cerebro.broker.setcash(100_000.0)
+    cerebro.run()
+
+    assert recorded, "the backtest placed no sizing order — nothing to compare"
+    bar, target = recorded[0]
+    return bar, target / 0.99
+
+
+def _live_weight_at(spec_dict: dict, bar: int) -> float:
+    """The live evaluator's weight for a window ENDING at ``bar``.
+
+    Daily cadence makes the last bar the decision bar, so both sides size off
+    the same 21 closes.
+    """
+    signal = _spec_signal("parity", "SPY", pd.Series(_SERIES[: bar + 1]), spec_dict)
+    assert signal.signal is not Signal.FLAT, f"live evaluator was flat at bar {bar}: {signal.reason}"
+    return signal.weight
+
+
+@pytest.mark.parametrize("universe", [["SPY", "QQQ"], ["SPY", "QQQ", "IWM", "EFA"]])
+def test_equal_weight_sizing_parity(universe):
+    """Both sides must put 1/N of the account into one name, for the same N.
+
+    Until 2026-08-30 the live evaluator returned a flat 1.0 here while the
+    backtest sized 1/N — a 4× exposure gap on a four-name universe, on the same
+    spec, with nothing anywhere saying so. Mutation check: restoring the
+    ``weight=1.0`` return in ``_spec_signal`` fails this at every N > 1.
+    """
+    spec = _sizing_spec({"type": "equal_weight"}, universe)
+    bar, bt_weight = _bt_entry_weight(spec)
+    assert bt_weight == pytest.approx(1.0 / len(universe), rel=1e-9)
+    assert _live_weight_at(spec, bar) == pytest.approx(bt_weight, abs=1e-4)
+
+
+@pytest.mark.parametrize("reference", [0.03, 0.05])
+def test_inverse_vol_sizing_parity(reference):
+    """Slot × capped scale, computed by the SAME estimator on both sides.
+
+    ``reference`` is deliberately below this fixture's realized vol so the scale
+    lands under the 2.0 cap — at the cap both sides would agree even if their
+    vol estimates differed, and the test would prove nothing about the
+    estimator. The live path calls ``dsl_to_backtrader.sizing_realized_vol``
+    rather than the 22-bar ddof=1 estimator the live ``volatility_target``
+    branch uses; that is the point of the shared module-level function.
+    """
+    universe = ["SPY", "QQQ"]
+    spec = _sizing_spec({"type": "inverse_vol", "reference_vol_annual": reference}, universe)
+    bar, bt_weight = _bt_entry_weight(spec)
+    # Anti-vacuity: a capped scale would make this a comparison of two 1.0s.
+    assert 0.0 < bt_weight < 1.0 / len(universe) * 2.0, f"scale hit the cap ({bt_weight:.4f}) — pick a lower reference"
+    assert _live_weight_at(spec, bar) == pytest.approx(bt_weight, abs=1e-4)
+
+
+def test_single_name_inverse_vol_divergence_is_pinned_by_name():
+    """KNOWN, NARROW DIVERGENCE — asserted rather than described.
+
+    ``inverse_vol`` clamps its scale, not the slot-multiplied product, so the
+    per-name weight is slot-invariant (see ``dsl_to_backtrader.
+    inverse_vol_weight``). The cost is that a slot of 1.0 — a single-name
+    universe, or the sleeve runners' ``universe_slots=1`` — can ask for up to
+    2.0× on an asset calmer than the reference. The two sides then part ways:
+
+      * the BACKTEST asks for it, the cash broker margin-rejects it (audibly),
+        and the strategy holds nothing for the whole run;
+      * the LIVE evaluator has no leverage either, so it reports the clamped
+        1.0 with the request named in its ``reason``.
+
+    That is the entire remaining sizing divergence for these two types, and it
+    is unreachable for any universe of two or more names (slot ≤ 0.5, cap 2.0 →
+    product ≤ 1.0). Listed in the DSL spec's Known limitations.
+    """
+    spec = _sizing_spec({"type": "inverse_vol", "reference_vol_annual": 0.60}, ["SPY"])
+    bar, bt_weight = _bt_entry_weight(spec)
+    assert bt_weight > 1.0, f"the single-name case did not request leverage ({bt_weight:.4f}) — premise moved"
+
+    signal = _spec_signal("parity", "SPY", pd.Series(_SERIES[: bar + 1]), spec)
+    assert signal.weight == 1.0
+    assert "clamped" in signal.reason and "no leverage" in signal.reason, signal.reason
+
+
+def test_no_indicator_is_validator_legal_but_interpreter_fatal():
+    """Every name a spec may legally write must be buildable by BOTH sides.
+
+    This replaces the old realized_vol asymmetry pin (audit F6). That pin
+    asserted a one-sided indicator existed; this one asserts none does. It is
+    the generalized version — a new name added to the grammar without a
+    backtest implementation fails here rather than at C-rigor time."""
+    for name in sorted(INDICATOR_NAMES):
+        period = 20
+        live = _compute_indicator_value(name, period, pd.Series(_SERIES[:80]))
+        assert isinstance(live, float) and not math.isnan(live), f"{name} has no live value"
+        assert _bt_indicator_series(name, period), f"{name} has no backtest implementation"

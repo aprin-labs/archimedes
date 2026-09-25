@@ -6,9 +6,59 @@ directory so tests exercise the actual strategy files rather than mocks.
 
 # IMPORTANT: set TESTING env var BEFORE any archimedes imports so that
 # the rate limiter (api/limiter.py) reads it at module init time.
+import atexit
 import os
+import shutil
+import tempfile
 
 os.environ["TESTING"] = "1"
+
+# ── Hermetic default database (issue #1640) ──────────────────────────────────
+# Same "before any archimedes import" reason as TESTING above, for a defect with
+# much longer teeth.
+#
+# `archimedes.db` resolves DATABASE_URL exactly ONCE, at import time, and builds
+# the process-global `engine` from it. With the env var unset its default is
+# `_default_database_url()` → `backend/archimedes_chat.db` — a file INSIDE the
+# working tree. That file is untracked, is created by `init_db()` (which runs at
+# `archimedes.main` import time), survives every pytest run, and is shared with
+# whatever else the developer has done in that directory: `uvicorn
+# archimedes.main:app`, a `scripts/` run, an interrupted suite. The FastAPI
+# lifespan's step 2 (`seed_from_manifest()`) writes all 10,000 rows of
+# `data/corpus/manifest.jsonl` into it.
+#
+# The consequence is a suite whose result depends on the directory's history:
+# `strategy_fusion.load_corpus()` reads the DB before the file, so once that
+# table is populated, 12 corpus tests across `test_strategy_fusion.py`,
+# `test_debate_engine.py` and `test_papers_routes.py` read the real 10K corpus
+# instead of their 4-row fixtures (`assert 10000 == 4`) — permanently, in that
+# directory, until someone deletes a file they have no reason to know about.
+# The same tests pass in a fresh worktree. `test_corpus_embedding_claims.py`'s
+# module docstring records an earlier encounter with the same leak.
+#
+# Pointing the unset-DATABASE_URL default at a throwaway temp file makes every
+# run start from the fresh-worktree state by construction. `setdefault`, not an
+# unconditional set: the two `@pytest.mark.integration` tests that want a real
+# Postgres pass `DATABASE_URL` explicitly and must keep winning.
+#
+# `tempfile.mkdtemp` rather than `tmp_path_factory`: this has to happen at
+# conftest *import* time, before `archimedes.db` is imported and freezes its
+# engine — no fixture, session-scoped or otherwise, runs early enough. It is
+# also per-process, so the file is shared across the run exactly as the in-tree
+# one was; only its starting contents change (empty, like a fresh worktree).
+# `tests/db_isolation.redirect_to_tmp_sqlite` remains the right tool for
+# per-test isolation and layers on top of this unchanged.
+#
+# The remaining leak is that same per-process file: a TestClient / ASGI
+# lifespan still runs `seed_from_manifest()` into it (~18k rows). Tests that
+# call `load_corpus()` with `path=None` and expect the file fallback
+# (`test_loader_env_override`, `test_empty_db_falls_back_to_file_manifest`)
+# must isolate with `isolated_empty_sqlite`. Do not "fix" that by making
+# `ARCHIMEDES_CORPUS_MANIFEST` a production DB bypass.
+if not os.environ.get("DATABASE_URL"):
+    _TEST_DB_DIR = tempfile.mkdtemp(prefix="archimedes-test-db-")
+    atexit.register(shutil.rmtree, _TEST_DB_DIR, ignore_errors=True)
+    os.environ["DATABASE_URL"] = f"sqlite:///{os.path.join(_TEST_DB_DIR, 'archimedes_test.db')}"
 
 from pathlib import Path
 
@@ -119,6 +169,22 @@ def _legacy_siwe_test_adapter(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _clear_cohort_returns_cache():
+    """Reset the process-level cohort-returns memo (#1713).
+
+    Same hazard as ``_clear_rigor_cache``: several files reuse the SAME
+    strategy ids against DIFFERENT per-test SQLite databases. A cached
+    series from test A served to test B would make a live-read assertion
+    pass against yesterday's rows. Cleared before and after.
+    """
+    from archimedes.services.backtest_repository import clear_cohort_returns_cache
+
+    clear_cohort_returns_cache()
+    yield
+    clear_cohort_returns_cache()
+
+
+@pytest.fixture(autouse=True)
 def _clear_rigor_cache():
     """Reset the process-level live-rigor-gate cache (services/rigor_cache.py)
     around every test.
@@ -140,3 +206,41 @@ def _clear_rigor_cache():
     rigor_cache.clear()
     yield
     rigor_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def _clear_vault_owner_cache():
+    """Reset the trace-ownership memo (services/trace_visibility.py) — #1573.
+
+    Same hazard as ``_clear_rigor_cache`` above, one layer down: the vault →
+    owner memo is a module-global dict keyed on the vault address, and several
+    test files reuse the SAME vault addresses against DIFFERENT per-test
+    SQLite databases. Without this reset, "vault X is owned by user Y" (or,
+    worse, "vault X is unowned") learned in one test would be served to a
+    later test whose database says otherwise, making an ownership *verdict*
+    depend on suite order. Cleared before and after, like its sibling.
+    """
+    from archimedes.services.trace_visibility import clear_vault_owner_cache
+
+    clear_vault_owner_cache()
+    yield
+    clear_vault_owner_cache()
+
+
+@pytest.fixture(autouse=True)
+def _clear_health_probe_cache():
+    """Reset /health's last-known-value memo (services/health_cache.py) — #1592.
+
+    Third instance of the same hazard as the two fixtures above, and the one
+    with the sharpest teeth: this memo exists precisely so a timed-out probe can
+    serve a previous reading. Without a reset, a test that establishes
+    "chain_connected = True" hands that value to a later test whose whole point
+    is that the probe times out — the later test would then assert against a
+    ``stale_cached`` outcome it never set up, and, worse, a broken fallback path
+    could pass by inheriting a neighbour's success. Cleared before and after.
+    """
+    from archimedes.services.health_cache import clear_health_probe_cache
+
+    clear_health_probe_cache()
+    yield
+    clear_health_probe_cache()

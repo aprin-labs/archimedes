@@ -1,19 +1,49 @@
 """Strategy endpoints — /api/strategies/*.
 
-Includes: library listing, signals, frontier, correlation, advisor, stress,
-generate/fusion.
+Includes: library listing, signals, frontier, correlation, advisor, stress.
+
+**This module hosts no generation route.** The flag-gated fusion bypass
+(``POST /api/strategies/generate`` → ``_run_fusion_job``, plus its
+``GET /api/strategies/generate/{job_id}`` poll partner) was removed on
+2026-08-31; the debate society at ``POST /api/generate/start`` is the sole
+generation pipeline, per
+``docs/adr/debate-society-sole-generation-pipeline.md``. The route table is
+guarded by ``backend/tests/test_sole_generation_route_guard.py`` — adding a
+generation route back here fails that test.
+
+**The read routes here do their database work on a worker thread (#1818 P4).**
+Every one of them is ``async def`` and every one of them is synchronous and
+blocking underneath — ``session.query``, and on ``GET /`` a cohort PBO compute
+that measured 6s on a healthy task. On 2026-09-03 that combination took the
+site down: ``GET /api/strategies/generated`` blocked on a lock for 5,648,772 ms,
+and because it was blocking THE EVENT LOOP, ``/health`` — a sibling coroutine
+on the same loop — stopped answering too. The ALB saw two dead targets and
+served 504s to everything, so a single slow query became a full outage. Off the
+loop, the same blocked query costs one pool thread and every other route
+(``/health`` included) keeps being served.
+
+``asyncio.to_thread``, not a private pool: it runs on the loop's default
+executor, which ``main.py`` sizes explicitly (``_install_default_executor``,
+floor 16) so serving handlers and the generation fan-out share a pool somebody
+chose rather than one CPython picked. Note the Postgres pool is 5 + 10 overflow
+(``db._get_engine_kwargs``): past 15 concurrent handlers the wait moves to the
+connection pool — still off the loop, still not an outage, but that is the next
+number to raise if this tier ever saturates.
+
+Each route is a docstring plus ONE ``await asyncio.to_thread(_…_sync, …)``. The
+blocking body lives in the module-level ``_…_sync`` twin directly above it, so a
+reviewer can see the whole boundary in one screen and
+``backend/tests/test_handlers_off_the_loop.py`` can assert, by running them,
+that no ``session.query`` on these routes happens on the loop thread.
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
-import os
 from datetime import UTC
 
-import numpy as np
 from fastapi import APIRouter, Depends, Query, Request, Response
 
 from archimedes.api._route_helpers import strategy_provider
@@ -27,108 +57,186 @@ from archimedes.api.schemas import (
     StrategySignalResponse,
     StrategySignalsResponse,
 )
+from archimedes.api.selection_bias_routes import (
+    _SCOPE_CURATED_SELF_CONTAINED,
+    _num_trials_for_generated_row,
+)
 from archimedes.api.wallet_routes import get_linked_wallet_address
 from archimedes.models.strategy import Strategy, StrategyStatus
-from archimedes.services.live_rigor_gate import (
-    RigorGateVerdict,
-    verdicts_for_strategies,
-)
-from archimedes.services.rigor_evaluator import RigorGateResult
+from archimedes.services.passport_spec_parity import reconcile_card_fields
 
 logger = logging.getLogger(__name__)
 
 strategies_router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 
 
-def _display_metrics_source(s, bt) -> str:
-    """Which link of the display-metric fallback chain actually supplied values.
+# The four-state verdict a surface serves for a strategy no stored passport row
+# knows about, and the fail-closed answer when the row exists but was never
+# graded. Same word, same meaning as ``passport_loader.STATUS_PENDING`` and
+# ``ui/src/rigorGateStatus.js`` — "no gate has looked at this", never "it lost".
+_UNGRADED_STATUS = "pending"
 
-    The chain is `s.real_* -> bt.* -> s.stub_*`, and its last link is a hardcoded
-    placeholder. Unlike the rigor fields (whose fallback #1187/#1340 removed
-    outright) these are descriptive stats, so the chain stays — but an
-    un-named chain means a stub renders identically to a real backtest.
 
-    Keyed on `real_sharpe` / `sharpe_ratio` as the representative field: the whole
-    block is populated from one link, so one probe describes all of them.
+def served_status(stored_status: str | None, rigor_gate_status: str | None, *, promote: bool = True) -> str:
+    """The lifecycle status a CARD shows, derived from the stored verdict.
+
+    A curator hand-declares a strategy file's ``STATUS`` (candidate / validated /
+    live / retired). A ``candidate`` whose stored rigor verdict is ``pass`` is
+    shown as ``validated``: the promotion is what "Archimedes Verified" means on
+    a curated card, and it is the only way a curated row reaches that word.
+
+    **This is a derivation of a STORED value, not a recompute.** Before #1746's
+    PR-B the same promotion was driven by a live ``run_rigor_gate`` call made
+    during the request, which is how ``GET /api/strategies/{id}`` came to answer
+    ``validated`` for a strategy whose own passport row said ``candidate``. The
+    inputs are now two columns of one row, so any surface that reads that row
+    can produce the same answer — and both of them do:
+    ``GET /api/strategies/passports/{id}`` publishes it as ``served_status``
+    beside the persisted ``status`` it has always published.
+
+    ``status`` stays the PERSISTED column on the passport payload on purpose: the
+    ``?status=`` filter queries that column, so overwriting it in the payload
+    would make the list and its own filter disagree.
+
+    ``promote`` is False for a GENERATED strategy, and that asymmetry is the
+    truth rather than an oversight: a curated strategy's status is hand-declared
+    in its file (``STATUS = "candidate"``) and promotion is the only way a
+    curated card reaches "validated", while a generated strategy's status is
+    already written by the pipeline that produced it — ``_passport_to_strategy_response``
+    serves ``record.status`` verbatim. Passing the flag makes ``served_status``
+    equal to what the detail route serves for EVERY id, curated or generated,
+    which is the property the parity guard rests on.
     """
-    if s.real_sharpe is not None:
-        # NOT "measured": for the curated library this traces to the #1187
-        # fixture snapshot. It is what the strategy record stores, no more.
-        return "strategy_record"
-    if bt is not None and bt.sharpe_ratio is not None:
-        return "persisted_backtest"
-    if s.stub_sharpe is not None:
-        return "stub_placeholder"
-    return "unavailable"
+    if promote and (stored_status or "").lower() == StrategyStatus.CANDIDATE.value and rigor_gate_status == "pass":
+        return StrategyStatus.VALIDATED.value
+    return stored_status or StrategyStatus.CANDIDATE.value
 
 
-def _to_strategy_response(
-    s: Strategy,
-    verdict: RigorGateVerdict | None = None,
-    rigor_result: RigorGateResult | None = None,
-) -> StrategyResponse:
-    """Map StrategyPassport + persisted BacktestResult to API schema.
+def stored_passports_for(session, strategy_ids: list[str]) -> dict:
+    """The stored passport rows for ``strategy_ids``, keyed by id — ONE query.
 
-    ``verdict`` is the LIVE rigor-gate verdict for this strategy (#821), computed
-    on its persisted real returns via ``run_rigor_gate`` — the SAME machinery the
-    ``/api/selection-bias/gate`` route uses. The served ``passes_rigor_gate`` badge
-    and the CANDIDATE → VALIDATED promotion are derived from it, NOT from the stored
-    fixture boolean. When ``verdict is None`` (single-strategy fetch) it is computed
-    on demand here. A strategy with no real returns yields a ``pending`` verdict so
-    the badge surfaces "unknown" rather than a fixture ``True``/``False``.
+    The read half of the verdict of record: every curated surface (detail, list,
+    leaderboard) resolves its rows through here and serves what it finds, so the
+    three cannot answer differently for one id. A missing row is a missing key,
+    and the caller serves the ungraded shape for it — never a fabricated verdict.
 
-    ``rigor_result`` is the companion full ``RigorGateResult`` (#868) — the SAME
-    live gate run ``verdict`` was reduced from — used to serve the numeric fields
-    (``deflated_sharpe_ratio``, ``dsr_p_value``, ``pbo_score``,
-    ``out_of_sample_sharpe``) so the leaderboard can never disagree with
-    ``GET /api/selection-bias/gate`` for a given strategy id. ``None`` means the
-    live gate could not run for this strategy (no/insufficient persisted returns,
-    or a batch/DB failure); the numeric fields then render as ``None`` — the API's
-    honest "not run" — rather than falling back to ``s.<field>``/``bt.<field>``
-    (#1187: those columns trace back to a migrated test-fixture snapshot
-    (``backend/tests/fixtures/backtest_fixtures_snapshot.json``, PR #863) that
-    predates the current DSR convention (raw vs. excess returns) and gate
-    threshold (#901, 0.95 → 0.90) and cannot be reproduced by any single code
-    version — presenting it as a measured number next to a ``pending`` badge is a
-    claim-integrity defect, not a display nicety). When ``verdict is None``
-    (single-strategy fetch) ``rigor_result`` is also computed on demand here.
+    Never raises: a DB failure degrades to ``{}``, i.e. every strategy reads
+    ungraded. Fail-closed — the badge can go grey, never green, on an error.
+    """
+    if not strategy_ids:
+        return {}
+    try:
+        from archimedes.models.strategy_passport_record import StrategyPassportRecord
+
+        rows = session.query(StrategyPassportRecord).filter(StrategyPassportRecord.id.in_(strategy_ids)).all()
+        return {r.id: r for r in rows}
+    except Exception as exc:
+        logger.warning("stored passports read failed for %d ids (all → ungraded): %s", len(strategy_ids), exc)
+        return {}
+
+
+def _to_strategy_response(s: Strategy, stored=None) -> StrategyResponse:
+    """Map a curated ``Strategy`` + its STORED passport row to the API schema.
+
+    ``stored`` is the ``StrategyPassportRecord`` for ``s.id`` — the verdict of
+    record (``docs/adr/rigor-verdict-of-record.md``). Every claim this response
+    makes about the rigor gate, and every number it shows, is READ from that
+    row. Nothing here recomputes a verdict, and nothing here re-resolves the
+    display-metric chain.
+
+    **What this replaces, and why (#1746).** This function used to run the live
+    gate over the whole library on every call (``_live_verdict_and_result_for_one``)
+    and to resolve the ``real_* → backtest → stub`` display chain per request.
+    ``GET /api/strategies/passports/{id}`` did neither — it is a pure read of the
+    passport row. So one strategy id had two answers: ``1f9cfe96…``
+    (``harvey_2018_volatility_targeting``) served ``rigor_gate_status: "pass"``
+    with Sharpe ``0.406`` on the detail route and ``candidate`` / ``false`` /
+    ``null`` on its own passport, and the Sharpe moved between two reads 37s
+    apart because the provider memoises its backtest map per process and prod
+    runs two tasks. Both halves are gone: the grade is written by
+    ``services.curated_grading`` when a curated backtest runs, the display chain
+    is resolved by the passport sync (``services.curated_metrics``), and this
+    function serves the row both of them wrote.
+
+    ``stored=None`` means no passport row was found for this strategy. The
+    response is then the honest ungraded shape — ``pending``, no gate numbers —
+    with the display metrics resolved from the provider as a fallback, so a
+    caller holding a bare ``Strategy`` (a just-extracted file, a unit test) still
+    gets its card rather than an empty one.
     """
     from archimedes.api.schemas import PaperRefResponse
+    from archimedes.services.curated_metrics import (
+        DisplayMetrics,
+        display_metrics_source,
+        resolve_display_metrics,
+    )
     from archimedes.services.return_source_classifier import classify_strategy
-
-    if verdict is None:
-        verdict = _live_verdict_for_one(s)
-        rigor_result = _live_rigor_result_for_one(s)
 
     bt = strategy_provider().get_backtest_result(s.id)
     # has_real: a BacktestResultRecord (persisted daily-returns row) exists.
-    # Previously derived from ``s.real_sharpe is not None`` (a metric field that can
-    # be populated from fixture stubs without a real returns row — a false positive).
-    # Now strictly tied to the persisted backtest/daily-returns row so that
-    # ``is_backtest_placeholder`` is honest: it is False ONLY when we have actual
-    # persisted run data the rigor gate can re-grade (#passport-honesty).
+    # Strictly tied to that row so ``is_backtest_placeholder`` is honest: False
+    # ONLY when we have actual persisted run data a gate could grade.
     has_real = bt is not None
     return_source, return_source_note = classify_strategy(s)
 
-    # Served status overlays the LIVE gate verdict on the file-declared status:
-    # a CANDIDATE is promoted to VALIDATED only when the live gate PASSES on real
-    # returns (#821). The fixture boolean no longer promotes anything. Hand-declared
-    # advanced states (live/retired) are preserved.
-    served_status = s.status.value
-    if s.status == StrategyStatus.CANDIDATE and verdict.passes:
-        served_status = StrategyStatus.VALIDATED.value
+    # ── The verdict of record, read verbatim ────────────────────────────────
+    rigor_status = (stored.rigor_gate_status or _UNGRADED_STATUS) if stored is not None else _UNGRADED_STATUS
+    # Derived from the four-state and nothing else, exactly as the generated
+    # path does it (`_passport_to_strategy_response`), so the boolean and the
+    # status cannot be served apart even on a row whose columns were forced
+    # apart by hand.
+    passes = rigor_status == "pass"
+    # ``graded_at`` is set by, and only by, ``_apply_rigor_verdict``. It is the
+    # one field that separates "a gate produced this row's numbers" from "the
+    # #1187 FIXTURE snapshot did" — curated passports carried fixture DSR/PBO
+    # values in the gate-number columns until PR-B stopped writing them there,
+    # and those rows are still in the table until the grading job runs. No
+    # ``graded_at`` ⇒ no numbers, which is the same fail-closed answer the live
+    # gate used to give when it could not run.
+    graded = stored is not None and stored.graded_at is not None
+
+    if stored is not None:
+        metrics = DisplayMetrics(
+            sharpe_ratio=stored.sharpe_ratio,
+            sortino_ratio=stored.sortino_ratio,
+            cagr=stored.cagr,
+            max_drawdown=stored.max_drawdown,
+            win_rate=stored.win_rate,
+            calmar_ratio=stored.calmar_ratio,
+            correlation_to_spy=stored.correlation_to_spy,
+            total_trades=stored.total_trades,
+            backtest_start=stored.backtest_start,
+            backtest_end=stored.backtest_end,
+            # Which LINK of the chain the sync resolved these from — READ off
+            # the row the sync wrote it on, beside the numbers it names.
+            # Deriving it here instead would re-decide it from the provider's
+            # boot-time backtest memo, and a task whose memo predates the write
+            # would label a real persisted-backtest number "stub_placeholder".
+            # The fallback covers a row written before the column existed; it is
+            # the old behaviour, and it degrades a label, never a number.
+            source=stored.display_metrics_source or display_metrics_source(s, bt),
+        )
+    else:
+        metrics = resolve_display_metrics(s, bt)
 
     # Build papers list from passport
     papers_list = [
         PaperRefResponse(
             arxiv_id=p.arxiv_id,
-            title=p.title,
+            # `or None` (#1637): a blank title is not a title. `""` renders as
+            # an empty pair of quotes on the passport; `null` renders as the
+            # absence it is.
+            title=p.title or None,
             authors=p.authors,
             doi=p.doi,
             venue=p.venue,
             year=p.year,
             citation_count=p.citation_count,
             contribution=p.contribution,
+            role=getattr(p, "role", None) or "cited",
+            selection_rank=getattr(p, "selection_rank", None),
+            semantic_score=getattr(p, "semantic_score", None),
+            content_hash=getattr(p, "content_hash", None),
         )
         for p in s.papers
     ]
@@ -137,15 +245,19 @@ def _to_strategy_response(
         id=s.id,
         papers=papers_list,
         # Legacy scalar fields from papers[0]
-        paper_arxiv_id=s.paper_arxiv_id,
-        paper_title=s.paper_title,
+        paper_arxiv_id=s.paper_arxiv_id or None,
+        # `or None` (#1637, acceptance 12): a zero-paper passport has no paper
+        # title, and `""` printed as `""` on the card.
+        paper_title=s.paper_title or None,
         paper_authors=s.paper_authors,
         methodology_summary=s.methodology_summary,
         asset_universe=s.asset_universe,
         universe_source=s.universe_source,
         position_sizing=s.position_sizing.value,
         rebalance_frequency=s.rebalance_frequency.value,
-        status=served_status,
+        # Promoted from the STORED verdict by the shared derivation the passport
+        # payload publishes as ``served_status`` — see that function.
+        status=served_status(s.status.value, rigor_status),
         paper_venue=s.paper_venue,
         paper_year=s.paper_year,
         paper_doi=s.paper_doi,
@@ -157,78 +269,57 @@ def _to_strategy_response(
         on_chain_registration_tx=s.on_chain_registration_tx,
         paper_claimed_sharpe=bt.paper_claimed_sharpe if bt else s.paper_claimed_sharpe,
         paper_claim_blended_sharpe=s.paper_claim_blended_sharpe,
-        # Metric display: use s.real_* (fixture data) when available, fall through
-        # to the persisted backtest row, then the stub placeholder.  This is
-        # independent of ``has_real`` so curated strategies retain their fixture
-        # metrics even when no BacktestResultRecord row exists yet.
-        sharpe_ratio=s.real_sharpe if s.real_sharpe is not None else (bt.sharpe_ratio if bt else s.stub_sharpe),
-        sortino_ratio=s.real_sortino if s.real_sortino is not None else (bt.sortino_ratio if bt else None),
-        cagr=s.real_cagr if s.real_cagr is not None else (bt.cagr if bt else s.stub_cagr),
-        max_drawdown=s.real_max_dd if s.real_max_dd is not None else (bt.max_drawdown if bt else s.stub_max_dd),
-        win_rate=s.real_win_rate if s.real_win_rate is not None else (bt.win_rate if bt else s.stub_win_rate),
-        calmar_ratio=s.real_calmar if s.real_calmar is not None else (bt.calmar_ratio if bt else s.stub_calmar),
-        correlation_to_spy=s.real_corr_spy
-        if s.real_corr_spy is not None
-        else (bt.correlation_to_spy if bt else s.stub_corr_spy),
-        total_trades=s.real_total_trades if s.real_total_trades is not None else (bt.total_trades if bt else None),
-        # Numeric rigor fields (#868, honesty fix #1187): SOLELY the LIVE gate
-        # result — the SAME run_rigor_gate call that produced `verdict` above —
-        # so the leaderboard can never disagree with GET /api/selection-bias/gate
-        # for this id. rigor_result is None when the live gate could not run
-        # (no/insufficient persisted returns, or a batch failure); the field then
-        # renders None (served as the API's honest "not run"), NEVER the stale
-        # s.<field> / bt.<field> values. Those trace back to a migrated
-        # test-fixture snapshot (#1187) that predates the current DSR convention
-        # and gate threshold and cannot be reproduced by any single code version —
-        # falling back to it silently re-labels a `pending` verdict's numbers as
-        # measured. Do not reintroduce the s.<field>/bt.<field> fallback here;
-        # that is precisely the defect #1187 tracks. The basic display metrics
-        # below (sharpe_ratio, cagr, etc.) are a DIFFERENT, out-of-scope concern —
-        # they are descriptive backtest stats, not a rigor-gate pass/fail claim.
-        deflated_sharpe_ratio=(rigor_result.deflated_sharpe if rigor_result is not None else None),
-        dsr_p_value=(rigor_result.dsr_p_value if rigor_result is not None else None),
-        pbo_score=(rigor_result.pbo_score if rigor_result is not None else None),
-        out_of_sample_sharpe=(rigor_result.oos_sharpe if rigor_result is not None else None),
+        # Display metrics: the STORED answer to the `real_* -> persisted backtest
+        # -> stub` chain, resolved once by the passport sync. Same precedence and
+        # same numbers as before; what changed is that they are decided by a
+        # writer instead of re-decided per request per process.
+        sharpe_ratio=metrics.sharpe_ratio,
+        sortino_ratio=metrics.sortino_ratio,
+        cagr=metrics.cagr,
+        max_drawdown=metrics.max_drawdown,
+        win_rate=metrics.win_rate,
+        calmar_ratio=metrics.calmar_ratio,
+        correlation_to_spy=metrics.correlation_to_spy,
+        total_trades=metrics.total_trades,
+        # Numeric rigor fields: the four numbers the GRADE produced, read off the
+        # same row as the badge, so a badge from one gate run can never stand
+        # beside numbers from another. An ungraded row serves None — the API's
+        # honest "not run" — and NEVER the s.<field>/bt.<field> fixture values
+        # (#1187: that snapshot predates the current DSR convention and the gate
+        # threshold, and cannot be reproduced by any single code version).
+        deflated_sharpe_ratio=(stored.deflated_sharpe_ratio if graded else None),
+        dsr_p_value=(stored.dsr_p_value if graded else None),
+        pbo_score=(stored.pbo_score if graded else None),
+        out_of_sample_sharpe=(stored.out_of_sample_sharpe if graded else None),
         kelly_fraction=s.kelly_fraction,
-        # Badge from the LIVE gate verdict (#821) — never the fixture boolean.
-        # passes_rigor_gate is the fail-closed boolean (True only when status=="pass");
-        # rigor_gate_status carries the honest four-state badge (#1184):
-        # "pass" | "fail" | "pending" | "degenerate".
-        passes_rigor_gate=verdict.passes,
-        rigor_gate_status=verdict.status,
+        # THE STORED VERDICT. Graded once, at backtest time, by the real gate;
+        # served here without a recompute (docs/adr/rigor-verdict-of-record.md).
+        # passes_rigor_gate is the fail-closed boolean (True only when the
+        # four-state is "pass"); rigor_gate_status carries the four-state itself
+        # (#1184): "pass" | "fail" | "pending" | "degenerate".
+        passes_rigor_gate=passes,
+        rigor_gate_status=rigor_status,
         # A3: name the source of the numbers instead of leaving the reader to
-        # infer it. "live_gate" iff the live gate actually produced a result for
-        # this strategy; otherwise every rigor field above is None and this says
-        # so. No "persisted_backtest" branch exists here on purpose — see
-        # StrategyResponse.metrics_source.
-        metrics_source=("live_gate" if rigor_result is not None else "unavailable"),
-        display_metrics_source=_display_metrics_source(s, bt),
+        # infer it. "stored_grade" iff a real grade produced them; otherwise
+        # every rigor field above is None and this says so.
+        metrics_source=("stored_grade" if graded else "unavailable"),
+        display_metrics_source=metrics.source,
         # is_backtest_placeholder: True when no BacktestResultRecord row exists.
-        # ``has_real`` is now bt is not None so this is the honest gate.
         is_backtest_placeholder=not has_real,
         sharpe_ci_lower=s.sharpe_ci_lower,
         sharpe_ci_upper=s.sharpe_ci_upper,
-        backtest_start=(
-            s.real_backtest_start
-            if s.real_backtest_start
-            else (bt.backtest_start.isoformat() if bt and bt.backtest_start else None)
-        ),
-        backtest_end=(
-            s.real_backtest_end
-            if s.real_backtest_end
-            else (bt.backtest_end.isoformat() if bt and bt.backtest_end else None)
-        ),
-        # ── Engine attribution (left-behind batch close, docs/sprint/a6-rerun.md /
-        # sprint README row 5) ────────────────────────────────────────────────
-        # Both columns have lived on BacktestResultRecord since the cost SSOT /
-        # 2026-08-03 provenance audit and are already declared on StrategyResponse
-        # (see schemas.py "Engine attribution"), but no construction site ever
-        # populated them — the values stopped at the DB. `bt` here is the
-        # BacktestResult dataclass hydrated straight off the latest
-        # BacktestResultRecord row (BacktestResultRecord.to_backtest_result(),
-        # via LocalStrategyProvider.get_backtest_result), so these are real,
-        # never fabricated: None when no persisted backtest exists, or when the
-        # row predates the column (both honest NULLs, never a guessed engine).
+        # num_trials provenance (#1358): curated strategies are ALWAYS graded
+        # self-contained (num_trials=1, decouple #2 — never deflated by the
+        # library's size). Reported only once a grade exists; an ungraded row's
+        # honest answer is "no provenance to report", not an assumed 1.
+        num_trials_in_selection=(1 if graded else None),
+        num_trials_scope=(_SCOPE_CURATED_SELF_CONTAINED if graded else "unspecified"),
+        backtest_start=metrics.backtest_start,
+        backtest_end=metrics.backtest_end,
+        # ── Engine attribution ──────────────────────────────────────────────
+        # Read off the BacktestResultRecord row the provider hydrated, so these
+        # are real or None — never a guessed engine. Not on the passport row, so
+        # not part of the stored-verdict block above.
         backtest_engine=(bt.backtest_engine if bt else None),
         cost_model_id=(bt.cost_model_id if bt else None),
         regime_tag=s.regime_tag,
@@ -237,329 +328,107 @@ def _to_strategy_response(
     )
 
 
-def _live_verdict_for_one(s: Strategy) -> RigorGateVerdict:
-    """Live rigor-gate verdict for a single strategy (#821).
+def _publishable_strategy_ids(
+    session,
+    strategy_ids: list[str],
+    wallet_address: str | None,
+    *,
+    is_example: bool,
+) -> set[str]:
+    """Which of ``strategy_ids`` this wallet may publish — O(1) queries, not O(N).
 
-    Used by the single-strategy fetch path (``get_strategy``). Delegates to
-    ``verdicts_for_strategies`` over the FULL library so the verdict is computed
-    with the same cohort PBO + avg correlation context the list badge uses,
-    keeping the detail view consistent with the list. ``num_trials`` is
-    self-contained (1 per strategy, decouple #2) — it does NOT come from the
-    library size; only PBO/avg_correlation are cohort-derived. No real returns
-    → ``pending``, never a fixture value. Never raises: any failure degrades to
-    ``pending`` (fail-closed badge).
+    Both Library listings used to call ``wallet_can_publish`` once per response
+    row. Each call is a single ``.first()``
+    (``models/strategy_generators.py``), so a 34-row curated page issued 34
+    extra sequential round trips, every one of them paying a ``pool_pre_ping``
+    ``SELECT 1`` (``db.py``) first. Worse, the per-row call short-circuits on an
+    anonymous caller — so a visitor paid nothing and the signed-in owner paid
+    all 34, which is backwards for a demo (#1663).
+
+    Same answers, one ``IN`` query:
+
+    * **Anonymous callers still pay nothing.** The empty-``wallet_address``
+      short-circuit below reproduces the old ``bool(caller) and ...`` guard
+      exactly — no query is issued and every row gets ``can_publish=False``.
+      This is not relaxed; a visitor must not be told they can publish.
+    * **The ``PLATFORM_ADMIN_WALLETS`` override is delegated, never re-derived.**
+      It stays inside ``wallet_can_publish``, which this function calls at most
+      once. Re-parsing that env var here would create a third copy of the
+      parsing (``models/strategy_generators.py`` and
+      ``api/metrics_private_routes.py`` already hold two), and a copy that
+      drifts silently changes who is allowed to publish. That is why this is
+      1 + at-most-1 queries rather than literally one: the extra lookup buys
+      single-sourced publish semantics, and it is a constant, not a per-row
+      cost.
+
+    The probe is aimed at an id the wallet demonstrably did NOT generate, so
+    ``wallet_can_publish``'s DB half is ``False`` by construction and a ``True``
+    answer isolates the admin bit exactly. It is skipped entirely when it could
+    not change an answer (non-example rows have no admin override; a wallet that
+    generated every id is already fully covered), and an actual admin costs zero
+    extra queries because the override returns before the row lookup runs.
     """
-    try:
-        cohort = _library_cohort_including(s)
-        return verdicts_for_strategies(cohort).get(s.id, RigorGateVerdict.pending())
-    except Exception as exc:
-        logger.warning("live verdict failed for %s (badge → pending): %s", s.id, exc)
-        return RigorGateVerdict.pending()
+    from archimedes.models.strategy_generators import StrategyGenerator, wallet_can_publish
 
+    if not wallet_address or not strategy_ids:
+        return set()
 
-def _library_cohort_including(s: Strategy) -> list[Strategy]:
-    """The full library cohort, guaranteed to contain ``s``.
+    ids = list(dict.fromkeys(strategy_ids))
+    # wallet_can_publish lower-cases its argument and record_generator stores
+    # the lower-cased form; match that here rather than trusting the caller's
+    # casing.
+    wallet = wallet_address.lower()
 
-    This cohort feeds cohort-scoped PBO + avg_correlation ONLY — it must NOT
-    drive ``num_trials`` (self-contained at 1 per strategy, decouple #2). ``s``
-    is appended only if the provider list somehow misses it (e.g. a
-    just-generated strategy not yet listed).
-    """
-    try:
-        cohort = list(strategy_provider().list_strategies())
-    except Exception:
-        cohort = []
-    if not any(x.id == s.id for x in cohort):
-        cohort.append(s)
-    return cohort
-
-
-def _live_rigor_result_for_one(s: Strategy) -> RigorGateResult | None:
-    """Full live ``RigorGateResult`` for a single strategy (#868).
-
-    Companion to ``_live_verdict_for_one``: that function reduces the live gate
-    to the four-state pass/fail/pending/degenerate badge (``RigorGateVerdict``
-    carries no numeric fields), but the served leaderboard numbers (``dsr_p_value``,
-    ``pbo_score``, ``out_of_sample_sharpe``, ``deflated_sharpe_ratio``) must
-    also come from the SAME live gate run, not the stale ``s.dsr_p_value`` /
-    ``bt.dsr_p_value`` fixture fields — otherwise the leaderboard can show
-    numbers that disagree with what ``GET /api/selection-bias/gate`` computes
-    for the same strategy right now. Delegates to
-    ``_live_rigor_results_for_strategies`` over the FULL library so the single
-    fetch carries the same cohort PBO + avg correlation context as the list.
-    ``num_trials`` is self-contained (1, decouple #2) — it does NOT come from
-    the library size. Returns ``None`` on no/insufficient persisted returns or
-    any failure — the caller (#1187) renders that as the numeric fields being
-    ``None``, never a fabricated number, matching the fail-closed badge contract.
-    """
-    try:
-        cohort = _library_cohort_including(s)
-        return _live_rigor_results_for_strategies(cohort).get(s.id)
-    except Exception as exc:
-        logger.warning("live rigor gate failed for %s (numbers → None): %s", s.id, exc)
-        return None
-
-
-def _live_rigor_results_for_strategies(strategies: list[Strategy]) -> dict[str, RigorGateResult]:
-    """Batch live ``RigorGateResult`` per strategy (#868), for the library list.
-
-    Companion to ``verdicts_for_strategies``: that function collapses the live
-    gate to a four-state pass/fail/pending/degenerate badge, discarding the underlying
-    DSR/PBO/OOS numbers. The served leaderboard numeric fields must equal what
-    ``GET /api/selection-bias/gate`` computes for the same strategy right now
-    (not the stale ``s.dsr_p_value``/``bt.dsr_p_value`` fixture fields), so this
-    mirrors that route's cohort context exactly: real persisted returns from
-    the DB, zero-variance series excluded before they can dilute avg_correlation
-    (same fix as #868's selection_bias_routes.py change), cohort PBO +
-    avg-correlation over the survivors, one ``run_rigor_gate`` call per
-    strategy. ``num_trials`` is self-contained (1 per strategy, decouple #2) —
-    it is NOT derived from this cohort. Strategies with no/insufficient
-    persisted returns are simply absent from the returned dict — the caller
-    (#1187) serves ``None`` for those ids' numeric rigor fields (fail-closed:
-    no fabricated number for a strategy the live gate cannot evaluate; the
-    pre-#1187 fixture-field fallback is gone). A degenerate (zero-variance)
-    series IS graded and included here — it just runs with self-contained
-    cohort context (see the ``gate_kwargs`` branch below) so it can't dilute
-    ``avg_correlation`` for the rest of the cohort.
-
-    Any DB or cohort-compute failure degrades to ``{}`` (every id's numeric
-    rigor fields render ``None``) rather than raising into the library-list
-    response.
-
-    **Perf (Library page load latency):** the batch cohort compute below (PBO,
-    average correlation, per-strategy look-ahead code load, one ``run_rigor_gate``
-    call per strategy — measured ~6s for this route) is memoized in
-    ``services.rigor_cache`` keyed on a data-version token
-    (``rigor_cache.cohort_key``) derived from the exact persisted-returns read just
-    above, PLUS each strategy's ``strategy_code_hash`` — the look-ahead audit
-    inside ``run_rigor_gate`` also depends on the strategy's code, so the code
-    hash has to participate in the key or a code edit could serve a stale
-    look-ahead verdict for up to the TTL (Copilot review, PR #1040). The DB read
-    itself is NEVER cached — it always runs live, which is what lets the key
-    react the instant persisted returns change. This is honest caching: the
-    cached value IS the real live-computed result, so a cache hit serves exactly
-    what a cache miss would have computed. ``rigor_cache.get_or_compute`` fails
-    open (any cache-layer error falls back to calling the compute closure
-    directly), so a cache bug can only make a request slow, never wrong. It also
-    never caches the ``{}`` failure sentinel (``cache_if=bool``) so
-    a transient cohort-compute failure can't strand every strategy on ``None``
-    numeric rigor fields for the full TTL.
-    """
-    if not strategies:
-        return {}
-
-    strategy_ids = [s.id for s in strategies]
-
-    try:
-        from archimedes.db import get_session, init_db
-        from archimedes.services.backtest_repository import get_all_daily_returns
-
-        init_db()
-        with get_session() as session:
-            returns_by_strategy = get_all_daily_returns(session, strategy_ids)
-    except Exception as exc:
-        logger.warning("live rigor result batch: DB read failed (all → None): %s", exc)
-        return {}
-
-    from archimedes.services.rigor_cache import cohort_key, get_or_compute
-
-    # Fold each strategy's code-version token into the key (Copilot review, PR
-    # #1040): run_rigor_gate's look-ahead audit reads `strategy_code`, so a key
-    # built from returns alone can serve a stale look-ahead verdict/passes_all
-    # after a code edit even though returns are unchanged. `strategy_code_hash`
-    # is a SHA-256 of the strategy file contents already computed onto the
-    # Strategy object by LocalStrategyProvider — reading it here costs no extra
-    # I/O on the request path (the cheap-identifier preference `cohort_key`'s
-    # docstring calls for).
-    code_versions = {s.id: getattr(s, "strategy_code_hash", None) for s in strategies}
-    cache_key = "strategies_list:" + cohort_key(strategy_ids, returns_by_strategy, code_versions)
-
-    def _compute() -> dict[str, RigorGateResult]:
-        from archimedes.services.rigor_evaluator import (
-            assert_self_contained_cohort_correlation,
-            compute_average_pairwise_correlation,
-            compute_pbo,
-            run_rigor_gate,
+    generated = {
+        row[0]
+        for row in session.query(StrategyGenerator.strategy_id)
+        .filter(
+            StrategyGenerator.strategy_id.in_(ids),
+            StrategyGenerator.wallet_address == wallet,
         )
+        .all()
+    }
 
-        # Exclude zero-variance (degenerate/placeholder-flat) series from the cohort
-        # context — same fix as selection_bias_routes.py's valid_returns filter
-        # (#868), so avg_correlation/pbo_scores here match that route's cohort gate
-        # exactly rather than drifting apart on this input.
-        # TODO(A7): cohort filter here diverges from live_rigor_gate's cohort — see
-        # docs/sprint/cluster-4-strategies-route.md
-        valid_returns = {
-            k: v
-            for k, v in returns_by_strategy.items()
-            if len(v) >= 10 and float(np.ptp(np.asarray(v, dtype=float))) > 0.0
-        }
+    if not is_example:
+        return generated
 
-        try:
-            pbo_scores = compute_pbo(valid_returns) if len(valid_returns) >= 2 else {}
-            # num_trials = 1: each strategy is graded on ITS OWN Sharpe, never
-            # deflated by how many OTHER strategies sit in the library (decouple
-            # #2). PBO/avg_correlation stay cohort-wide (out of scope here).
-            num_trials = 1
-            avg_correlation = compute_average_pairwise_correlation(valid_returns) if len(valid_returns) >= 2 else 0.0
-            # V4 guard (num_trials-provenance audit 2026-08-03): cohort-wide
-            # avg_correlation is INERT at num_trials=1 (E[max_N]=0 when N==1) —
-            # this makes it IMPOSSIBLE for a future edit to silently reintroduce
-            # num_trials>1 here without re-coupling every strategy's DSR to the
-            # library's correlation structure; it raises instead (caught below,
-            # same fail-closed contract as the rest of this cohort-context block).
-            assert_self_contained_cohort_correlation(num_trials, avg_correlation)
-        except Exception as exc:
-            logger.warning("live rigor result batch: cohort-context compute failed (all → None): %s", exc)
-            return {}
+    ungenerated = [sid for sid in ids if sid not in generated]
+    if not ungenerated:
+        return generated
 
-        # Load code for every strategy that has >= 10 returns — degenerate series
-        # (excluded from valid_returns) still run their own gate (#868) and need the
-        # look-ahead audit input.
-        code_by_id = {
-            s.id: _load_strategy_code_safe_local(s) for s in strategies if len(returns_by_strategy.get(s.id, [])) >= 10
-        }
-
-        computed: dict[str, RigorGateResult] = {}
-        for s in strategies:
-            daily_returns = returns_by_strategy.get(s.id, [])
-            if len(daily_returns) < 10:
-                continue  # No sufficient returns — caller (#1187) serves None, never a fixture number
-            if s.id in valid_returns:
-                # Non-degenerate series: num_trials is self-contained (1, decouple
-                # #2); pbo_scores / avg_correlation still come from the cohort so
-                # they match the library gate.
-                gate_kwargs: dict = {
-                    "num_trials": num_trials,
-                    "pbo_scores": pbo_scores,
-                    "average_correlation": avg_correlation,
-                }
-            else:
-                # Degenerate (zero-variance) series: excluded from cohort context to
-                # prevent diluting avg_correlation (#868); num_trials is self-contained
-                # (1) either way, but the strategy still runs its own gate so the
-                # caller gets a live "degenerate" verdict (#1184) rather than falling
-                # back to a stale fixture value.
-                gate_kwargs = {"num_trials": 1, "pbo_scores": {}, "average_correlation": 0.0}
-            try:
-                computed[s.id] = run_rigor_gate(
-                    strategy_id=s.id,
-                    daily_returns=daily_returns,
-                    strategy_code=code_by_id.get(s.id),
-                    in_sample_sharpe=None,
-                    paper_claimed_sharpe=getattr(s, "paper_claimed_sharpe", None),
-                    **gate_kwargs,
-                )
-            except Exception as exc:
-                logger.warning("live rigor gate failed for %s in batch (numbers → None): %s", s.id, exc)
-        return computed
-
-    # cache_if=bool: `_compute()` returns `{}` on a transient
-    # cohort-context compute failure (see the `except Exception` above), and an
-    # empty dict must never be memoized — caching it would make that transient
-    # failure "sticky" for the full TTL, serving every strategy's numeric rigor
-    # fields as None long after the underlying failure has passed (Copilot
-    # review, PR #1040). The live `{}` is still returned to THIS caller either
-    # way; only whether it's written to the store for the NEXT caller changes.
-    return get_or_compute(cache_key, _compute, cache_if=bool)
-
-
-def _load_strategy_code_safe_local(strategy: Strategy) -> str | None:
-    """Best-effort strategy-source read for the batch look-ahead audit input.
-
-    Local twin of ``live_rigor_gate._load_strategy_code_safe`` (out of scope for
-    #868 — that module is untouched) so ``_live_rigor_results_for_strategies``
-    doesn't need to reach into it. Never raises: ``None`` on any failure, which
-    makes the gate's look-ahead leg fail rather than crash the library list.
-    """
-    code_path = getattr(strategy, "strategy_code_path", None)
-    if not code_path:
-        return None
-    try:
-        from archimedes.api.selection_bias_routes import _load_strategy_code
-
-        return _load_strategy_code(code_path)
-    except Exception:
-        return None
-
-
-def _verdict_from_result(result: RigorGateResult | None) -> RigorGateVerdict:
-    """Derive a RigorGateVerdict from an already-computed RigorGateResult.
-
-    Used by list_strategies so the badge and the numeric rigor fields always
-    come from the same single live-gate computation — avoids the double DB read and
-    duplicate gate run that verdicts_for_strategies would add, and eliminates
-    the badge/numeric-fields divergence that arose when the two paths used different
-    cohort filtering (#868, Copilot review).
-
-    #1184: delegates to ``RigorGateVerdict.from_result`` (rather than
-    hand-rolling ``passed()``/``failed()`` off ``passes_all`` here) so a
-    zero-variance persisted series reports the distinct ``degenerate`` status
-    through this route too, not just through ``live_rigor_gate.verdict_from_returns``
-    — the two badge-producing call sites can't drift apart on this check.
-    """
-    if result is None:
-        return RigorGateVerdict.pending()
-    return RigorGateVerdict.from_result(result)
+    if wallet_can_publish(session, strategy_id=ungenerated[0], wallet_address=wallet, is_example=True):
+        return set(ids)
+    return generated
 
 
 # ── Library listing ─────────────────────────────────────────────
 
 
-@strategies_router.get("/", response_model=StrategyListResponse)
-async def list_strategies(
-    request: Request,
-    status: str | None = Query(None, pattern="^(candidate|validated|live|retired)$"),
-    limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
-):
-    """List strategies in the library. Backed by LocalStrategyProvider.
+def _list_strategies_sync(request: Request, status: str | None, limit: int, offset: int) -> StrategyListResponse:
+    """Page the library and serve each row's stored verdict.
 
-    Both the ``passes_rigor_gate`` badge and the numeric rigor fields
-    (``dsr_p_value``, ``pbo_score``, ``out_of_sample_sharpe``,
-    ``deflated_sharpe_ratio``) come from a SINGLE live-gate run via
-    ``_live_rigor_results_for_strategies`` (#868). The badge is derived from the
-    result via ``_verdict_from_result`` — a second DB read + duplicate gate run
-    through ``verdicts_for_strategies`` is not needed, and the inconsistency that
-    arose when the two paths used different cohort filtering (degenerate-series
-    exclusion existed only in ``_live_rigor_results_for_strategies``) is
-    eliminated.
+    The blocking half of the route below (#1818 P4): it holds every
+    ``session.query`` and every synchronous compute, and it runs on a worker
+    thread so a slow or lock-blocked read cannot stop the event loop from
+    answering ``/health``.
 
-    NOTE on the ``status`` filter: it filters on the file-declared status BEFORE the
-    live-gate promotion overlay, so a CANDIDATE that the live gate promotes to
-    VALIDATED still appears under ``?status=candidate`` (its stored status) with a
-    served ``status: "validated"``. This is intentional — the stored status is the
-    stable filter key; the served status reflects the live verdict.
+    **This route no longer grades anything (#1746 / PR-B).** It used to run the
+    live gate over the whole library on every request, which is what #1173's
+    "never a filtered or paginated subset" rule was defending: scoring over a
+    page made a badge depend on which page a strategy landed on (a short window
+    falls under ``MIN_LIBRARY_N_FOR_PBO_GATING`` and the CSCV/PBO value itself
+    shifts with the cohort), and grading ``list_strategies(status=…)`` graded a
+    subset, so ``?status=candidate`` and ``?status=validated`` could answer
+    differently for one id. Both were the list-vs-detail contradiction dfa8fc1
+    was written to prevent. The rule is now structural rather than defended by a
+    comment: the cohort belongs to the WRITER
+    (``services.curated_grading.grade_cohort``, always the full library), and
+    every read surface serves the one stored answer.
     """
     from archimedes.db import get_session
-    from archimedes.models.strategy_generators import wallet_can_publish
 
     status_filter = StrategyStatus(status) if status else None
 
-    # Grade over the FULL library — never a filtered or paginated subset (#1173).
-    # The detail route grades via _library_cohort_including(), which calls
-    # list_strategies() with NO status filter, so the cohort here must match it
-    # exactly or the same strategy's badge changes depending on how it was
-    # requested. Two distinct ways that broke:
-    #
-    #   1. Pagination. Scoring over `window` made the badge depend on which page
-    #      a strategy landed on: a short window can fall under
-    #      MIN_LIBRARY_N_FOR_PBO_GATING (criterion 4 skipped) and the CSCV/PBO
-    #      value itself shifts with the cohort. Verified live: strategy
-    #      d90b357a…4bbd graded False in a 5-item window but True in the
-    #      full-library view and True on its own detail/passport route.
-    #   2. The `status` filter. Grading `list_strategies(status=...)` graded a
-    #      SUBSET, so `?status=candidate` and `?status=validated` could return
-    #      different verdicts for the same strategy, and both could disagree with
-    #      the passport. Same class of bug as (1), same fix — the filter is a
-    #      display concern and must not reach the cohort.
-    #
-    # Both are the list-vs-detail contradiction dfa8fc1 was written to prevent,
-    # and which this route's docstring asserts cannot happen.
-    #
-    # Bonus: the cache key (see cohort_key) is derived from the cohort's ids, so
-    # grading the full library collapses the previous one-cohort-computation-per
-    # -offset AND per-status-filter (~6s each) into a single shared entry.
-    #
     # Provider failure must be visible on the wire, not a silent empty list
     # (#1356: `total=len(strats)` used to render as a confident, honest-
     # looking "0 strategies" whether the provider raised or the library was
@@ -598,23 +467,32 @@ async def list_strategies(
             degraded = True
             degraded_reason = "library is empty"
 
-    rigor_results = _live_rigor_results_for_strategies(library)
-
-    # Filter/paginate only AFTER grading. Delegated to the provider rather than
-    # filtered in-process so the `status` semantics stay byte-identical to the
-    # previous behaviour (file-declared status, before the live-gate promotion
-    # overlay — see the docstring note above).
+    # Filter/paginate. Delegated to the provider rather than filtered in-process
+    # so the `status` semantics stay byte-identical (file-declared status, before
+    # the stored-verdict promotion overlay — see the docstring note above).
     strats = strategy_provider().list_strategies(status=status_filter) if status_filter else library
     total = len(strats)
     window = strats[offset : offset + limit]
     caller = get_linked_wallet_address(request)
     responses: list[StrategyResponse] = []
     with get_session() as session:
+        window_ids = [s.id for s in window]
+        # One IN query for the whole window's publish rights (#1663) — this was
+        # a per-row wallet_can_publish call, i.e. one round trip per response
+        # row, paid only by signed-in callers.
+        publishable = _publishable_strategy_ids(session, window_ids, caller, is_example=True)
+        # …and one for the window's stored verdicts. The cohort-wide live gate
+        # run this replaced (`_live_rigor_results_for_strategies`, ~6s per page
+        # even warm) is gone with it: the verdict is graded once, when a curated
+        # backtest runs (`services.curated_grading`), and read here. Nothing
+        # about the answer depends on which page a strategy landed on any more,
+        # which is what #1173's full-library-cohort rule was defending — that
+        # rule now lives on the write side, where the cohort is always the whole
+        # library by construction.
+        stored = stored_passports_for(session, window_ids)
         for s in window:
-            resp = _to_strategy_response(s, _verdict_from_result(rigor_results.get(s.id)), rigor_results.get(s.id))
-            resp.can_publish = bool(caller) and wallet_can_publish(
-                session, strategy_id=s.id, wallet_address=caller, is_example=True
-            )
+            resp = _to_strategy_response(s, stored.get(s.id))
+            resp.can_publish = s.id in publishable
             responses.append(resp)
     return StrategyListResponse(
         strategies=responses,
@@ -624,24 +502,112 @@ async def list_strategies(
     )
 
 
-@strategies_router.get("/generated")
-async def list_generated_strategies(
+@strategies_router.get("/", response_model=StrategyListResponse)
+async def list_strategies(
     request: Request,
-    limit: int = Query(50, ge=1, le=200),
-    user: CurrentUser = Depends(require_current_user),
+    status: str | None = Query(None, pattern="^(candidate|validated|live|retired)$"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
 ):
-    """List fusion/architect-generated strategies from the strategy_store table.
+    """List strategies in the library. Backed by LocalStrategyProvider.
 
-    Private-until-published: row is visible when published or owned by current
-    canonical user; verified linked wallet handles legacy ``owner_wallet`` rows.
-    Legacy ownerless rows remain invisible until purged (scripts/purge_orphan_generated.py)
-    or published. Curated examples live on GET /api/strategies/ and stay public.
+    **This route runs no rigor gate.** The ``rigor_gate_status`` four-state, the
+    ``passes_rigor_gate`` badge derived from it, and the four numeric rigor
+    fields (``deflated_sharpe_ratio``, ``dsr_p_value``, ``pbo_score``,
+    ``out_of_sample_sharpe``) are all READ from each strategy's stored verdict
+    of record on its ``strategy_passports`` row. A strategy is graded once, by
+    the real gate, when its backtest runs; every surface serves that row
+    (``docs/adr/rigor-verdict-of-record.md``). A row no gate has produced reads
+    ``rigor_gate_status: "pending"`` with ``passes_rigor_gate: false`` and four
+    ``null`` numbers — "not graded", never "graded and failed".
+
+    ``graded_at`` and ``gate_version`` on ``GET /api/strategies/passports/{id}``
+    are the proof a real gate produced the verdict, and which gate.
+
+    NOTE on the ``status`` filter: it filters on the FILE-DECLARED status, while
+    the served ``status`` is the promotion derived from the stored verdict — a
+    ``candidate`` whose stored verdict is ``pass`` is served as ``validated``.
+    So such a strategy appears under ``?status=candidate`` with a served
+    ``status: "validated"``. That is intentional: the persisted column is the
+    stable filter key, and the passport route publishes both, as ``status`` and
+    ``served_status``.
     """
+    return await asyncio.to_thread(_list_strategies_sync, request, status, limit, offset)
 
+
+# What a generated row carries when strategy_passports has never heard of it:
+# the strategy exists, no gate has graded it. `passes_rigor_gate` is None rather
+# than False because False is a VERDICT ("the gate ran and it lost") and no gate
+# ran — the same distinction rigor_gate_status="pending" makes in words.
+_UNGRADED_VERDICT_FIELDS: dict = {
+    "passes_rigor_gate": None,
+    "rigor_gate_status": "pending",
+    "graded_at": None,
+    "deflated_sharpe_ratio": None,
+    "dsr_p_value": None,
+    "pbo_score": None,
+    "out_of_sample_sharpe": None,
+}
+
+
+def _passport_verdicts_for(session, strategy_ids: list[str]) -> dict[str, dict]:
+    """Stored rigor verdicts for a page of generated strategies — ONE query.
+
+    Reads ``strategy_passports``: the verdict of record and the four rigor
+    numbers the SAME grading event produced (docs/adr/rigor-verdict-of-record.md).
+    The numbers travel with the verdict deliberately — a badge from the passport
+    beside DSR/PBO from ``StrategyRecord.rigor_verdict`` would put two different
+    gates' answers on one row, which is the shape #1187/#1340 removed from the
+    curated path.
+
+    ``passes_rigor_gate`` is derived from the stored four-state, not copied from
+    the stored boolean, so the read side cannot serve the two apart even if a row
+    predating the coupling has them apart.
+
+    Non-fatal: a DB failure returns ``{}`` and every row degrades to ungraded —
+    fail-closed, never a fabricated pass.
+    """
+    if not strategy_ids:
+        return {}
+    try:
+        from archimedes.models.strategy_passport_record import StrategyPassportRecord
+
+        rows = session.query(StrategyPassportRecord).filter(StrategyPassportRecord.id.in_(strategy_ids)).all()
+    except Exception as exc:  # pragma: no cover — defensive; DB-level failure
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "passport verdict read failed for the generated page (%s) — every row degrades to ungraded",
+            type(exc).__name__,
+        )
+        _rollback_quietly(session)
+        return {}
+    out: dict[str, dict] = {}
+    for row in rows:
+        status = row.rigor_gate_status or "pending"
+        out[row.id] = {
+            "passes_rigor_gate": status == "pass",
+            "rigor_gate_status": status,
+            "graded_at": row.graded_at.isoformat() if row.graded_at else None,
+            "deflated_sharpe_ratio": row.deflated_sharpe_ratio,
+            "dsr_p_value": row.dsr_p_value,
+            "pbo_score": row.pbo_score,
+            "out_of_sample_sharpe": row.out_of_sample_sharpe,
+        }
+    return out
+
+
+def _list_generated_strategies_sync(request: Request, limit: int, user: CurrentUser) -> dict:
+    """Read the caller-visible page of ``strategy_store`` rows.
+
+    The blocking half of the route below (#1818 P4): it holds every
+    ``session.query`` and every synchronous compute, and it runs on a worker
+    thread so a slow or lock-blocked read cannot stop the event loop from
+    answering ``/health``.
+    """
     from sqlalchemy import and_, or_
 
     from archimedes.db import get_session
-    from archimedes.models.strategy_generators import wallet_can_publish
     from archimedes.models.strategy_store import StrategyRecord
 
     caller = get_linked_wallet_address(request)  # None when anonymous — never an error
@@ -677,13 +643,30 @@ async def list_generated_strategies(
             from archimedes.models.generation_cost import generation_costs_for_strategies
 
             costs = generation_costs_for_strategies(session, [r.id for r in records])
+            # One IN query for the whole page's publish rights (#1663), same
+            # shape as the generation-cost read directly above.
+            publishable = _publishable_strategy_ids(session, [r.id for r in records], caller, is_example=False)
+            # ONE IN-query for the whole page's stored rigor verdicts, same shape
+            # as the two reads above (#1747). Before this the Library's Generated
+            # tab was the only surface that never looked at strategy_passports at
+            # all: it served StrategyRecord.to_dict(), whose `status` and
+            # `rigor_verdict` are BOTH written from the generation-time fusion
+            # verdict and never rewritten after a backtest. So the tab's own
+            # honesty guard — demote when status=="live" but the gate failed —
+            # was structurally unreachable, because the two halves of that
+            # condition came from the same blob. Twenty-one rows read "Live ✓"
+            # in the Library while their own passports read "Reference only —
+            # gate failed".
+            verdicts = _passport_verdicts_for(session, [r.id for r in records])
             page = []
             for r in records:
                 d = r.to_dict()
-                d["can_publish"] = bool(caller) and wallet_can_publish(
-                    session, strategy_id=r.id, wallet_address=caller, is_example=False
-                )
+                d["can_publish"] = r.id in publishable
                 d["generation_cost"] = costs.get(r.id)
+                # The verdict of record, overlaid onto the store row. A strategy
+                # with no passport row has never been graded — None / "pending",
+                # never a boolean, and never green.
+                d.update(verdicts.get(r.id, _UNGRADED_VERDICT_FIELDS))
                 page.append(d)
             # Citation truth: ``StrategyRecord.to_dict()`` returns source_papers
             # exactly as stored — arxiv_id, no title — so the Library card had no
@@ -695,9 +678,17 @@ async def list_generated_strategies(
                 [p.get("arxiv_id") for d in page for p in (d.get("source_papers") or []) if isinstance(p, dict)],
                 session,
             )
+            # Each row's OWN rejection reasons, derived from the rigor_verdict
+            # blob `to_dict()` already decoded above — a pure function, zero
+            # extra queries, so the page cost is unchanged (the Library's
+            # "Rejected — did not pass the rigor gate" cards used to share one
+            # paragraph of guessed prose because this field did not exist).
+            from archimedes.services.rigor_reasons import rigor_reasons_for_verdict
+
             rows = []
             for d in page:
                 d["source_papers"] = _resolve_source_papers(d.get("source_papers"), corpus_meta)
+                d["rigor_reasons"] = rigor_reasons_for_verdict(d.get("rigor_verdict"))
                 rows.append(_redact_owner_wallet(d, caller))
     except Exception as exc:
         # Full exception detail is logged server-side only — never echoed to
@@ -710,6 +701,22 @@ async def list_generated_strategies(
         degraded = True
         degraded_reason = "strategy store unavailable"
     return {"strategies": rows, "total": len(rows), "degraded": degraded, "degraded_reason": degraded_reason}
+
+
+@strategies_router.get("/generated")
+async def list_generated_strategies(
+    request: Request,
+    limit: int = Query(50, ge=1, le=200),
+    user: CurrentUser = Depends(require_current_user),
+):
+    """List fusion/architect-generated strategies from the strategy_store table.
+
+    Private-until-published: row is visible when published or owned by current
+    canonical user; verified linked wallet handles legacy ``owner_wallet`` rows.
+    Legacy ownerless rows remain invisible until purged (scripts/purge_orphan_generated.py)
+    or published. Curated examples live on GET /api/strategies/ and stay public.
+    """
+    return await asyncio.to_thread(_list_generated_strategies_sync, request, limit, user)
 
 
 @strategies_router.get("/signals", response_model=StrategySignalsResponse)
@@ -855,6 +862,26 @@ async def run_stress_test(payload: dict, request: Request, response: Response): 
 # ── Unified Passport Store (Issue #160 Phase 2) ───────────────────────────
 
 
+def _passport_payload(record, caller: str | None) -> dict:
+    """The wire shape of one passport row: the stored dict + ``served_status``.
+
+    ``to_dict()`` publishes the PERSISTED ``status`` column, which is what the
+    ``?status=`` filter queries — overwriting it here would make the list and its
+    own filter disagree. ``served_status`` is the same value a CARD shows for
+    this row, produced by the one shared derivation :func:`served_status`, so an
+    agent comparing this payload with ``GET /api/strategies/{id}`` gets the two
+    under names that say which is which instead of one string with two answers
+    (#1746).
+    """
+    payload = _redact_owner_wallet(record.to_dict(), caller)
+    payload["served_status"] = served_status(
+        record.status,
+        record.rigor_gate_status,
+        promote=(record.generation_method or "").lower() == "curated",
+    )
+    return payload
+
+
 def _redact_owner_wallet(d: dict, caller: str | None) -> dict:
     """Strip ``owner_wallet`` from a public payload unless the caller IS the owner.
 
@@ -912,17 +939,13 @@ def _visible_passports(session, records: list, caller: str | None = None, caller
     return visible
 
 
-@strategies_router.get("/passports")
-async def list_strategy_passports(
-    request: Request,
-    status: str | None = Query(None),
-    regime_tag: str | None = Query(None),
-    limit: int = Query(50, ge=1, le=200),
-):
-    """List strategies from the unified strategy_passports table.
+def _list_strategy_passports_sync(request: Request, status: str | None, regime_tag: str | None, limit: int) -> dict:
+    """Read the caller-visible passports.
 
-    Private-until-published applies here exactly as on ``/generated`` — see
-    ``_visible_passports``.
+    The blocking half of the route below (#1818 P4): it holds every
+    ``session.query`` and every synchronous compute, and it runs on a worker
+    thread so a slow or lock-blocked read cannot stop the event loop from
+    answering ``/health``.
     """
     from archimedes.db import get_session
     from archimedes.services.passport_loader import list_passports
@@ -932,17 +955,38 @@ async def list_strategy_passports(
     with get_session() as session:
         records = list_passports(session, status=status, regime_tag=regime_tag)
         records = _visible_passports(session, records, caller, user.id if user else None)
-        passports = [_redact_owner_wallet(r.to_dict(), caller) for r in records[:limit]]
+        passports = [_passport_payload(r, caller) for r in records[:limit]]
 
     return {"passports": passports, "total": len(passports), "source": "strategy_passports"}
 
 
-@strategies_router.get("/passports/{strategy_id}")
-async def get_strategy_passport(request: Request, strategy_id: str):
-    """Get a single passport in its native dict shape from strategy_passports.
+@strategies_router.get("/passports")
+async def list_strategy_passports(
+    request: Request,
+    status: str | None = Query(None),
+    regime_tag: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """List strategies from the unified strategy_passports table.
 
-    Unpublished non-example passports 404 for non-owners (never 403 — a 403
-    would confirm the id exists).
+    A pure read of the stored rows — no gate runs here. Each row carries the
+    verdict of record and the provenance that proves it
+    (``docs/adr/rigor-verdict-of-record.md``), plus ``served_status`` beside the
+    persisted ``status`` this endpoint's own ``?status=`` filter queries.
+
+    Private-until-published applies here exactly as on ``/generated`` — see
+    ``_visible_passports``.
+    """
+    return await asyncio.to_thread(_list_strategy_passports_sync, request, status, regime_tag, limit)
+
+
+def _get_strategy_passport_sync(request: Request, strategy_id: str) -> dict:
+    """Read one passport, gated on visibility.
+
+    The blocking half of the route below (#1818 P4): it holds every
+    ``session.query`` and every synchronous compute, and it runs on a worker
+    thread so a slow or lock-blocked read cannot stop the event loop from
+    answering ``/health``.
     """
     from fastapi import HTTPException
 
@@ -955,7 +999,29 @@ async def get_strategy_passport(request: Request, strategy_id: str):
         record = get_passport(session, strategy_id)
         if record is None or not _visible_passports(session, [record], caller, user.id if user else None):
             raise HTTPException(status_code=404, detail="Passport not found")
-        return _redact_owner_wallet(record.to_dict(), caller)
+        return _passport_payload(record, caller)
+
+
+@strategies_router.get("/passports/{strategy_id}")
+async def get_strategy_passport(request: Request, strategy_id: str):
+    """Get a single passport in its native dict shape from strategy_passports.
+
+    A pure read of the stored row — the verdict of record
+    (``docs/adr/rigor-verdict-of-record.md``). No gate runs here, and none runs
+    on ``GET /api/strategies/{id}`` either, so the two agree by construction on
+    ``rigor_gate_status``, ``passes_rigor_gate`` and the headline metrics. The
+    payload publishes both status names: ``status`` is the persisted lifecycle
+    column the ``?status=`` filter queries, and ``served_status`` is the card
+    status that same stored verdict derives — the one the detail route serves.
+
+    ``graded_at`` / ``gate_version`` / ``cohort_n`` say whether a gate produced
+    this verdict, which gate, and against how many return series. ``graded_at:
+    null`` means no gate has ever graded this strategy.
+
+    Unpublished non-example passports 404 for non-owners (never 403 — a 403
+    would confirm the id exists).
+    """
+    return await asyncio.to_thread(_get_strategy_passport_sync, request, strategy_id)
 
 
 def _year_from_published(published: str | None) -> int | None:
@@ -1067,13 +1133,90 @@ def _generation_cost_for(strategy_id: str, session) -> dict | None:
         import logging as _logging
 
         _logging.getLogger(__name__).warning("generation cost lookup failed for %s: %s", strategy_id, exc)
+        # Postgres aborts the whole transaction on a failed statement — see
+        # _rollback_quietly. This is now the FIRST swallowed DB read on the
+        # passport path (the cohort returns read that used to hold that spot is
+        # gone), so without this every later read in the request fails on
+        # Postgres and succeeds on sqlite.
+        _rollback_quietly(session)
         return None
 
 
-# Sentinel distinguishing "no returns were prefetched for this call" from "the
-# prefetch ran and this strategy genuinely has no persisted series". The two
-# must not collapse: the first means we do not know, the second is a fact.
-_RETURNS_NOT_PREFETCHED = object()
+def _num_trials_for_passport(strategy_id: str, session) -> tuple[int | None, str]:
+    """``(num_trials_in_selection, num_trials_scope)`` for a generated/fusion
+    passport row (#1358).
+
+    No session, or no persisted ``BacktestResultRecord`` yet (the strategy has
+    not been graded), both mean the same thing to a reader: *no provenance to
+    report*. Returning ``(None, "unspecified")`` for those cases — rather than a
+    silently-assumed ``1`` — is the fix this issue asks for: the passport must
+    not claim a self-contained N=1 grading for a strategy the gate never ran.
+    When a backtest row exists, delegates to the SAME discriminator
+    ``selection_bias_routes.py``'s own per-strategy live gate uses
+    (``_num_trials_for_generated_row``, keyed on ``backtest_engine`` provenance,
+    not on whether the stored count happens to be populated — see that
+    function's docstring) so this can never disagree with what
+    ``GET /api/selection-bias/gate/{id}`` reports for the same strategy.
+    """
+    if session is None or not strategy_id:
+        return None, "unspecified"
+    try:
+        from archimedes.services.backtest_repository import latest_backtests_by_strategy
+
+        latest = latest_backtests_by_strategy(session, [strategy_id]).get(strategy_id)
+        if latest is None:
+            return None, "unspecified"
+        return _num_trials_for_generated_row(latest.backtest_engine, latest.num_trials_in_selection)
+    except Exception as exc:  # pragma: no cover — defensive; DB-level failure
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning("num_trials provenance lookup failed for %s: %s", strategy_id, exc)
+        _rollback_quietly(session)  # same transaction-abort hazard as above
+        return None, "unspecified"
+
+
+def _strategy_spec_for_passport(strategy_id: str, session) -> dict | None:
+    """The validated DSL spec stored for a generated row, or ``None`` (#1769).
+
+    The spec column lives on ``StrategyRecord`` (``strategy_store``), not on the
+    ``strategy_passports`` row this module reshapes — so reading it costs one
+    primary-key lookup, the same shape and the same per-row cost as
+    ``_generation_cost_for`` and ``_num_trials_for_passport`` immediately above.
+    It does not change the complexity class of the list path.
+
+    **The spec itself does not go on the wire.** It is REASONING under #1557 and
+    stays owner-gated at the detail route; what comes back out of
+    ``reconcile_card_fields`` is three fields the passport row already serves
+    publicly to every caller — a rebalance cadence, a sizing rule and a ticker
+    list.
+
+    Their *values* do change, and that is a real disclosure delta the owner
+    signed off on rather than an argument this docstring can win. Before #1769
+    every generated row served the same ``weekly`` / ``equal_weight`` column
+    defaults, which carried no information about the strategy at all. It now
+    serves the true cadence, the true sizing rule and the spec's universe —
+    three of the seven fields of an artifact #1557 gates. The judgement is that
+    a card is *for* saying what the strategy does, and that a card which lies
+    about it is worth less than the secrecy it buys; the entry rule, the exit
+    rule, the indicator parameters and the condition tree — the parts that make
+    the spec reproducible — remain gated.
+
+    Fails soft: a lookup failure means the card keeps its stored values, which is
+    exactly today's behaviour, and never takes down a strategy read.
+    """
+    if session is None or not strategy_id:
+        return None
+    try:
+        from archimedes.models.strategy_store import StrategyRecord
+
+        row = session.query(StrategyRecord).filter_by(id=strategy_id).first()
+        return row.decoded_strategy_spec() if row is not None else None
+    except Exception as exc:  # pragma: no cover — defensive; DB-level failure
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning("strategy_spec lookup failed for %s: %s", strategy_id, exc)
+        _rollback_quietly(session)
+        return None
 
 
 def _rollback_quietly(session) -> None:
@@ -1091,7 +1234,20 @@ def _rollback_quietly(session) -> None:
 
 
 def _passport_rigor_status(record, daily_returns: list[float]) -> tuple[str, bool]:
-    """Tri-state + degenerate status for a generated/fusion passport row.
+    """The OLD read-time derivation of a passport row's four-state badge.
+
+    **No longer on any serving path.** The rigor verdict is now graded once, at
+    backtest time, and stored on ``strategy_passports.rigor_gate_status``; every
+    surface reads that column (``docs/adr/rigor-verdict-of-record.md``). This
+    function is kept for exactly two jobs, both of them off the request path:
+
+    1. It is the ORACLE the verdict-of-record migration's backfill rule was
+       written from — "derive exactly as today's read path did" — so
+       ``test_rigor_verdict_of_record`` can assert the migration and this
+       function agree on the same inputs, instead of restating the rule in prose
+       and hoping.
+    2. It documents what the four states meant before they were stored, which is
+       what a reader of a ``legacy-derived`` ``gate_version`` needs to know.
 
     Returns ``(status, is_placeholder)``.
 
@@ -1099,9 +1255,9 @@ def _passport_rigor_status(record, daily_returns: list[float]) -> tuple[str, boo
     series apart from an ungraded one. Both leave ``record.sharpe_ratio`` NULL,
     so reading the aggregate by itself reported a flat, broken, or zero-trade
     backtest as ``"pending"`` — "we have not graded this yet", which is a claim,
-    and a false one. The curated path already answers this correctly via
-    ``_verdict_from_result``; this is the same predicate applied to the persisted
-    series the passport path had never loaded.
+    and a false one. That distinction is now made by the WRITER
+    (``verdict_from_returns`` stores ``degenerate`` as itself), which is why the
+    read no longer has to re-derive it from the series.
 
     ``daily_returns`` empty means no persisted series was found, which is the
     genuine "not graded yet" case — the aggregate three-way is then correct.
@@ -1125,7 +1281,7 @@ def _passport_rigor_status(record, daily_returns: list[float]) -> tuple[str, boo
     return ("pass" if bool(record.passes_rigor_gate) else "fail"), False
 
 
-def _passport_to_strategy_response(record, session=None, daily_returns=_RETURNS_NOT_PREFETCHED) -> StrategyResponse:
+def _passport_to_strategy_response(record, session=None) -> StrategyResponse:
     """Reshape a StrategyPassportRecord (fusion/architect output) into the
     StrategyResponse schema that StrategyPassport.jsx expects. Curated
     strategies still flow through LocalStrategyProvider above; this is the
@@ -1137,13 +1293,16 @@ def _passport_to_strategy_response(record, session=None, daily_returns=_RETURNS_
     the UI can display a human-readable title instead of a bare arxiv id.
     Falls back to the arxiv_id string when the corpus has no matching row.
 
-    ``daily_returns`` — this strategy's persisted daily-return series, when the
-    caller has already bulk-loaded it for a whole page of rows. List callers
-    pass it so the degenerate check below costs one cohort read per request
-    instead of one per row; the single-row detail path leaves it unset and this
-    function loads its own. Left unset with no ``session`` either, the
-    degenerate check is skipped and the status falls back to the stored
-    aggregate — see ``_passport_rigor_status``.
+    **The rigor verdict is READ, not derived.** ``rigor_gate_status`` and
+    ``passes_rigor_gate`` come straight off the row, where the post-backtest
+    grade wrote them (``docs/adr/rigor-verdict-of-record.md``). This function
+    used to load the strategy's persisted return series and re-derive the
+    four-state badge on every request — which is why it took a ``daily_returns``
+    parameter, and why ``_passport_responses`` paid a whole-cohort
+    ``get_all_daily_returns`` per page. Both are gone: a verdict recomputed on
+    read is a second gate run whose answer can differ from the stored one, which
+    is the disagreement #1746/#1747 are made of. The degenerate state has not
+    been lost — the WRITER stores it (see ``_refresh_passport_real_metrics``).
     """
     from archimedes.api.schemas import PaperRefResponse
     from archimedes.services.return_source_classifier import (
@@ -1156,32 +1315,16 @@ def _passport_to_strategy_response(record, session=None, daily_returns=_RETURNS_
     # is also the answer for every strategy generated before the meter existed.
     # Either way the UI renders "not measured"; nothing is zeroed or invented.
     generation_cost = _generation_cost_for(record.id, session)
+    num_trials_in_selection, num_trials_scope = _num_trials_for_passport(record.id, session)
 
-    # #1184: resolve this row's persisted return series so the rigor status
-    # below can tell a zero-variance (degenerate) series apart from an ungraded
-    # one. Prefetched by list callers; self-loaded on the single-row path.
-    if daily_returns is _RETURNS_NOT_PREFETCHED:
-        _returns: list[float] = []
-        if session is not None:
-            try:
-                from archimedes.services.backtest_repository import get_daily_returns
-
-                _returns = get_daily_returns(session, record.id) or []
-            except Exception as exc:  # pragma: no cover — defensive; DB-level failure
-                import logging as _logging
-
-                _logging.getLogger(__name__).warning(
-                    "persisted-returns read failed for %s (%s) — rigor status falls back to the stored aggregate",
-                    record.id,
-                    type(exc).__name__,
-                )
-                # See _passport_responses: without this, everything later in the
-                # request fails on Postgres and succeeds on sqlite.
-                _rollback_quietly(session)
-    else:
-        _returns = list(daily_returns or [])
-
-    _rigor_status, _is_placeholder = _passport_rigor_status(record, _returns)
+    # The verdict of record, read verbatim. NOT NULL with a "pending" server
+    # default, so the ``or`` is belt-and-braces for a row an in-memory test
+    # built without going through the loader.
+    _rigor_status = record.rigor_gate_status or "pending"
+    # "Placeholder" means: nothing has been graded here yet. That is exactly the
+    # pending state now, and only the pending state — a `degenerate` row HAS a
+    # backtest (its returns are just flat), and a `fail` row certainly does.
+    _is_placeholder = _rigor_status == "pending"
 
     refs = list(record.paper_refs or [])
     first = refs[0] if refs else None
@@ -1189,13 +1332,21 @@ def _passport_to_strategy_response(record, session=None, daily_returns=_RETURNS_
     # Enrich missing titles from the corpus when a session is available.
     corpus_titles: dict[str, str] = _enrich_paper_titles_from_corpus(refs, session) if session is not None else {}
 
-    def _resolved_title(r) -> str:
-        """Stored title wins; fall back to corpus; fall back to bare arxiv_id."""
+    def _resolved_title(r) -> str | None:
+        """Stored title wins; fall back to corpus; otherwise **None** (#1637).
+
+        The last fallback used to be the bare ``arxiv_id``, which put an id in
+        a column labelled "title" — the same class of defect as printing the
+        strategy name there, just less obviously wrong. ``None`` is the honest
+        answer and matches ``_resolve_source_papers``'s ``resolved_title``
+        rule; the id is already carried in ``arxiv_id`` for the renderer to
+        compose "title unavailable — arXiv:<id>" from.
+        """
         if (r.title or "").strip():
             return r.title
         if r.arxiv_id and corpus_titles.get(r.arxiv_id):
             return corpus_titles[r.arxiv_id]
-        return r.arxiv_id or ""
+        return None
 
     papers_list = [
         PaperRefResponse(
@@ -1207,14 +1358,34 @@ def _passport_to_strategy_response(record, session=None, daily_returns=_RETURNS_
             year=r.year,
             citation_count=r.citation_count,
             contribution=r.contribution,
+            role=r.role or "cited",
+            selection_rank=r.selection_rank,
+            semantic_score=r.semantic_score,
+            content_hash=r.content_hash,
         )
         for r in refs
     ]
 
-    asset_universe = json.loads(record.asset_universe) if record.asset_universe else []
+    # The three executable card fields, reconciled against the validated DSL
+    # spec (#1769). The generation path now derives them at WRITE time, but the
+    # rows written before that fix are still in the table and the table is
+    # append-only — a read that trusted them would keep serving the card that
+    # contradicts its own backtest. The spec wins and the disagreement is logged
+    # naming this id, ONCE per id per process — this function is the per-row
+    # mapper for Library and the public leaderboard and it repairs the response,
+    # not the row, so a per-call line would repeat on every request forever. The
+    # dedupe lives in services/passport_spec_parity.py (`_LOGGED_DISAGREEMENTS`).
+    _card = reconcile_card_fields(
+        record.id,
+        _strategy_spec_for_passport(record.id, session),
+        asset_universe=json.loads(record.asset_universe) if record.asset_universe else [],
+        rebalance_frequency=record.rebalance_frequency or "weekly",
+        position_sizing=record.position_sizing or "equal_weight",
+    )
+    asset_universe = _card["asset_universe"]
 
     # The enriched first-paper title (may have been filled from corpus above).
-    first_title = papers_list[0].title if papers_list else (first.title if first else "")
+    first_title = papers_list[0].title if papers_list else (first.title if first else None)
 
     return_source_enum, return_source_note = classify_return_source(
         StrategyView(
@@ -1223,7 +1394,15 @@ def _passport_to_strategy_response(record, session=None, daily_returns=_RETURNS_
             asset_universe=tuple(asset_universe),
             deflated_sharpe_ratio=record.deflated_sharpe_ratio,
             dsr_p_value=record.dsr_p_value,
-            passes_rigor_gate=bool(record.passes_rigor_gate),
+            # The SAME derivation the badge uses twenty lines below, not the raw
+            # column. The comment there says deriving from the status "removes
+            # the last place the two could be served apart" — this was that
+            # place: one function reading the stored boolean here and the stored
+            # four-state there is precisely the two-sources-for-one-fact shape
+            # this ADR exists to remove. They agree today because the migration
+            # and the loader couple them; reading one field means they cannot
+            # stop agreeing.
+            passes_rigor_gate=_rigor_status == "pass",
         )
     )
 
@@ -1240,8 +1419,8 @@ def _passport_to_strategy_response(record, session=None, daily_returns=_RETURNS_
         methodology_summary=record.methodology_summary or "",
         asset_universe=asset_universe,
         universe_source=record.universe_source,
-        position_sizing=record.position_sizing or "equal_weight",
-        rebalance_frequency=record.rebalance_frequency or "weekly",
+        position_sizing=_card["position_sizing"],
+        rebalance_frequency=_card["rebalance_frequency"],
         status=record.status or "candidate",
         methodology_hash=record.methodology_hash,
         extraction_llm=record.extraction_llm,
@@ -1266,19 +1445,27 @@ def _passport_to_strategy_response(record, session=None, daily_returns=_RETURNS_
         # Generated/fusion strategies carry a PERSISTED live-gate verdict written by
         # the generation pipeline (strategy_passports.passes_rigor_gate) — a stored
         # *live* verdict, not a fixture boolean — so it is a legitimate badge source
-        # per #821 ("read a persisted live-gate verdict"). Map it to the tri-state:
-        # a passport with no real backtest (sharpe_ratio is None) is "pending".
-        # A degenerate row is never a pass, whatever the stored boolean says.
-        passes_rigor_gate=bool(record.passes_rigor_gate) and _rigor_status != "degenerate",
-        # #1184: four-state, derived from this passport's OWN persisted series
-        # (see _passport_rigor_status). The stored aggregate alone cannot
-        # separate a zero-variance series from an ungraded one — both leave
-        # sharpe_ratio NULL — so reading it by itself reported broken data as
-        # "pending", which is a claim ("not graded yet"), and a false one.
+        # per #821 ("read a persisted live-gate verdict").
+        # Coupled to the four-state below by construction, on the READ side too:
+        # `passes` is `status == "pass"` and nothing else. The row's own
+        # `passes_rigor_gate` column says the same thing (passport_loader writes
+        # the two together), so deriving it from the status here costs nothing
+        # and removes the last place the two could be served apart.
+        passes_rigor_gate=_rigor_status == "pass",
+        # THE STORED VERDICT. Graded once, at backtest time, by the real gate;
+        # served here without a recompute (docs/adr/rigor-verdict-of-record.md).
         rigor_gate_status=_rigor_status,
+        # Read from the row, like every other number here. NULL on a generated
+        # row by construction — the `real_* → backtest → stub` display chain is
+        # a curated-library construct and a generated strategy's numbers come
+        # from its own pipeline backtest — so this is "unavailable" in practice,
+        # which is what the field already served for this branch.
+        display_metrics_source=record.display_metrics_source or "unavailable",
         is_backtest_placeholder=_is_placeholder,
         sharpe_ci_lower=None,
         sharpe_ci_upper=None,
+        num_trials_in_selection=num_trials_in_selection,
+        num_trials_scope=num_trials_scope,
         backtest_start=record.backtest_start,
         backtest_end=record.backtest_end,
         regime_tag=record.regime_tag,
@@ -1297,47 +1484,22 @@ def _passport_to_strategy_response(record, session=None, daily_returns=_RETURNS_
 
 
 def _passport_responses(records, session) -> list[StrategyResponse]:
-    """Map passport rows to responses, bulk-loading their persisted returns once.
+    """Map passport rows to responses.
 
-    #1184 made ``_passport_to_strategy_response`` consult each row's persisted
-    daily-return series so a zero-variance one reports ``degenerate`` instead of
-    ``pending``. This routes that through ``get_all_daily_returns`` — the same DB
-    boundary ``live_rigor_gate`` and the selection-bias route already read
-    through, and the one the suite mocks — then hands each row its own slice.
+    **The whole-cohort returns read is gone.** This used to call
+    ``get_all_daily_returns`` for every page so ``_passport_to_strategy_response``
+    could re-derive each row's four-state badge from its persisted series — one
+    windowed query whose BYTES still scaled with the generated corpus, because it
+    projected and deserialized every winning row's ``artifact_json`` to find a
+    ``daily_returns`` list, on a route (``list_passports``) that has no LIMIT.
 
-    **Cost, stated honestly:** ``get_all_daily_returns`` is a Python loop over
-    ``get_daily_returns``, so this is N indexed single-row reads, not one batched
-    query. It is the same query count reading per row would cost; the helper buys
-    a single mocking boundary and one failure decision, not a batching win. Each
-    read deserializes that strategy's whole ``artifact_json`` blob, so the real
-    cost scales with the generated corpus, and ``list_passports`` has no LIMIT.
-    Making the degenerate answer cheap needs it persisted at write time rather
-    than re-derived on read — tracked separately; do not paper over it here by
-    skipping rows, because which rows you skip is exactly the claim at stake.
+    The verdict is now graded once and stored (see
+    ``docs/adr/rigor-verdict-of-record.md``), so the read needs no return series
+    at all. The degenerate state is not lost: the writer stores it. What is lost
+    is a per-request recompute that could disagree with the stored answer — which
+    was the point, and the cost saving is a consequence, not the motive.
     """
-    if not records:
-        return []
-    try:
-        from archimedes.services.backtest_repository import get_all_daily_returns
-
-        returns_by_id = get_all_daily_returns(session, [r.id for r in records]) or {}
-    except Exception as exc:  # pragma: no cover — defensive; DB-level failure
-        import logging as _logging
-
-        _logging.getLogger(__name__).warning(
-            "cohort persisted-returns read failed (%s) — falling back to a per-row read",
-            type(exc).__name__,
-        )
-        # A failed statement aborts the surrounding Postgres transaction, so
-        # every later read in this request would raise InFailedSqlTransaction.
-        # sqlite tolerates it, which is why no test can see this.
-        _rollback_quietly(session)
-        # NOT ``{}``: an empty map would hand every row [] — "the read found no
-        # series" — when the truth is "we do not know". That collapse is what
-        # sends a flat series back to "pending", the exact false claim #1184 is
-        # about. The sentinel makes each row decide for itself instead.
-        return [_passport_to_strategy_response(r, session) for r in records]
-    return [_passport_to_strategy_response(r, session, returns_by_id.get(r.id, [])) for r in records]
+    return [_passport_to_strategy_response(r, session) for r in records]
 
 
 def _generated_strategy_responses(
@@ -1428,33 +1590,13 @@ def _owned_generated_strategy_responses(
     return _passport_responses(owned, session)
 
 
-@strategies_router.get("/{strategy_id}/returns", response_model=StrategyReturnsResponse)
-async def get_strategy_returns(strategy_id: str, request: Request):
-    """Return persisted real daily returns for a strategy.
+def _get_strategy_returns_sync(strategy_id: str, request: Request) -> StrategyReturnsResponse:
+    """Gate on ownership, then load the persisted series.
 
-    Response schema: {strategy_id, source: "persisted_backtest", start, end,
-    n, daily_returns: [...]}
-
-    **The per-day series is REASONING, not card content, and gates on
-    OWNERSHIP (#1557).** Curated / ``is_example`` strategies stay fully public
-    (house demo content; ``/quant`` fetches exactly this for every curated
-    library row with no session). For a generated row the series is 404 unless
-    the caller OWNS it — a published row is NOT enough, because a full
-    day-by-day return series lets a reader reconstruct positions and clone the
-    strategy. The HEADLINE stats derived from it (``sharpe_ratio``, ``cagr``,
-    ``max_drawdown``, the rigor verdict) remain on the public card served by
-    ``GET /api/strategies/{id}`` and the leaderboard — publishing shares the
-    result, not the derivation. See the matrix in
-    ``services/strategy_visibility.py``.
-
-    404 when the strategy does not exist (or the caller is not entitled to its
-    reasoning — 404-hides-existence per the #850 ownership gating contract).
-    404 with body ``{"detail": "no persisted returns"}`` when the strategy
-    exists but has no BacktestResultRecord row. Never synthesizes data from
-    fixture metrics; only real persisted run data is returned (#passport-honesty).
-
-    ``owner_wallet`` is intentionally absent from the response — pseudonymous
-    PII, redacted per the same policy as GET /api/strategies/{id}.
+    The blocking half of the route below (#1818 P4): it holds every
+    ``session.query`` and every synchronous compute, and it runs on a worker
+    thread so a slow or lock-blocked read cannot stop the event loop from
+    answering ``/health``.
     """
     from fastapi import HTTPException
 
@@ -1481,10 +1623,9 @@ async def get_strategy_returns(strategy_id: str, request: Request):
 
     # ── 2. Load persisted daily returns from backtest_results ────────────────
     try:
-        from archimedes.db import get_session, init_db
+        from archimedes.db import get_session
         from archimedes.services.backtest_repository import get_daily_returns, latest_backtests_by_strategy
 
-        init_db()
         with get_session() as session:
             daily_returns = get_daily_returns(session, strategy_id)
             rows = latest_backtests_by_strategy(session, [strategy_id])
@@ -1515,33 +1656,44 @@ async def get_strategy_returns(strategy_id: str, request: Request):
     )
 
 
-@strategies_router.get("/{strategy_id}/debate")
-async def get_strategy_debate(strategy_id: str, request: Request):
-    """Return the persisted bull/bear debate transcript for a generated strategy.
+@strategies_router.get("/{strategy_id}/returns", response_model=StrategyReturnsResponse)
+async def get_strategy_returns(strategy_id: str, request: Request):
+    """Return persisted real daily returns for a strategy.
 
-    Response shape: ``{strategy_id, generation_id, candidate_id, created_at,
-    transcript: [{role, round, verdict, claims}, ...]}``.
+    Response schema: {strategy_id, source: "persisted_backtest", start, end,
+    n, daily_returns: [...]}
 
-    **This route is PURE REASONING and gates on OWNERSHIP, not on card-level
-    visibility (#1557).** Curated / ``is_example`` strategies are always public
-    (house demo content — in practice they carry no transcript at all, the
-    debate society never ran for them). For a generated row the transcript is
-    404 unless the caller OWNS it — a published row is NOT enough. Existence
-    stays hidden either way: 404, never 403.
+    **The per-day series is REASONING, not card content, and gates on
+    OWNERSHIP (#1557).** Curated / ``is_example`` strategies stay fully public
+    (house demo content; ``/quant`` fetches exactly this for every curated
+    library row with no session). For a generated row the series is 404 unless
+    the caller OWNS it — a published row is NOT enough, because a full
+    day-by-day return series lets a reader reconstruct positions and clone the
+    strategy. The HEADLINE stats derived from it (``sharpe_ratio``, ``cagr``,
+    ``max_drawdown``, the rigor verdict) remain on the public card served by
+    ``GET /api/strategies/{id}`` and the leaderboard — publishing shares the
+    result, not the derivation. See the matrix in
+    ``services/strategy_visibility.py``.
 
-    Until #1557 this docstring claimed exactly that contract while the code
-    asked ``is_strategy_visible``, which returns True on ``is_published`` — so
-    an anonymous GET on any published strategy returned its full generation
-    debate. The claim was false; the predicate is now the one that makes it
-    true. Publishing consents to sharing the strategy, not the multi-agent
-    argument that produced it (same reasoning as ``brief_intent`` on the detail
-    route, and ``_redact_owner_wallet`` for the owner's wallet).
+    404 when the strategy does not exist (or the caller is not entitled to its
+    reasoning — 404-hides-existence per the #850 ownership gating contract).
+    404 with body ``{"detail": "no persisted returns"}`` when the strategy
+    exists but has no BacktestResultRecord row. Never synthesizes data from
+    fixture metrics; only real persisted run data is returned (#passport-honesty).
 
-    404 with ``{"detail": "no debate transcript"}`` when the strategy exists
-    and the caller is entitled to its reasoning but no transcript was ever
-    persisted for it — every strategy generated before this table existed,
-    every curated strategy, and any run whose debate step genuinely produced
-    nothing (no LLM backend reachable). Never fabricates a transcript.
+    ``owner_wallet`` is intentionally absent from the response — pseudonymous
+    PII, redacted per the same policy as GET /api/strategies/{id}.
+    """
+    return await asyncio.to_thread(_get_strategy_returns_sync, strategy_id, request)
+
+
+def _get_strategy_debate_sync(strategy_id: str, request: Request) -> dict:
+    """Gate on ownership, then load the persisted transcript.
+
+    The blocking half of the route below (#1818 P4): it holds every
+    ``session.query`` and every synchronous compute, and it runs on a worker
+    thread so a slow or lock-blocked read cannot stop the event loop from
+    answering ``/health``.
     """
     from fastapi import HTTPException
 
@@ -1581,41 +1733,88 @@ async def get_strategy_debate(strategy_id: str, request: Request):
     return payload
 
 
-@strategies_router.get("/{strategy_id}", response_model=StrategyResponse)
-async def get_strategy(strategy_id: str, request: Request):
-    """Get a single strategy by ID. Tries LocalStrategyProvider (curated)
-    first; falls through to the strategy_passports table for fusion- and
-    architect-generated strategies so they're clickable from Library.
+@strategies_router.get("/{strategy_id}/debate")
+async def get_strategy_debate(strategy_id: str, request: Request):
+    """Return the persisted bull/bear debate transcript for a generated strategy.
 
-    Private-until-published: non-public row is 404 unless canonical user owns it,
-    with linked-wallet fallback for legacy rows. 404 prevents existence probing.
-    Curated strategies (provider path / is_example rows) stay fully public.
+    Response shape: ``{strategy_id, generation_id, candidate_id, created_at,
+    transcript: [{role, round, verdict, claims}, ...]}``.
 
-    **This route is MIXED and stays CARD-gated (#1557).** Everything the
-    response carries for a generated row is card content — name, papers,
-    methodology writeup, headline metrics, the rigor badge — which is exactly
-    what a published strategy is published FOR, so a published row 200s for
-    anonymous callers and the public detail page keeps working. The one
-    REASONING field on the schema, ``brief_intent``, is stripped for non-owners
-    below rather than 404ing the whole route (the strip-don't-404 rule for
-    mixed routes; the purely-reasoning siblings ``/{id}/debate`` and
-    ``/{id}/returns`` 404 instead). Audited field by field against
-    ``_passport_to_strategy_response``: ``brief_intent`` is the only reasoning
-    field it can populate — ``equity_curve`` is never set on this path, and the
-    rigor/display metrics are aggregates, not derivation. See the matrix in
-    ``services/strategy_visibility.py``.
+    **This route is PURE REASONING and gates on OWNERSHIP, not on card-level
+    visibility (#1557).** Curated / ``is_example`` strategies are always public
+    (house demo content — in practice they carry no transcript at all, the
+    debate society never ran for them). For a generated row the transcript is
+    404 unless the caller OWNS it — a published row is NOT enough. Existence
+    stays hidden either way: 404, never 403.
+
+    Until #1557 this docstring claimed exactly that contract while the code
+    asked ``is_strategy_visible``, which returns True on ``is_published`` — so
+    an anonymous GET on any published strategy returned its full generation
+    debate. The claim was false; the predicate is now the one that makes it
+    true. Publishing consents to sharing the strategy, not the multi-agent
+    argument that produced it (same reasoning as ``brief_intent`` on the detail
+    route, and ``_redact_owner_wallet`` for the owner's wallet).
+
+    404 with ``{"detail": "no debate transcript"}`` when the strategy exists
+    and the caller is entitled to its reasoning but no transcript was ever
+    persisted for it — every strategy generated before this table existed,
+    every curated strategy, and any run whose debate step genuinely produced
+    nothing (no LLM backend reachable). Never fabricates a transcript.
+    """
+    return await asyncio.to_thread(_get_strategy_debate_sync, strategy_id, request)
+
+
+def _get_strategy_sync(strategy_id: str, request: Request) -> StrategyResponse:
+    """Resolve the card from the provider, else from the passport row.
+
+    The blocking half of the route below (#1818 P4): it holds every
+    ``session.query`` and every synchronous compute, and it runs on a worker
+    thread so a slow or lock-blocked read cannot stop the event loop from
+    answering ``/health``.
     """
     from fastapi import HTTPException
 
     strat = strategy_provider().get_strategy(strategy_id)
     if strat is not None:
-        return _to_strategy_response(strat)
+        # The curated branch reads the STORED verdict, exactly as the generated
+        # branch below does (#1746 / PR-B). This is the endpoint the issue
+        # reproduced on: it used to run a live cohort gate here and promote the
+        # file's ``candidate`` to ``validated`` off that live pass, so
+        # ``GET /api/strategies/1f9cfe96…`` answered ``pass``/``true``/``0.406``
+        # while ``GET /api/strategies/passports/1f9cfe96…`` — a pure read of the
+        # same strategy's row — answered ``candidate``/``false``/``null``.
+        from archimedes.db import get_session as _get_session
+        from archimedes.services.passport_loader import get_passport as _get_passport
+
+        with _get_session() as _session:
+            resp = _to_strategy_response(strat, _get_passport(_session, strategy_id))
+        # The executable DSL spec (#1646). Set HERE, not inside
+        # `_to_strategy_response`, because that helper also builds the list
+        # route (line ~626) and the leaderboard (`leaderboard_routes.py:94`) —
+        # see the field's note on `StrategyResponse` for both reasons this is
+        # detail-route-only.
+        #
+        # Ungated on THIS branch, and that is the deliberate call rather than
+        # an oversight: resolving through `strategy_provider()` is what
+        # "curated / is_example house row" MEANS on this router, and the
+        # #1557 matrix puts curated REASONING in the public column (no owner
+        # to protect; the product already renders these rows' reasoning to
+        # anonymous visitors). It is the identical curated short-circuit
+        # `GET /{id}/returns` (line ~1510) and `GET /{id}/debate` (line ~1601)
+        # already take BEFORE any row check. Most curated rows carry a
+        # `strategy_code_path` and no spec at all, so this is usually None.
+        resp.strategy_spec = strat.strategy_spec
+        return resp
 
     from archimedes.api.auth_siwe import get_verified_wallet
     from archimedes.db import get_session
     from archimedes.models.strategy_store import StrategyRecord
     from archimedes.services.passport_loader import get_passport
-    from archimedes.services.strategy_visibility import is_strategy_visible, owns_strategy
+    from archimedes.services.strategy_visibility import (
+        is_strategy_reasoning_visible,
+        is_strategy_visible,
+        owns_strategy,
+    )
 
     with get_session() as session:
         row = session.query(StrategyRecord).filter_by(id=strategy_id).first()
@@ -1654,9 +1853,66 @@ async def get_strategy(strategy_id: str, request: Request):
             # is not re-implemented at a call site.
             if row is not None and owns_strategy(row, caller, caller_user_id=user.id if user else None):
                 resp.brief_intent = row.brief_intent
+            # The executable DSL spec (#1646). REASONING, so the gate is
+            # `is_strategy_reasoning_visible` — NOT `owns_strategy` above and
+            # NOT `is_strategy_visible` from the 404 check. The three differ,
+            # and picking the wrong one is the #1557 bug class:
+            #   - `is_strategy_visible` would hand every PUBLISHED user row's
+            #     executable spec to anonymous callers.
+            #   - `owns_strategy` would hide a CURATED row's spec, which the
+            #     matrix says is public house content.
+            # `is_strategy_reasoning_visible` is the one predicate that says
+            # both (is_example → public, otherwise owner-only, is_published
+            # deliberately absent). Reached via the shared predicate rather
+            # than re-derived here, per its own module docstring.
+            #
+            # `row is None` (a passport with no strategy_store mirror) fails
+            # closed at the predicate AND has no spec to read anyway — the
+            # spec column lives on StrategyRecord, not on the passport row.
+            if row is not None and is_strategy_reasoning_visible(row, caller, caller_user_id=user.id if user else None):
+                resp.strategy_spec = row.decoded_strategy_spec()
             return resp
 
     raise HTTPException(status_code=404, detail="Strategy not found")
+
+
+@strategies_router.get("/{strategy_id}", response_model=StrategyResponse)
+async def get_strategy(strategy_id: str, request: Request):
+    """Get a single strategy by ID. Tries LocalStrategyProvider (curated)
+    first; falls through to the strategy_passports table for fusion- and
+    architect-generated strategies so they're clickable from Library.
+
+    **This route runs no rigor gate**, on either branch. The badge, the
+    four-state and the four rigor numbers are read from the strategy's stored
+    verdict of record, and so are the headline metrics — the same row
+    ``GET /api/strategies/passports/{strategy_id}`` publishes, which is why the
+    two cannot disagree (``docs/adr/rigor-verdict-of-record.md``). The
+    ``status`` served here is the promotion derived from that stored verdict,
+    published on the passport payload as ``served_status``.
+
+    Private-until-published: non-public row is 404 unless canonical user owns it,
+    with linked-wallet fallback for legacy rows. 404 prevents existence probing.
+    Curated strategies (provider path / is_example rows) stay fully public.
+
+    **This route is MIXED and stays CARD-gated (#1557).** Everything the
+    response carries for a generated row is card content — name, papers,
+    methodology writeup, headline metrics, the rigor badge — which is exactly
+    what a published strategy is published FOR, so a published row 200s for
+    anonymous callers and the public detail page keeps working. The TWO
+    REASONING fields on the schema — ``brief_intent`` and ``strategy_spec``
+    (#1646) — are stripped for non-owners below rather than 404ing the whole
+    route (the strip-don't-404 rule for mixed routes; the purely-reasoning
+    siblings ``/{id}/debate`` and ``/{id}/returns`` 404 instead). Audited field
+    by field against ``_passport_to_strategy_response``: those two are the only
+    reasoning fields reachable here, and NEITHER is set by that shared helper —
+    both are attached at this route, from rows it has already loaded.
+    ``equity_curve`` is never set on this path, and the rigor/display metrics
+    are aggregates, not derivation. They take DIFFERENT gates on purpose
+    (``owns_strategy`` vs ``is_strategy_reasoning_visible``) because a curated
+    house row has a public spec and no owner to have typed a brief — see each
+    call site and the matrix in ``services/strategy_visibility.py``.
+    """
+    return await asyncio.to_thread(_get_strategy_sync, strategy_id, request)
 
 
 @strategies_router.patch("/{strategy_id}")
@@ -1675,9 +1931,22 @@ async def rename_strategy(
     display name. The strategy_passports table carries no display-name column,
     so only strategy_store is updated.
 
+    Ownership is decided by ``owns_strategy`` — the single implementation of
+    the two-tier rule (#1557), the same predicate every sibling reader on this
+    router calls. It is NOT re-derived here (#1283): the tiers are (1) a row
+    carrying an ``owner_user_id`` is owned by that account and by nobody else,
+    so a matching ``owner_wallet`` grants nothing, and (2) only a row with NO
+    user stamp falls back to the wallet comparison. Re-implementing that
+    ordering inline is how a mutating route drifts out of agreement with the
+    readers that gate the same row — an authorization bug, not an
+    inconsistency.
+
     Legacy-wallet fallback (#1283): a pre-account row (``owner_user_id`` NULL)
-    matched via the caller's linked wallet is reclaimed onto canonical account
-    ownership in the same transaction as the rename, using the same bulk claim
+    matched via the caller's linked wallet — i.e. tier 2 is what granted
+    ownership, which is exactly ``owns_strategy() and owner_user_id is None``
+    because tier 2 is unreachable when a user stamp exists — is reclaimed onto
+    canonical account ownership in the same transaction as the rename, using
+    the same bulk claim
     (``claim_legacy_wallet_data``) a verified wallet link performs — but
     scoped to the strategy-side tables only (``StrategyRecord`` /
     ``StrategyPassportRecord`` / ``StrategyProposal``), with
@@ -1707,6 +1976,7 @@ async def rename_strategy(
     from archimedes.models.strategy_passport_record import StrategyPassportRecord
     from archimedes.models.strategy_proposal import StrategyProposal
     from archimedes.models.strategy_store import StrategyRecord
+    from archimedes.services.strategy_visibility import owns_strategy
 
     name = payload.get("name")
     if not isinstance(name, str):
@@ -1721,17 +1991,31 @@ async def rename_strategy(
             # Curated examples are not user-owned — same 404 as a missing row.
             raise HTTPException(status_code=404, detail="Strategy not found")
         caller = get_linked_wallet_address(request)
-        is_owner = row.owner_user_id == user.id
-        if not is_owner and row.owner_user_id is None and row.owner_wallet and caller == row.owner_wallet.lower():
-            # Proven via linked-wallet match on a still-unclaimed row: reclaim
-            # every pre-account STRATEGY row tied to this wallet (not just
-            # this one), matching what re-verifying the wallet link would do
-            # for those tables. vault_metadata/user_profiles are excluded —
-            # see the docstring above.
+        # The canonical two-tier match, asked once, from the one place it is
+        # implemented. `owns_strategy` consults `owner_wallet` ONLY when
+        # `owner_user_id` is NULL, so a row stamped with another account's id
+        # is not renamable by whoever happens to control the wallet it names.
+        is_owner = owns_strategy(row, caller, caller_user_id=user.id)
+        if is_owner and row.owner_user_id is None:
+            # Tier 2 is the only tier that can have granted this (tier 1
+            # requires a non-NULL stamp), so the caller is proven via a
+            # linked-wallet match on a still-unclaimed row: reclaim every
+            # pre-account STRATEGY row tied to this wallet (not just this
+            # one), matching what re-verifying the wallet link would do for
+            # those tables. vault_metadata/user_profiles are excluded — see
+            # the docstring above.
+            #
+            # `claim_legacy_wallet_data` filters on an EXACT `owner_wallet ==
+            # address` match, so it is handed the same normalized form
+            # `owns_strategy` compared on. Linked wallets are stored
+            # lower-cased (`issue_wallet_challenge`), so this is not a
+            # live casing fix — it keeps the bulk claim's reach identical to
+            # the reach of the check that authorized it, rather than relying
+            # on the two agreeing by convention.
             claim_legacy_wallet_data(
                 session,
                 user.id,
-                caller,
+                str(caller).strip().lower(),
                 models=(
                     (StrategyRecord, StrategyRecord.owner_wallet),
                     (StrategyPassportRecord, StrategyPassportRecord.owner_wallet),
@@ -1740,7 +2024,6 @@ async def rename_strategy(
                 include_profile=False,
             )
             row.owner_user_id = user.id
-            is_owner = True
         if not is_owner:
             # Hide unpublished rows from non-owners (404); published rows are
             # visible, so an honest 403 is returned instead.
@@ -1752,430 +2035,3 @@ async def rename_strategy(
         row.updated_at = datetime.now(UTC)
         session.commit()
         return {"strategy": row.to_dict()}
-
-
-# ── Strategy generation (fusion) ────────────────────────────────
-
-
-@strategies_router.post("/generate", status_code=202)
-@limiter.limit("20/minute")
-async def generate_strategy(
-    request: Request,
-    response: Response,  # noqa: ARG001
-    asset_classes: str = "",
-    risk_appetite: str = "moderate",
-    strategic_direction: str = "",
-    max_papers: int = 4,
-    user: CurrentUser = Depends(require_current_user),
-):
-    """Queue a strategy generation job. Returns 202 + job_id immediately.
-
-    Direct-fusion path only — the ``mode=fast`` (interactive Strategy
-    Architect) branch was removed in #1064; the debate society
-    (``POST /api/generate/start``) is the sole interactive generation path.
-
-    This is a second live, SIWE-gated, LLM-spending generation endpoint
-    (docs/sprint/cluster-4-strategies-route.md § "the unmetered budget hole") —
-    it shares the SAME per-account/per-IP daily caps ``/api/generate/start``
-    enforces (``services/generation_quota.py``), via the identical call this
-    module's sibling route makes: same function, same Redis key format
-    (``archimedes:genquota:{scope}:{day}:{identity}``, keyed on ``user.id`` /
-    client IP — never on which endpoint was hit), so a caller cannot double
-    their daily allowance by alternating between the two routes. Runs FIRST,
-    before the fusion-enabled/corpus checks below, matching the primary
-    path's "cheapest anti-abuse check before any other work" ordering.
-    Disabled under TESTING (conftest sets it), matching ``/api/generate/start``.
-    """
-    from fastapi import HTTPException
-
-    from archimedes.agents.strategy_fusion import fusion_enabled, load_corpus
-    from archimedes.models.portfolio import RiskProfile
-    from archimedes.services.generation_quota import enforce_generation_quota
-    from archimedes.services.job_queue import JobStore
-
-    if not os.getenv("TESTING"):
-        await enforce_generation_quota(request, user.id)
-
-    if not fusion_enabled():
-        raise HTTPException(
-            status_code=503,
-            detail="Fusion is disabled. Set ARCHIMEDES_FUSION_ENABLED=1.",
-        )
-
-    corpus = load_corpus()
-    if len(corpus) < 2:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Insufficient corpus ({len(corpus)} papers). Need ≥2 for fusion.",
-        )
-
-    try:
-        rp = RiskProfile(risk_appetite)
-    except ValueError:
-        rp = RiskProfile.MODERATE
-
-    market_context: dict = {}
-    try:
-        from archimedes.services.redis_state import AgentStateStore
-
-        state = AgentStateStore()
-        try:
-            regime_data = await state.load_regime()
-            consensus_data = await state.load_ensemble_consensus()
-            # Surface market regime (exogenous, may be absent) and ensemble
-            # consensus (endogenous, from flat_pct) as DISTINCT context (#659).
-            if regime_data or consensus_data:
-                market_context = {
-                    "regime": (regime_data or {}).get("regime", "unknown"),
-                    "ensemble_consensus": (consensus_data or {}).get("label", "unknown"),
-                    "confidence": (consensus_data or regime_data or {}).get("confidence", 0.0),
-                    "source": (consensus_data or regime_data or {}).get("source", ""),
-                    "strategy_count": (consensus_data or regime_data or {}).get("strategy_count", 0),
-                    "signals": (consensus_data or regime_data or {}).get("signals", {}),
-                }
-        finally:
-            await state.close()
-    except Exception:
-        logger.debug("market regime context read failed", exc_info=True)
-
-    linked_wallet = get_linked_wallet_address(request)
-    store = JobStore()
-    try:
-        job_id = await store.enqueue(
-            job_type="fusion",
-            payload={
-                "asset_classes": [a.strip() for a in asset_classes.split(",") if a.strip()],
-                "risk_appetite": rp.value,
-                "strategic_direction": strategic_direction,
-                "max_papers": max_papers,
-                "market_context": market_context,
-                "owner_user_id": user.id,
-                "owner_wallet": linked_wallet,
-            },
-        )
-    finally:
-        await store.close()
-
-    # Intentional fire-and-forget: the fusion job runs to completion independently
-    # of the HTTP request that queued it; progress is observed via /jobs/{id}/stream.
-    asyncio.create_task(_run_fusion_job(job_id))  # noqa: RUF006
-
-    return {"status": "queued", "job_id": job_id}
-
-
-@strategies_router.get("/generate/{job_id}")
-async def get_generation_job(job_id: str, user: CurrentUser = Depends(require_current_user)):
-    """Poll a strategy generation job. Returns status + result when done."""
-    from fastapi import HTTPException
-
-    from archimedes.services.job_queue import JobStore
-
-    store = JobStore()
-    try:
-        job = await store.get(job_id)
-    finally:
-        await store.close()
-
-    if job is None or (job.get("payload") or {}).get("owner_user_id") not in {None, user.id}:
-        raise HTTPException(status_code=404, detail="Job not found")
-    return job
-
-
-async def _run_fusion_job(job_id: str) -> None:
-    """Background worker: runs fusion and updates job status."""
-    from archimedes.agents.strategy_fusion import (
-        FusionBrief,
-        default_fusion,
-    )
-    from archimedes.db import get_session
-    from archimedes.models.portfolio import RiskProfile
-    from archimedes.models.strategy_store import upsert_strategy
-    from archimedes.services.job_queue import JobStore
-
-    store = JobStore()
-    try:
-        await store.update_status(job_id, "running")
-
-        job = await store.get(job_id)
-        if not job or not job.get("payload"):
-            await store.update_status(job_id, "failed", error="Job payload missing")
-            return
-
-        payload = job["payload"]
-        rp = RiskProfile(payload.get("risk_appetite", "moderate"))
-
-        brief = FusionBrief(
-            asset_classes=payload.get("asset_classes", []),
-            risk_appetite=rp,
-            strategic_direction=payload.get("strategic_direction", ""),
-            max_papers=payload.get("max_papers", 4),
-            market_context=payload.get("market_context", {}),
-        )
-
-        fusion = default_fusion()
-        result = await asyncio.to_thread(fusion.propose, brief)
-
-        if not result.is_actionable:
-            await store.update_status(
-                job_id,
-                "done",
-                result={
-                    "mode": "fusion",
-                    "status": result.status,
-                    "message": result.thesis,
-                },
-            )
-            return
-
-        # ── Run fusion evaluator pipeline (backtest + rigor) if spec present ──
-        eval_result = None
-        if result.strategy_spec is not None:
-            try:
-                from archimedes.agents.generation_pipeline import _society_num_trials
-                from archimedes.services.fusion_evaluator import evaluate_fusion_spec
-                from archimedes.services.fusion_market_data import real_data_enabled
-
-                # Decouple #2: num_trials = the strategy's OWN selection pool, NOT
-                # the curated library's count. A single direct-fusion job proposes
-                # exactly one candidate spec (pool=1) — no N-candidate search
-                # happens on this route — so the self-contained trial count is
-                # _society_num_trials(1) == 1. Passed explicitly (not left as
-                # None) so this route's deflation matches the same formula the
-                # society/live generation paths use, without reaching for the
-                # library size the way the old ``library_size + pool`` term did.
-                eval_result = await asyncio.to_thread(
-                    evaluate_fusion_spec,
-                    result.strategy_spec,
-                    use_real_data=real_data_enabled(),
-                    num_trials=_society_num_trials(1),
-                )
-            except Exception as _eval_exc:
-                import logging as _logging
-
-                _logging.getLogger(__name__).warning("fusion eval pipeline failed (non-fatal): %s", _eval_exc)
-
-        # ── Build rigor_verdict dict from eval_result for persistence ──
-        # This is what closes the demo wedge: the user sees the gate's verdict
-        # in the library, not just a "rigor pending" placeholder. Status
-        # transitions ("validated"/"rejected") fall out of upsert_strategy.
-        rigor_verdict_dict: dict | None = None
-        if eval_result is not None and eval_result.success:
-            r = eval_result.rigor
-            bt = eval_result.backtest
-            rigor_verdict_dict = {
-                "passing": bool(r.passing),
-                "dsr": r.dsr,
-                "dsr_p_value": r.dsr_p_value,
-                "pbo_score": r.pbo_score,
-                "oos_sharpe": r.oos_sharpe,
-                "look_ahead_clean": bool(r.look_ahead_clean),
-                # Honest label distinct from the bare bool above: the DSL's
-                # self-attested look_ahead_safe is enforced as an admission
-                # gate, but it is NOT the independent AST audit that
-                # rigor_evaluator.look_ahead_audit runs against cited curated
-                # source. Surfaced so the passport doesn't read this as that
-                # audit having passed (audit 06-14, Q6).
-                "look_ahead_label": r.look_ahead_label,
-                "num_trials": int(r.num_trials),
-                # Methodology marker (#1075): this verdict was computed under the
-                # self-contained num_trials convention (decouple #2). Blobs
-                # WITHOUT this key predate the change (formula A, N+library_size)
-                # and are not directly comparable.
-                "num_trials_convention": "self_contained_v2",
-                # Backtest metrics — surface alongside so the passport renders
-                # without the UI having to denormalize from a separate field.
-                "sharpe_ratio": bt.sharpe_ratio,
-                "sortino_ratio": bt.sortino_ratio,
-                "max_drawdown": bt.max_drawdown,
-                "cagr": bt.cagr,
-                "calmar_ratio": bt.calmar_ratio,
-                "win_rate": bt.win_rate,
-                "total_trades": bt.total_trades,
-                "backtest_start": bt.backtest_start.isoformat() if bt.backtest_start else None,
-                "backtest_end": bt.backtest_end.isoformat() if bt.backtest_end else None,
-            }
-
-        strategy_id = None
-        persist_error: str | None = None
-        try:
-            with get_session() as session:
-                source_papers = [{"arxiv_id": aid, "sha256": ""} for aid in result.source_arxiv_ids]
-                record = upsert_strategy(
-                    session,
-                    generation_method="fusion",
-                    strategy_name=result.strategy_name,
-                    thesis=result.thesis,
-                    source_papers=source_papers,
-                    asset_universe=brief.asset_classes,
-                    risk_profile=rp.value,
-                    provenance_hash=result.model,
-                    rigor_verdict=rigor_verdict_dict,
-                    owner_wallet=payload.get("owner_wallet"),
-                    owner_user_id=payload.get("owner_user_id"),
-                )
-                session.commit()
-                strategy_id = record.id
-        except Exception as exc:
-            # Persist failure is NOT cosmetic: without a saved strategy_id there is
-            # no record for the "view" link to open, so the job must not be reported
-            # as a successful "done". Log at ERROR (was debug — the failure was
-            # silently swallowed) and mark the job failed below (#948).
-            persist_error = str(exc)
-            logger.error("fusion strategy persist failed for job %s", job_id, exc_info=True)
-
-        try:
-            import hashlib
-            import uuid
-            from datetime import datetime
-
-            canonical = json.dumps(
-                {
-                    "strategy_name": result.strategy_name,
-                    "thesis": result.thesis,
-                    "source_arxiv_ids": sorted(result.source_arxiv_ids),
-                    "fusion_reasoning": result.fusion_reasoning,
-                    "novelty_rationale": result.novelty_rationale,
-                    "risk_notes": result.risk_notes,
-                    "model": result.model,
-                    "brief": {
-                        "asset_classes": sorted(brief.asset_classes or []),
-                        "risk_appetite": rp.value,
-                        "strategic_direction": brief.strategic_direction or "",
-                        "market_context": brief.market_context or {},
-                    },
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            trace_hash = "0x" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-            from archimedes.services.redis_state import AgentStateStore
-
-            state = AgentStateStore()
-            try:
-                await state.save_trace(
-                    {
-                        "id": str(uuid.uuid4()),
-                        "vault_address": "",
-                        # #1556: this trace has NO vault, so the vault-owner
-                        # lookup in save_trace cannot resolve it — and its
-                        # `reasoning` is the user's private strategy thesis,
-                        # which was world-readable through GET /api/traces/.
-                        # Stamp the generating account here, the only place
-                        # that knows it. Present-but-None is deliberate for a
-                        # legacy job payload with no owner: it suppresses the
-                        # vault guess and leaves the row visible to nobody,
-                        # which is the correct way to fail on private content.
-                        "owner_user_id": payload.get("owner_user_id"),
-                        "owner_wallet": payload.get("owner_wallet"),
-                        "decision_type": "construction",
-                        "trigger": "fusion_generation",
-                        "timestamp": datetime.now(UTC).isoformat(),
-                        "market_context": brief.market_context or {},
-                        "portfolio_before": {},
-                        "portfolio_after": {},
-                        "reasoning": (
-                            f"FUSION HYPOTHESIS -- {result.strategy_name}\n\n"
-                            f"Thesis: {result.thesis}\n\n"
-                            f"How it fuses: {result.fusion_reasoning}\n\n"
-                            f"Why novel: {result.novelty_rationale}\n\n"
-                            f"Risks: {result.risk_notes}\n\n"
-                            f"Pre-backtest hypothesis -- empirical validation (DSR/PBO/OOS) is pending."
-                        ),
-                        "confidence": 0.0,
-                        "trades_executed": [],
-                        "strategies_referenced": result.source_arxiv_ids,
-                        "trace_hash": trace_hash,
-                        "arc_tx_hash": None,
-                        "is_verified": False,
-                    }
-                )
-            finally:
-                await state.close()
-        except Exception as _exc:
-            import logging as _logging
-
-            _logging.getLogger(__name__).warning("fusion: trace persistence failed (non-fatal): %s", _exc)
-
-        job_result = {
-            "mode": "fusion",
-            "status": result.status,
-            "strategy_name": result.strategy_name,
-            "thesis": result.thesis,
-            "source_arxiv_ids": result.source_arxiv_ids,
-            "fusion_reasoning": result.fusion_reasoning,
-            "novelty_rationale": result.novelty_rationale,
-            "risk_notes": result.risk_notes,
-            "model": result.model,
-            "requested_model": result.requested_model,
-            "strategy_id": strategy_id,
-            "market_context_used": brief.market_context,
-        }
-
-        # Attach backtest + rigor verdict if evaluator ran
-        if eval_result is not None:
-            if eval_result.backtest is not None:
-                job_result["backtest"] = {
-                    "sharpe_ratio": eval_result.backtest.sharpe_ratio,
-                    "sortino_ratio": eval_result.backtest.sortino_ratio,
-                    "max_drawdown": eval_result.backtest.max_drawdown,
-                    "cagr": eval_result.backtest.cagr,
-                    "calmar_ratio": eval_result.backtest.calmar_ratio,
-                    "win_rate": eval_result.backtest.win_rate,
-                    "total_trades": eval_result.backtest.total_trades,
-                }
-            if eval_result.rigor is not None:
-                job_result["rigor"] = {
-                    "passing": eval_result.rigor.passing,
-                    "dsr": eval_result.rigor.dsr,
-                    "dsr_p_value": eval_result.rigor.dsr_p_value,
-                    "oos_sharpe": eval_result.rigor.oos_sharpe,
-                    "look_ahead_clean": eval_result.rigor.look_ahead_clean,
-                    # Honest label — see rigor_verdict_dict above (audit 06-14, Q6).
-                    "look_ahead_label": eval_result.rigor.look_ahead_label,
-                }
-            if eval_result.error:
-                job_result["eval_error"] = eval_result.error
-
-        if strategy_id is None:
-            # The fusion produced an actionable strategy but it could not be saved,
-            # so there is nothing for the "view" link to open. Report the job as
-            # failed rather than a "done" job with a null strategy_id + dead link
-            # (#948). The proposal is still recorded in episodic memory below.
-            await store.update_status(
-                job_id,
-                "failed",
-                error=f"Strategy generated but could not be saved: {persist_error or 'persistence failed'}",
-            )
-        else:
-            await store.update_status(job_id, "done", result=job_result)
-
-        # ── Persist fusion proposal to episodic memory (T-PE.8) ──
-        try:
-            from archimedes.services.strategy_memory import persist_proposal
-
-            persist_proposal(
-                generation_id=job_id,
-                agent="fusion",
-                intent=brief.strategic_direction or brief.asset_classes_text(),
-                strategy_spec={
-                    "strategy_name": result.strategy_name,
-                    "thesis": result.thesis,
-                    "source_arxiv_ids": result.source_arxiv_ids,
-                },
-                papers=result.source_arxiv_ids,
-                rigor_verdict=rigor_verdict_dict,
-                extra={
-                    "model": result.model,
-                    "fusion_reasoning": result.fusion_reasoning,
-                    "novelty_rationale": result.novelty_rationale,
-                },
-                owner_wallet=payload.get("owner_wallet"),
-                owner_user_id=payload.get("owner_user_id"),
-            )
-        except Exception:
-            pass  # Non-blocking per spec
-    except Exception as exc:
-        with contextlib.suppress(Exception):
-            await store.update_status(job_id, "failed", error=str(exc))
-    finally:
-        await store.close()

@@ -1,0 +1,33 @@
+# Lambda image for the generation-offload spike (issue #1411).
+#
+# Deliberately derived from the UNMODIFIED production backend image rather than
+# from `public.ecr.aws/lambda/python`: the question the spike answers is "what
+# does it cost to run the existing backend package per-invocation?", and any
+# rebuild — different base OS, re-resolved wheels, a re-downloaded MiniLM — would
+# be measuring a different artifact. Three COPYs and an ENTRYPOINT is the whole
+# delta, and none of them run code, so this builds for linux/amd64 on an arm64
+# workstation with no emulation.
+#
+#   docker build --platform linux/amd64 \
+#     --build-arg BASE_IMAGE=<acct>.dkr.ecr.<region>.amazonaws.com/archimedes-backend:<sha> \
+#     -f infra/spike-1411/Dockerfile.lambda -t <spike-repo>:probe .
+#
+# Build context is the REPO ROOT (same as backend/Dockerfile).
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+# The Lambda runtime contract, implemented in stdlib — see the file header for
+# why awslambdaric is not installed here.
+COPY infra/spike-1411/lambda_bootstrap.py /app/lambda_bootstrap.py
+COPY infra/spike-1411/spike_probe.py /app/spike_probe.py
+
+# The committed offload entrypoint. The base image was built from a commit that
+# predates it, so it is copied in rather than assumed present.
+COPY backend/archimedes/scripts/run_generation_job.py /app/archimedes/scripts/run_generation_job.py
+
+ENV PYTHONUNBUFFERED=1
+ENV SPIKE_HANDLER=spike_probe.handler
+
+# Overrides the base image's uvicorn CMD. Lambda ignores CMD when ENTRYPOINT is
+# set and no ImageConfig.Command is configured on the function.
+ENTRYPOINT ["python", "/app/lambda_bootstrap.py"]

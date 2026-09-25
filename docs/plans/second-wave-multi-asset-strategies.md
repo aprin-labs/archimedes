@@ -1,7 +1,7 @@
 # Second Wave: Multi-Asset Strategies — Roadmap & Spec
 
 > **Status:** Plan, written 2026-06-11 by Önder (quant lane). Follows the wave-1
-> library expansion ([PR #528](https://github.com/a-apin/archimedes/pull/528),
+> library expansion ([PR #528](https://github.com/aprin-labs/archimedes/pull/528),
 > merged 2026-06-11) which took the library 6 → 13 and added the engine's first
 > multi-asset capability (`run_pairs_backtest`).
 >

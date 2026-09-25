@@ -54,6 +54,34 @@ def test_real_user_metric_counts_canonical_accounts_without_wallets(monkeypatch)
     user_stats._reset_cache()
     try:
         assert user_stats.get_distinct_user_count() == 2
+        user_stats._reset_cache()
+        assert user_stats.get_distinct_user_count_or_none() == 2
+    finally:
+        user_stats._reset_cache()
+
+
+def test_real_user_metric_fails_soft_to_none_not_zero_on_db_error(monkeypatch):
+    """Round 4 fix: get_distinct_user_count_or_none() must return None (a
+    loud absence) on a query failure, distinguishing it from
+    get_distinct_user_count()'s legacy 0-on-error shape, which is still
+    correct for /health and /private/cost but dishonest wherever the value is
+    DISPLAYED as a measured fact (GET /api/metrics's real_users).
+
+    Mutation-verified: reverting get_distinct_user_count_or_none's
+    `if result is None: return None` back to `return 0` makes this
+    assertion fail.
+    """
+    from archimedes.services import user_stats
+
+    def _broken_get_session():
+        raise RuntimeError("DB unavailable (simulated)")
+
+    monkeypatch.setattr("archimedes.db.get_session", _broken_get_session)
+    user_stats._reset_cache()
+    try:
+        assert user_stats.get_distinct_user_count_or_none() is None
+        # The legacy fail-soft-to-0 variant is unchanged for its own callers.
+        assert user_stats.get_distinct_user_count() == 0
     finally:
         user_stats._reset_cache()
 

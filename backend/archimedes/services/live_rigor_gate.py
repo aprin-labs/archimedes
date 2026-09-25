@@ -131,10 +131,9 @@ class RigorGateVerdict:
         ``is_degenerate`` attribute rather than ``result.tri_state_status``
         (rigor_evaluator.py) so this stays constructible from any object
         exposing ``is_degenerate``/``passes_all``/``min_passing_level``/
-        ``blocked_by_floor`` — including the ``MagicMock`` doubles the chat/
-        portfolio-agent test suites build (see test_chat_service.py
-        ``TestCuratedRigorStatuses``) — without also having to stub a
-        ``tri_state_status`` property on every one of them.
+        ``blocked_by_floor`` — including the ``MagicMock`` doubles other test
+        suites build — without also having to stub a ``tri_state_status``
+        property on every one of them.
         """
         if getattr(result, "is_degenerate", False):
             return cls.degenerate()
@@ -158,6 +157,8 @@ def verdict_from_returns(
     paper_claimed_sharpe: float | None = None,
     average_correlation: float = 0.0,
     look_ahead_audit_passed: bool | None = None,
+    look_ahead_status: str | None = None,
+    look_ahead_not_run_reason: str | None = None,
 ) -> RigorGateVerdict:
     """Compute the live four-state verdict from a strategy's persisted returns.
 
@@ -182,14 +183,25 @@ def verdict_from_returns(
     audit to run against, so ``strategy_code=None`` there would otherwise force
     ``look_ahead_passed=False`` unconditionally — failing the always-on
     look-ahead floor (``blocked_by_floor=True``) at every strictness level
-    regardless of DSR/PBO/OOS. Passing the pipeline's own closed-DSL
-    self-attestation through here (already enforced pre-evaluation by
-    ``validate_strategy_spec`` rejecting any spec with ``look_ahead_safe=False``)
-    matches the accepted policy in ``fusion_evaluator.py``'s
-    ``look_ahead_clean = True`` / "self-attested, not source-audited" framing —
-    it is NOT the independent AST audit, and is surfaced as such in
-    ``gate_details``, but it is the same admitted trust boundary already used
-    elsewhere in this codebase for exactly this class of strategy.
+    regardless of DSR/PBO/OOS.
+
+    What that path passes here is a REAL audit result, not a declaration.
+    ``services.dsl_lookahead_audit`` proves (by AST over the interpreter, plus a
+    structural walk of the validated spec, plus the broker cheat-on-close/open
+    check) that the strategy reads only bar ``t`` and earlier; only its ``pass``
+    state arrives here as ``True``. Its ``pending`` and ``degenerate`` states
+    arrive as ``False`` and fail this floor, which is the point: an audit that
+    reached no verdict is not evidence. There is no ``spec.look_ahead_safe`` to
+    pass into this parameter by mistake — that field was deleted from the DSL
+    precisely because "the spec says it is safe" is not evidence.
+
+    ``look_ahead_status`` and ``look_ahead_not_run_reason`` are the
+    honest-rendering half of that, and they change NOTHING about admission: the
+    floor still fails, the strategy still cannot deploy. They only stop
+    ``gate_details["look_ahead"]`` from telling the user their strategy FAILED an
+    audit that never reached a verdict — the status says which non-verdict it was
+    (``pending`` / ``degenerate``), the reason says why (see
+    ``dsl_lookahead_audit.DslLookAheadAudit.not_run_reason``).
     """
     if not daily_returns or len(daily_returns) < _MIN_RETURNS_FOR_GATE:
         return RigorGateVerdict.pending()
@@ -215,6 +227,8 @@ def verdict_from_returns(
             paper_claimed_sharpe=paper_claimed_sharpe,
             average_correlation=average_correlation,
             look_ahead_audit_passed=look_ahead_audit_passed,
+            look_ahead_status=look_ahead_status,
+            look_ahead_not_run_reason=look_ahead_not_run_reason,
         )
     except Exception as exc:  # never let the badge crash the library list
         logger.warning("live rigor gate failed for %s (badge → pending): %s", strategy_id, exc)
@@ -248,7 +262,7 @@ def verdicts_for_strategies(strategies: list) -> dict[str, RigorGateVerdict]:
     strategy_ids = [s.id for s in strategies]
 
     try:
-        from archimedes.db import get_session, init_db
+        from archimedes.db import get_session
         from archimedes.services.backtest_repository import get_all_daily_returns
         from archimedes.services.rigor_evaluator import (
             assert_self_contained_cohort_correlation,
@@ -256,7 +270,6 @@ def verdicts_for_strategies(strategies: list) -> dict[str, RigorGateVerdict]:
             compute_pbo,
         )
 
-        init_db()
         with get_session() as session:
             returns_by_strategy = get_all_daily_returns(session, strategy_ids)
     except Exception as exc:
@@ -265,9 +278,10 @@ def verdicts_for_strategies(strategies: list) -> dict[str, RigorGateVerdict]:
 
     # Strategies WITHOUT real returns are pending; do NOT synthesize from stubs
     # (that is the circular validation the /gate route explicitly refuses).
-    # TODO(A7): cohort filter here diverges from strategies_routes's cohort
-    # (_live_rigor_results_for_strategies also excludes zero-variance series) —
-    # see docs/sprint/cluster-4-strategies-route.md
+    # TODO(A7): cohort filter here diverges from the curated grading job's cohort
+    # (curated_grading.grade_cohort also excludes zero-variance series) — see
+    # docs/sprint/cluster-4-strategies-route.md. This function now backs the vault
+    # deploy gate only; the library badge is the stored verdict (#1746 / PR-B).
     valid_returns = {k: v for k, v in returns_by_strategy.items() if len(v) >= _MIN_RETURNS_FOR_GATE}
 
     # num_trials = 1: each strategy is graded on ITS OWN Sharpe, NOT deflated by

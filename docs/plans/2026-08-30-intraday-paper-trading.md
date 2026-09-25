@@ -2,8 +2,16 @@
 
 > **status:** draft
 > **owner:** Dan Browne
-> **updated:** 2026-08-30
+> **updated:** 2026-09-03
 > **superseded-by:** —
+
+> **Corrected 2026-09-03 ([#1807](https://github.com/aprin-labs/archimedes/issues/1807)).**
+> Two sentences in this plan said the settled ledger "carries to mainnet". The Arc mainnet
+> cutover was cancelled by owner call on 2026-08-30
+> ([#1240](https://github.com/aprin-labs/archimedes/issues/1240)): Archimedes stays a testnet
+> product until legal/regulatory review and sustained traction justify charging real money, and
+> we do not name a date. Both sentences now say what is true — the settled ledger is a paper
+> track record on Arc testnet, with no real funds. Nothing else about the design changed.
 
 **The directive (Dan, 2026-08-30):** *"daily returns is too slow — users want to see their
 strategies play out closer to real time; intraday is a huge unlock."* This is a v8 Lane 3.5
@@ -186,7 +194,19 @@ from that same field (`:478-481`). On the yfinance path the staleness gate is th
 now against now, and **cannot reject a stale bar** — while `fetch_prices`'s own docstring claims
 "every price keeps its true `source` + upstream timestamp so the on-chain push staleness/deviation
 gates stay meaningful" (true of the Pyth cascade, which carries a real observation time; not true
-of the yfinance batch). Widening the batch return fixes that gate as a side effect. Size **S–M**.
+of the yfinance batch). Widening the batch return makes that gate FIXABLE — but the fix itself was
+split out (2026-08-30) and is **not** part of item 0.
+
+**Why the split.** Stamping the bar time on the `AssetPrice` does close the gate — and it also
+stops every off-hours equity push, because a Friday-close bar is tens of hours past
+`ORACLE_MAX_UPSTREAM_STALENESS_SECONDS` (900s). `sSPY` would hold its last weekday value on-chain
+across the weekend instead of being re-pushed at a fresh block time. That is a live-chain behavior
+change with weekend-freshness consequences (#1528) and needs the owner's ack, so it does not ride
+along inside a paper-trading PR. It lives on `dbrowneup/oracle-bar-time-stamp` (stacked on the
+marks branch, which is its prerequisite), with an executed off-hours test and its in-session
+counterpart. The marks branch unpacks the tuple, discards `bar_ts`, and pins the poll-time stamp
+with a regression test so the change cannot re-enter under cover of a paper PR. Size **S–M** for
+the seam; the on-chain stamp is its own review.
 
 ### 2.1 The three options
 
@@ -344,9 +364,9 @@ the daily rollup job writes `granularity='hourly'` rows and deletes the `'raw'` 
 One table, one query shape, and the unique constraint prevents a re-run from duplicating a rollup.
 
 **Marks are NOT the track record.** `paper_daily_returns` remains append-only-by-law and remains
-the thing that carries to mainnet. `paper_marks` is a **decoration with a TTL** and is safe to
-delete wholesale. That single sentence is what makes an aggressive retention policy safe, and it
-should be in the model's docstring.
+the recorded paper track record — Arc testnet, no real funds. `paper_marks` is a **decoration with
+a TTL** and is safe to delete wholesale. That single sentence is what makes an aggressive retention
+policy safe, and it should be in the model's docstring.
 
 ### 3.2 Retention — learning from tonight's `backtest_results` finding
 
@@ -505,7 +525,7 @@ computed from whole days. Two additive changes:
 - **An intraday tail on the sparkline**, visually distinguished from the settled daily line — a
   lighter stroke or a dashed segment — so a user can see at a glance where the *recorded track
   record* ends and where the *unsettled intraday view* begins. This matters because only the daily
-  ledger carries to mainnet.
+  ledger is the recorded track record.
 - **A no-marks-yet state.** A deployment created between ticks, or one on `SPY` before the session
   opens, legitimately has zero marks. That renders as an em-dash with a reason — never a `+0.00%`,
   which is the exact bug `formatTotalReturn` was extracted to fix (an unmeasured day-0 ledger must
@@ -574,7 +594,7 @@ evenings-and-weekends capacity.
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| 0 | Widen `get_intraday_quotes_batch` to `dict[str, tuple[float, datetime]]` (§2) | **S–M** | **Blocks items 3 and 4** — the observation timestamp and the stale-bar guard both need it. ABC + `YFinanceProvider` + caching delegate + `oracle_updater.py:678` + the test doubles; also closes the yfinance staleness-gate gap. |
+| 0 | Widen `get_intraday_quotes_batch` to `dict[str, tuple[float, datetime]]` (§2) | **S–M** | **Blocks items 3 and 4** — the observation timestamp and the stale-bar guard both need it. ABC + `YFinanceProvider` + caching delegate + `oracle_updater.py:678` (tuple unpack only) + the test doubles. The yfinance staleness-gate gap is *made* fixable here but is **fixed on `dbrowneup/oracle-bar-time-stamp`**, not in this item — it stops off-hours on-chain pushes and needs the owner's ack (see §2). |
 | 1 | `paper_marks` model + Alembic migration + retention constants | **S** | Migration ships with its data-shape decision; no backfill (marks start now). |
 | 2 | Position-set cache at daily advance (§4.1) | **S** | The only new logic in the engine path. |
 | 3 | `marks_runner.py` — batched fetch, mark, insert, lease | **M** | Reuses `get_intraday_quotes_batch` and `RunnerLeaseGuard`; writes nothing on stale data. |
@@ -606,6 +626,16 @@ are **unchanged** before and after the marks feature runs.
 | 13 | Intraday-signals spike → ADR (the four steps in §1.3) | **L** |
 | 14 | Calendar-aware cadence + warmup in both interpreters, parity-pinned | **L** |
 | 15 | Re-grade intraday strategies through the rigor gate (Önder) | **L** |
+
+**The two v1 limitations v1 SHIPPED WITH, disclosed rather than fixed.** Both are stated in
+`docs/api/paper-trading.md`, in the route docstring, in `services/paper_marks.py`, and (for the
+first) in the UI at the point of render — and both are pinned by a test, so a fix is forced to
+update the disclosure with it rather than leaving three stale honesty claims behind.
+
+| # | Limitation | What closing it needs |
+|---|---|---|
+| 16 | **A mark cannot see cash.** `replay_spec` returns dated portfolio returns, not a per-sleeve invested/flat vector, so a sleeve the strategy holds in CASH is marked as if invested — a settled `+0.00%` day can carry a `+10.00%` mark. Bounded to one session (the next daily advance re-anchors to the ledger) and it never touches `paper_daily_returns`. Pinned by `test_a_cash_sleeve_is_still_marked_as_if_invested`. | A per-sleeve position vector out of the graded engine, plumbed into `PositionSet`. **M–L** |
+| 17 | **`ts` is both the honesty stamp and the dedupe key.** On a mixed universe a frozen equity leg pins `ts = min(fresh_bar_times)` for as long as it is inside the staleness window, so ~an hour of crypto marks is deduped away at each equity close — and *raising* `PAPER_MARKS_MAX_STALENESS_MINUTES` makes it worse, not better (non-monotonic). Pinned by `test_a_mixed_universe_loses_marks_while_a_frozen_leg_pins_the_stamp`. | A second timestamp column + migration, so the dedupe key can be `max(fresh_bar_times)` while the stored stamp stays `min`. Stamping `max` instead is **rejected** — it buys cadence with a false freshness claim. **S–M, needs a migration** |
 
 ---
 

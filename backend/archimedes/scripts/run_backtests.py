@@ -27,6 +27,7 @@ from archimedes.services.backtest_repository import (
     get_daily_returns,
     insert_backtest_if_missing,
 )
+from archimedes.services.curated_grading import grade_curated_library
 from archimedes.services.strategy_provider import default_provider
 from archimedes.services.vol_plausibility import (
     VolPlausibilityError,
@@ -472,6 +473,33 @@ def run_backtests() -> dict:
     }
     if errors:
         summary["errors"] = errors
+
+    # ── Grade what was just measured (#1746 / PR-B) ─────────────────────────
+    # Backtesting and grading are ONE event (docs/adr/rigor-verdict-of-record.md).
+    # New evidence for a curated strategy is exactly the moment its rigor verdict
+    # should be produced and stored — and the only moment, because no read
+    # surface is allowed to compute one. The cohort is the full library either
+    # way, so this grades every curated row, not only the ones that inserted:
+    # a strategy whose row was content-hash-deduped still gets a verdict if it
+    # never had one, and a cohort-scoped input (PBO, average correlation) that
+    # moved because SOMEONE ELSE got a new row is a real reason to re-grade the
+    # neighbours. Failing to grade does not fail the run: the rows are written,
+    # the evidence is real, and the passports keep the verdict they already had.
+    #
+    # A grading pass that could not reach its data writes NOTHING and returns a
+    # summary carrying an `error` key (services/curated_grading — it must never
+    # blank the library's verdicts just because the DB blinked), so both the
+    # except branch below and that key put the same shape in `summary["graded"]`
+    # and the runbook's "check the summary" step catches either.
+    try:
+        with get_session() as session:
+            grade_summary = grade_curated_library(session)
+            session.commit()
+        summary["graded"] = grade_summary.as_dict()
+    except Exception as exc:
+        logger.exception("curated grading failed after the backtest run: %s", exc)
+        summary["graded"] = {"error": f"{type(exc).__name__}: {exc}"}
+
     logger.info("backtest run summary: %s", summary)
     return summary
 

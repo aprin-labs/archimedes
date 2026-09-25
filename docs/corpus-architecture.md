@@ -6,12 +6,14 @@
 > [`docs/specs/strategy-passport-spec.md`](specs/strategy-passport-spec.md) and
 > [`docs/specs/selection-bias-corrections-spec.md`](specs/selection-bias-corrections-spec.md);
 > together they describe the three load-bearing intelligence layers of Archimedes.
-> **Status:** Day-9 (2026-05-20). Reflects what's actually shipped on `main` after
-> #95 (engine v2), #97 (10k corpus), #105 + #108 (rigor wedge), #106 (DB-backed
-> corpus), and #93 (Corpus Explorer UI).
+> **Status:** current · **updated:** 2026-09-01. Reflects what's actually shipped on
+> `main` after #95 (engine v2), #97 (the original 10k seed) and #1635 (uncapped harvest),
+> #105 + #108 (rigor wedge), #106 (DB-backed corpus), and
+> #93 (Corpus Explorer UI). Live row counts: `GET /health` `corpus_papers` /
+> `corpus_db_count`. Do not freeze a number here; the corpus probe can timeout.
 
-> **Claim-integrity note (verified against production 2026-08-19, issue #778).** Layer 1
-> is real: 10,000 rows with title + abstract are in Postgres. Layers 2 and 3 are **not**:
+> **Claim-integrity note (issue #778).** Layer 1
+> is real: the committed manifest rows with title + abstract are in Postgres. Layers 2 and 3 are **not**:
 > there is no embedding column anywhere in the schema, `corpus_meta` holds 0 rows, and
 > `kg_entities`/`kg_relations` are 0/0. Where this document describes embeddings, clusters,
 > or a knowledge graph as part of the substrate, read that as the **target design**, not the
@@ -27,7 +29,7 @@
 │  LAYER 1 — SEED (committed, deterministic)                       │
 │  data/corpus/manifest.jsonl                                      │
 │  Curated arXiv metadata snapshot — ships with the repo           │
-│  Boot-time floor. 10,000 papers, 14 MB. No network required.     │
+│  Boot-time floor. Committed JSONL. No network required.          │
 └──────────────────────────────────────────────────────────────────┘
                               │
                               ▼ (idempotent upsert at every startup)
@@ -82,7 +84,9 @@ This is the right shape:
 A spec gap worth knowing: `intake_from_arxiv()` is callable but **no periodic task
 wires it up automatically**. Today, an operator runs the script when they want
 freshness. The spec called for an in-process periodic task; adding one is ~10 lines.
-Tracked as a fast-follow under #106.
+Tracked as a fast-follow under #106. Until #1635 it was worse than un-scheduled:
+its query carried no `start=` offset, so it could only ever see the newest page and
+inserted ~0 after the first run. It pages properly now.
 
 ## Why local and deployment differ
 
@@ -103,14 +107,42 @@ The differences that *do* exist:
    manifest. In prod the host volumes persist across redeploys — you'd only lose
    data if you explicitly deleted them. **Same code, different blast radius.**
 2. **Network latency to arXiv.** Negligible — intake is throttled either way.
-3. **The 10,000-row corpus** (post #97) was built by running
-   `scripts/bulk_ingest_arxiv.py` once, with results committed to `manifest.jsonl`.
-   So both environments start at 10,000 on first boot. Subsequent growth requires
-   running intake again.
+3. **The seed corpus** was built by running `scripts/bulk_ingest_arxiv.py` once,
+   with results committed to `manifest.jsonl`. So both environments start at the
+   same row count on first boot. Subsequent growth requires running intake again.
 
 That's it. There's no "production magic" — same code, same DB, same artifact volume
 contract. Cold-clone parity is `docker compose down -v && docker compose up`; expect
-`/health` to report `corpus_db_count == 10000` once startup completes.
+`/health` to report `corpus_db_count` equal to `wc -l data/corpus/manifest.jsonl`
+once startup completes. (Ask the live system for the number rather than trusting
+this page — the manifest grows.)
+
+### The 10,000 ceiling, and why it held for three months (#1635)
+
+The corpus sat at exactly 10,000 rows from 2026-05-20 to 2026-08-31 — not because
+that is the size of the responsive literature (the 8-category query reported
+**18,907** on 2026-08-31) but because of three independent defects, each of which
+alone was enough to pin it:
+
+1. `bulk_ingest_arxiv.py` defaulted `--max` to `10000`.
+2. It stopped at the first page containing no new papers. The feed is ordered by
+   submission date, so a *resumed* run walks back into the region the manifest
+   already covers and stops there. Measured with the ceiling removed but this rule
+   intact: **10,674 of 18,907**.
+3. **arXiv's legacy Atom API answers HTTP 500 for `start >= 10000` on any single
+   query.** Measured 2026-08-31: `start=9800` → 200 OK, `start=10000` → 500. So even
+   a correctly-draining OR-query physically could not reach the tail. The harvester
+   now issues **one paged query per category** and unions the results.
+
+A fourth defect meant the *other* growth path could not grow the corpus at all:
+`intake_from_arxiv` built its URL with `max_results` and **no `start=`**, so every
+call re-requested the same newest page. Raising `CORPUS_MAX` silently no-op'd. Both
+are fixed and guarded by `backend/tests/test_corpus_uncap.py`.
+
+**Correcting the record while we are here.** Commit `2449f4b7` described the 10,000-row
+manifest as "spanning 2008–2026". It did not — its real range was **2018-07-31 →
+2026-05-18**. The post-#1635 manifest genuinely reaches **1997-02-10 → 2026-08-28**.
+Do not reuse the older phrasing.
 
 ## What a paper actually contains
 
@@ -139,7 +171,11 @@ entire marketing wedge.
 User describes intent in the UI
         │
         ▼
-POST /api/strategies/generate           (engine v2, Chuan #95)
+POST /api/generate/start                (the debate society — sole entry point.
+                                         POST /api/strategies/generate, the old
+                                         direct-fusion bypass, was deleted
+                                         2026-08-31. Fusion is now a step INSIDE
+                                         the society, not a route of its own.)
         │
         ▼
 FusionBrief built
@@ -191,7 +227,7 @@ point at specific papers that informed it. **That's the rigor wedge externalized
 
 ### Wired and live
 
-- [x] DB-backed `papers` + `corpus_meta` (10,000 rows)
+- [x] DB-backed `papers` + `corpus_meta` (live row count: `GET /health` `corpus_db_count`)
 - [x] Idempotent seed at every startup
 - [x] `intake_from_arxiv()` function (no scheduler — operator-triggered)
 - [x] DB-first read path through `strategy_fusion.load_corpus()`
@@ -228,9 +264,11 @@ point at specific papers that informed it. **That's the rigor wedge externalized
       no periodic task. Filed as a fast-follow under #106 (~10 lines to add an
       `asyncio.create_task` on startup).
 - [ ] **Retention/prune at `CORPUS_MAX`** — when DB hits the cap, intake silently
-      stops; no eviction. Not biting at 10k (cap default is 2000, currently lifted
-      via env to 10k); spec called for recency-prioritized retention if scale
-      pushes us past the cap.
+      stops; **no eviction**. The default was lifted 2000 → 25000 in #1635 so a cold
+      environment matches prod's env override and has headroom above the ~18.9k
+      responsive literature. That **defers** retention, it does not solve it: spec
+      called for recency-prioritized retention if scale pushes us past the cap, and
+      nothing implements it.
 - [ ] **`make corpus` / `make build-corpus-artifact` targets** — Makefile has
       no corpus targets. Local↔prod parity (#98) wants these. Trivial follow-on.
 - [ ] **Quality-signal columns** — spec called for peer-review / preprint /
@@ -270,13 +308,14 @@ small enough to commit, fast enough to seed, and rich enough to retrieve.
 - [`backend/archimedes/agents/strategy_fusion.py`](../backend/archimedes/agents/strategy_fusion.py) — `load_corpus()` + fusion prompt build
 - [`backend/archimedes/models/corpus_store.py`](../backend/archimedes/models/corpus_store.py) — `PaperRecord` + `CorpusMetaRecord` schemas
 - [`docs/qfin-paper-corpus-seed.md`](archive/qfin-paper-corpus-seed.md) — the original
-  seed-curation spec (largely historical now that #97 expanded to 10k via bulk ingest)
+  seed-curation spec (largely historical now that #97 and then #1635 expanded it via bulk ingest)
 - [`docs/specs/selection-bias-corrections-spec.md`](specs/selection-bias-corrections-spec.md) — what the rigor gate enforces
 - [`docs/architectural-principles.md`](architectural-principles.md) — the four
   load-bearing primitives, with the corpus + fusion + rigor + on-chain provenance
   forming the spine
-- Issues: [#97 (10k corpus)](https://github.com/a-apin/archimedes/issues/97),
-  [#106 (DB-backed substrate)](https://github.com/a-apin/archimedes/issues/106),
-  [#93 (Corpus Explorer UI)](https://github.com/a-apin/archimedes/issues/93),
-  [#96 (fusion retrieval — open)](https://github.com/a-apin/archimedes/issues/96),
-  [#101 (KB pipeline port — open)](https://github.com/a-apin/archimedes/issues/101)
+- Issues: [#97 (10k corpus)](https://github.com/aprin-labs/archimedes/issues/97),
+  [#1635 (uncapped seed manifest + canonical terms)](https://github.com/aprin-labs/archimedes/issues/1635),
+  [#106 (DB-backed substrate)](https://github.com/aprin-labs/archimedes/issues/106),
+  [#93 (Corpus Explorer UI)](https://github.com/aprin-labs/archimedes/issues/93),
+  [#96 (fusion retrieval — open)](https://github.com/aprin-labs/archimedes/issues/96),
+  [#101 (KB pipeline port — open)](https://github.com/aprin-labs/archimedes/issues/101)

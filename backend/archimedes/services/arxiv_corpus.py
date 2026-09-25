@@ -40,26 +40,29 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from archimedes.services.corpus_categories import QFIN_CATEGORIES
+
 logger = logging.getLogger(__name__)
 
 # ── Corpus definition ───────────────────────────────────────────
 
-# Core q-fin taxonomy: portfolio management, trading microstructure,
-# statistical finance, risk management, computational finance,
-# mathematical finance, pricing of securities.
-QFIN_CATEGORIES: tuple[str, ...] = (
-    "q-fin.PM",
-    "q-fin.TR",
-    "q-fin.ST",
-    "q-fin.RM",
-    "q-fin.CP",
-    "q-fin.MF",
-    "q-fin.PR",
-)
+# The core q-fin taxonomy is imported, never redeclared: before #1635 this
+# module carried its own 7-category tuple (no `q-fin.GN`) while
+# `scripts/bulk_ingest_arxiv.py` carried a different 9-category list — and the
+# script's list is what actually produced the manifest. `corpus_categories`
+# is now the single source of truth for both.
 
 # q-fin-adjacent: a lot of the bleeding-edge ML-for-markets work is
 # cross-listed here rather than under a q-fin primary. We still want it,
 # but only when it is co-tagged q-fin (see _is_qfin_relevant).
+#
+# These matter *here* only because `_default_search` issues one query per
+# category. They are deliberately NOT part of the bulk-harvest OR-query
+# (#1635): arXiv's `cat:` matches any tag on a paper, not just the primary, so
+# {cross-list ∧ q-fin} ⊆ {q-fin} — a co-tag-filtered cross-list query is a
+# subset of what the q-fin query already returns and adds zero recall. The only
+# way it would add anything is by dropping the co-tag filter, which is the
+# generic-ML leak we refuse.
 QFIN_CROSS_CATEGORIES: tuple[str, ...] = (
     "cs.LG",
     "stat.ML",
@@ -83,7 +86,10 @@ _TEXT_REL = "data/corpus/text"
 
 # Polite to the arXiv API: their guidance is a single request every ~3s.
 _API_DELAY_SECONDS = 3.0
-_PDF_DOWNLOAD_DELAY = 3.0  # same polite delay between PDF downloads
+# Same polite delay between PDF downloads. This is the *production default*
+# for ``build_corpus(delay_seconds=...)`` — the seam exists so offline callers
+# (tests) can pay 0 without ever changing what a real harvest sends to arXiv.
+_PDF_DOWNLOAD_DELAY = 3.0
 _API_PAGE_SIZE = 100
 _PDF_TIMEOUT_SECONDS = 30
 _PDF_MAX_RETRIES = 3
@@ -373,6 +379,7 @@ def build_corpus(
     search: Callable[[Iterable[str], int], Iterable[CorpusPaper]] | None = None,
     pdf_downloader: Callable[[str], bytes] | None = None,
     fetch_pdfs: bool = True,
+    delay_seconds: float = _PDF_DOWNLOAD_DELAY,
 ) -> list[dict]:
     """Build the manifest and (best-effort) the PDF + text caches.
 
@@ -380,6 +387,10 @@ def build_corpus(
     even rows whose PDF/text failed (``pdf_sha256`` then ``null``). ``search``
     and ``pdf_downloader`` are injectable so the parse → schema → cache →
     dedupe → recency path is fully testable offline.
+
+    ``delay_seconds`` is the polite pause between cached PDFs and defaults to
+    arXiv's guidance (``_PDF_DOWNLOAD_DELAY`` = 3.0s) — a live harvest is
+    unchanged. Offline callers pass 0 to skip the sleep entirely.
     """
     search = search or _default_search
     pdf_downloader = pdf_downloader or _default_pdf_downloader
@@ -411,10 +422,13 @@ def build_corpus(
                 pdf_ok += 1
                 if _extract_text(paper, pdf_dir, text_dir):
                     text_ok += 1
-                # Polite delay between PDF downloads — respect arXiv rate limits
-                import time
+                # Polite delay between PDF downloads — respect arXiv rate
+                # limits. Injected (default 3.0s), so offline callers can
+                # pass 0 and skip the sleep entirely.
+                if delay_seconds > 0:
+                    import time
 
-                time.sleep(_PDF_DOWNLOAD_DELAY)
+                    time.sleep(delay_seconds)
         rows.append(paper.manifest_row(pdf_sha256=sha, fetched_at=fetched_at))
         if idx % 25 == 0:
             logger.info("processed %d/%d papers", idx, len(papers))

@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:670d074582eee6679328378a6e3c31533bd140dde07f513623a42fc615e44bae",
+  "claims": [
+    {
+      "id": "claim_63e0a2f58cb248c1b1b220385003c99d",
+      "statement": "Every library strategy carries an academic or practitioner paper anchor, a REGIME_TAG of bull, bear, or regime_neutral, and a documented v1 adaptation caveat; the strategy files under analytics-engine/strategies/ are the source of truth and the PAPER_* and REGIME_TAG constants are transcribed from them.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L1-L31",
+          "version": "repo-lines-v1:sha256:9edc0c73b4f2508045ad92a5fb83f91575e362da45a1abd7f0873cfc56814bdd:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg5NThkNGY4YTc1MjdjNGIyYzhmNGQ5OThjMTRjNTNkZGJlNTc2YWNiNjdmNTU1MWU1OGExZDY0ZTMzYWEzMTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ5NWJmN2VhYmY5NGM5MDA5Y2E5ZDBjNTA0NGVkNzc4MzA4MTgyYTgwNDlkNmViNjI2MzUwYWQwNDRlN2QxNmMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_65e063f255cd49f8ba516c6ec0011649",
+      "statement": "A paper anchor is necessary but not sufficient for Tier-1 admission: a strategy must still pass the four-control gate, and which strategies currently pass is reported by the live rigor gate rather than by any document.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L15-L24",
+          "version": "repo-lines-v1:sha256:a9ec8a0f50d39466cd984b9a419c2b090cd9ed5ea4c9a3fa70068d989200c9c9:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUyYTIzNTZmYWY3ZDMwZDgzNmEwZGZmYjg2NDc1ZmIzNTU0ZGEzMDA3MzExOGFmOTYwZGY2ZTM4YzI0MjgzZjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFmOGNmODVkYWU1NzJjYTJhZDY4ZjkwNjMwMzlmMjc2MWEzYzRlNDdmNDEyM2Q4MTMzYjc2NzI5ZDBiOGQ0YTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJlNGIyMmMyYTc1ZjI3NWRhMzM2ZjFjOGNmZTA5OGJlOWZkYjIwNjE2OGQ0YmVlZjBmZDM3NzUyZmY0ZDI0MTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ1ZTU1YjUxOTUzZjU4NTc0ODAzODYyNDc2YjYwYWIxYmIyYTJjMGRiNGU3MmFkNzgwM2M3NjQ0NjA0ODdjOWYifQ"
+        },
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L400-L414",
+          "version": "repo-lines-v1:sha256:d67557193b27d0cc293372ea8f42aad7d881b126231d5203427e18403ffeec34:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM2MDA0NDBhOTYyMDY3M2ZhN2M2NTkyOTJjZDFjYjkyYjY4MDIyMDI3NzBiN2I2ZTk1NmJhMGVlYmM1ZDI2OTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA2YzlhODA1NjA4MzkzZWVlY2JlZWY5NmE5ZjJjOWI4YzYzYjQyYTc4ZDY0YzAzMDU0OTYxZjgxNjg3Y2RkMDYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6e87bd6aa1934058a189b66d6bad33a6",
+      "statement": "A null paper_claimed_* field means the source paper reported win rates, t-statistics, or conditional-mean tables rather than a mechanical Sharpe or CAGR — common for technical-rule and book-sourced strategies — and not that the strategy is weak; the only performance claim stood behind in those cases is the post-gate one measured on internal data.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L26-L31",
+          "version": "repo-lines-v1:sha256:34898959793f80ccf7b8e75fc45427f55a4cc093d3b628b0b5b75bb6366ea2bc:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMjlhMjQzMDQ3ZTk2ZGVhM2UzZGJlYjFlOTA0Y2E0ZjNkOTBlZmM4M2NkNzhmMTQ4MmZjMTAxZWMyOWMyMWEzMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDFiYTQ3MTljODBiNmZlOTExYjA5MWE3YzA1MTI0YjY0ZWVlY2U5NjRlMDljMDU4ZWY4Zjk4MDVkYWNhNTQ2YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZDA4MWU4NTNmN2FjZTE0NGUxY2YyNWE1NmU0NjNjYTRlMjJjZTI4MGVlMDZlMjNhNGJkMTU0NzMzM2M2OTljNSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDk1YmY3ZWFiZjk0YzkwMDljYTlkMGM1MDQ0ZWQ3NzgzMDgxODJhODA0OWQ2ZWI2MjYzNTBhZDA0NGU3ZDE2YyJ9"
+        },
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L400-L414",
+          "version": "repo-lines-v1:sha256:d67557193b27d0cc293372ea8f42aad7d881b126231d5203427e18403ffeec34:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM2MDA0NDBhOTYyMDY3M2ZhN2M2NTkyOTJjZDFjYjkyYjY4MDIyMDI3NzBiN2I2ZTk1NmJhMGVlYmM1ZDI2OTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA2YzlhODA1NjA4MzkzZWVlY2JlZWY5NmE5ZjJjOWI4YzYzYjQyYTc4ZDY0YzAzMDU0OTYxZjgxNjg3Y2RkMDYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2c3f6f1238364043b89054156b0f1705",
+      "statement": "The momentum sleeve is bull-biased by construction and carries crash risk at trend reversals, and several of its entries are single-name or narrow-universe proxies for cross-sectional designs — George & Hwang's 52-week-high proxy strips the cross-sectional component, and the TSMOM adaptation is long/flat where the paper is long and short across many assets.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L34-L82",
+          "version": "repo-lines-v1:sha256:43b0e19db7151cfe7d8c0e3649f6ff8c628dd51044ea691b12d5dc3ab9320911:eyJzZWxlY3RlZExpbmVDb3VudCI6NDksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBmM2UzZmRjYmI5NWIxODU0NjBkNzU2YmZhMzZjYjNhMWU2NGIwNzNkMDM3MDYyOTczYTVmNWRkZTgzMWQ0N2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE1ZWJlZjJkYmJlMGFlNmExYzU5NmYwZWQ2M2U1MDY2OTFiM2I1MTkyODk0M2RhYmY1OTNlMTMzY2QwNmYyNjUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVlNjAyOWRjMTg1NmY1MGNiOTdlMWEwZmIxZmZlMWJjNTNiYjljZDQ3NDcxMTFlZGRkYmZmN2RmOTM0OWVhNTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_485c5ae49a0d4c90aa4f3cb163c071f5",
+      "statement": "Two momentum-sleeve files are named after a different paper than the one they document: blitz_hanauer_2010_rmom.py is anchored on Blitz, Huij & Martens (2011), and novy_marx_2013_qmj.py is anchored on Asness, Frazzini & Pedersen (2019).",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L118-L131",
+          "version": "repo-lines-v1:sha256:d7c74f84def2e6179abb8bdf4011a4f36c2a4ae3355b8f3f11877f6239f67735:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIxZGViNjNmYmZiNzY3OWRlMTE2ZjY4ZjRiNTkyNDYxYjAwNzA5NDZhOGZjYjFhMTQ5MzAyYjNlMzZhZjVjZTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlkZWFjMjIxZTNlZjM5YzY4YTg4OTEwNWVmZDhiNTY1MmMyOTFiNjE0MGYzYjJkZmQxZjA0YzgxMGIwMzQ1ODkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM3NGEyNDZmNDczOWQ5MDBiZTljMWZjYzU4MjBkYmNlNWE1MWM2NTA1MDgxNjFhODMwOTlhZGNhNzY1ZWZlMjMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjcwMzc5NjFmOTNlZWI3ODkxNjYxOTI4MGUwN2YwY2VkMzdjOGFhZDNlNzNjMmU3NDM1Mjg4NDAwNzg5NzkxYWYifQ"
+        },
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L303-L316",
+          "version": "repo-lines-v1:sha256:68db1814fad3200e4cfe471d468f7ffe56224ef1f5fcfcad42268855a04db42b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRkZjgzNGQ0NjdlZjNlNjdhMDliZmJiNjg4ZTI0ZjQwNmYyZTI0M2FiOTg1MjZkODVkYzA5NDQ3YTcxNjk4ZmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNlNjU4MWEyNjgxNTBkODcwMDRhYWE1YjBkMTUyMTQ4YzE0N2IzZmRjMDQyZGI3MzQ4NDI2OTA4ODU0MzFlYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc1ZTVlYTI5ZmM5OThkNTFmZWFiZmZkNjQ0ZmNlYTc1MDA4MjcyYTA2MGQ0YTM5YjZiN2EwOWFjZjU0YWM4YzkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6fb2c715070e47a2943a4dd8cacca7cd",
+      "statement": "The Gatev pairs family ships as five files — four single specific pairs and one portfolio-of-pairs at the paper's own scale — and the paper's headline ~11% annualised excess return belongs to the diversified portfolio, so a single pair is explicitly not comparable to it.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L153-L171",
+          "version": "repo-lines-v1:sha256:c98aade6b10ca031423999d7e1ae9df43f2263b0691eceb70d438f64926c89ee:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI0MjRiM2I2OWUxYzY4YjUzZWI2MzM3N2E1ZTBkNmM0ZTNlYjg4NzA0ZjI3ZjM4ZWYwMTM3NmQ3YjNlZDc5MmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJmZTlmMTY2MDQ2OGVkNzY2NzRmY2VkMTQ5ODdlN2UwNjU0ZDFkZWIwNTI5N2YwMDM4NGUxZDI1MmVjYmJhY2IiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM3OTk5ZTljMTVkM2U1MzhhMTMyNGJkMGM4ZTg2MjMzZTg1MzgzNzRiYmM4OGY2YTBmZmMxYzQzY2Y0YTFmZWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMyMDRhOTYzNmRiNTFmODNmOTg1ODAyMWIwM2Y4MmM0ODg0YTY5Y2RmZTM2NTgxMTk4NGNhMTIxY2RjZGYwZTAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d2042b48c69e4ea7b8c5da7718cd6475",
+      "statement": "Several library strategies substitute a price-based proxy for data the engine does not have: cross-asset value proxies cheapness by deviation from a rolling mean, Quality Minus Junk collapses four accounting dimensions into a price-based information ratio, and the dividend-yield strategy is a high-D/P-sort proxy rather than a true dividend sort.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L228-L256",
+          "version": "repo-lines-v1:sha256:47dbf5be6cb3dc9541bc982914dc30fc57976ae38868db1ddeb604083dd3c434:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ2MDZhMzJmMWI0M2FjMTgzODk0MDMxZmIxYzNjMDc0M2I1OWQ2NzI5NzBjNzkyMWZjYTExZWJjYzQ0NzZkOGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQxOWZkYmUzZWM0MTFmZTgwOTA1ZmQyMDRmNWViM2FjMzc0YWVjYjZkZmZlMTA3ODFlZWJiMDMxZDMwYmE1OWUifQ"
+        },
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L303-L316",
+          "version": "repo-lines-v1:sha256:68db1814fad3200e4cfe471d468f7ffe56224ef1f5fcfcad42268855a04db42b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRkZjgzNGQ0NjdlZjNlNjdhMDliZmJiNjg4ZTI0ZjQwNmYyZTI0M2FiOTg1MjZkODVkYzA5NDQ3YTcxNjk4ZmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNlNjU4MWEyNjgxNTBkODcwMDRhYWE1YjBkMTUyMTQ4YzE0N2IzZmRjMDQyZGI3MzQ4NDI2OTA4ODU0MzFlYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc1ZTVlYTI5ZmM5OThkNTFmZWFiZmZkNjQ0ZmNlYTc1MDA4MjcyYTA2MGQ0YTM5YjZiN2EwOWFjZjU0YWM4YzkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_48e4b18a8e9e4204870b034a2c9cc4b7",
+      "statement": "The Betting Against Beta implementation applies no leverage rescaling to unit beta — only the long-low-beta, short-high-beta sign survives — and with a five-asset basket each leg may hold only one or two names.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L288-L301",
+          "version": "repo-lines-v1:sha256:f29729fb661ab73dd1fe05595a38d370eee2a4f4c3ab3e7e56411cb5ea919e24:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNmNmI5YTIxNzBkMDUxMzgwODc0ODg3ZGI2ZWVhZjFkNjQwZTc4YTNhMDY5YTY5OWQzOTY5NjYzOTVlYzI4MzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJjY2NjOTc1NWJkZTc0MTMzZGMwN2UxOGI0YWYyMzNiYjU0ZDM2MzQ3Zjc5YmIyNDI1MDA3YTAzYjlkOTYzNzEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkwZTVhZDc1ZmM5YThiYmQyYTRiMjUzYzAxOTlhNzljMGM3NWQ1MDgwZjI4ODI3ZDVlOGU1ZGNmYTNlY2UyNDciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVmZjliNTczNzk4ZDU2Zjk4NWViOWJiNWEzNGJmMGY1Mzc5ZWZhNjdlYzc3MzczZDA0M2MzOWMzODA4ZmM4MWUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e7fac0c2655d4cb99490035ecc9027fe",
+      "statement": "Regime tags drive position sizing rather than only labelling: a bull-tagged strategy is sized down by the regime-conditional gamma multiplier in risk_off and crisis regimes.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L400-L414",
+          "version": "repo-lines-v1:sha256:d67557193b27d0cc293372ea8f42aad7d881b126231d5203427e18403ffeec34:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM2MDA0NDBhOTYyMDY3M2ZhN2M2NTkyOTJjZDFjYjkyYjY4MDIyMDI3NzBiN2I2ZTk1NmJhMGVlYmM1ZDI2OTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA2YzlhODA1NjA4MzkzZWVlY2JlZWY5NmE5ZjJjOWI4YzYzYjQyYTc4ZDY0YzAzMDU0OTYxZjgxNjg3Y2RkMDYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ebd79f7ca9cd4c4887074091f279d197",
+      "statement": "The two baseline entries are not alpha bets: pipeline_buy_hold is the long-only SPY benchmark whose results are regenerated over 2004-01-02 to 2026-04-30 so the window spans the 2008-09 crisis and the 2022 correction, and capital_preservation_tbill is the defensive destination the trend filters rotate into, mapping to the fixed_income and conservative risk profiles.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L376-L397",
+          "version": "repo-lines-v1:sha256:9b19047b958920623951b81d2c441f1d1c439a7f540076c8452a9afe6c9b23d6:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZhMTYwMzE2YTBkZjUyOGM4ZmJhYjQxOWFjZWIxZWFiYmJkZmIyZDZlNzQxZjM1ZmVkNjBmZjFjZDc2OGNhYTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZjM2UzZTY4ZTI5YjViNDQ1YjVkYThhZjA3ODEyODQ5OGNmNGRjODliNWFmMmI5YWFlYWY0N2I2NTlmNThlYWUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f9c1c84d5f6142f0825f3e45431255cd",
+      "statement": "Paper anchor strength is disclosed rather than flattened: peer-reviewed Journal of Finance and JFE papers are treated as stronger anchors than practitioner books, which are in turn stronger than rules such as MACD and Donchian that are anchored on a merely related academic test rather than an origin paper.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L400-L414",
+          "version": "repo-lines-v1:sha256:d67557193b27d0cc293372ea8f42aad7d881b126231d5203427e18403ffeec34:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM2MDA0NDBhOTYyMDY3M2ZhN2M2NTkyOTJjZDFjYjkyYjY4MDIyMDI3NzBiN2I2ZTk1NmJhMGVlYmM1ZDI2OTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA2YzlhODA1NjA4MzkzZWVlY2JlZWY5NmE5ZjJjOWI4YzYzYjQyYTc4ZDY0YzAzMDU0OTYxZjgxNjg3Y2RkMDYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L84-L116",
+          "version": "repo-lines-v1:sha256:02c277ed90f0736ccde1ce9da31f69781ffa9c238bdc035dcb7213c2f0191ee1:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg2ZTA5NTY1ZDZiZjgzMmU1ODM2ZjhhODkzNjc0ZDdmZmE1NDAwOGQ5ODY5MGEwMGViNjNmZmM5YzEyNDE1NDgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc3ZTA4OWE0OThlMDU3Mzk0YjViMmUyYzQzMzAzZmY5NzQ5NTBiZWE1OTE2NGUzMTU5YTE3NDdmMDM3M2RlMDkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJkYTRkNjQ5MDJiZGE4ZWVkZTU3ZDNhMWNjMjc5MGEyNGQwZDk5OWQ1YWZkZWI5Njk0ODgyMDk2YzU3N2M4MGIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE5YjMxYzIwOWU2ZmJjNGNjMDg2NjY2MDEyYzNjNjRlNDU4NWEzMGIwYzU4N2M5YjIzNWE3NzU5YWFjMTJiYTcifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.4.3",
+    "at": "2026-08-31T05:55:43.566Z"
+  }
+}

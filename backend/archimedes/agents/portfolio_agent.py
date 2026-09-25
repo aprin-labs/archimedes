@@ -1,15 +1,32 @@
-"""LLM-driven portfolio agent.
+"""Single-turn LLM portfolio constructor.
 
 The rule-based ``StrategySignalEvaluator`` produces per-(strategy × asset)
-signals against a hard-coded universe.  This agent layer takes those
-signals (plus a global market scan) and asks an LLM to construct the
-final portfolio — picking specific instruments (including *individual*
-stocks and bonds, not just ETFs), justifying each pick, and anchoring
-every position to one of our paper-grounded strategies (the "strategy
-passport" model from CLAUDE.md § "Architectural primitives").
+signals against a hard-coded universe.  This module takes those signals
+(plus a global market scan) and asks an LLM, in **one** completion, to
+construct the final portfolio — picking specific instruments (including
+*individual* stocks and bonds, not just ETFs), justifying each pick, and
+anchoring every position to one of our paper-grounded strategies (the
+"strategy passport" model from CLAUDE.md § "Architectural primitives").
 
-If no LLM backend is available, the caller should fall back to the
-rule-based aggregation in ``api/routes.py``.
+Two live consumers, and only two:
+
+* ``agents/generation_pipeline.py`` calls :func:`get_portfolio_agent` for
+  the ``available`` / ``model_id`` probe behind ``_llm_available()`` and
+  ``_served_model_for()``, and constructs a per-job ``PortfolioAgent`` to
+  carry a model-pinned backend. It never asks this module to generate a
+  strategy — the debate society is the sole generation pipeline
+  (``docs/adr/debate-society-sole-generation-pipeline.md``).
+* ``evaluation/stockbench/adapter.py`` calls
+  :meth:`PortfolioAgent.propose_portfolio` for the benchmark harness.
+
+This is **not** an agent in the tool-use sense. The multi-turn tool loop
+that once lived here (``propose_portfolio_with_tools`` and its
+``get_asset_stats`` / ``get_correlation`` / ``stress_test_portfolio``
+tools) had no callers and was deleted 2026-08-31; nothing in the tree
+runs a tool-use loop today.
+
+If no LLM backend is available, ``propose_portfolio`` returns ``None`` and
+the caller falls back to rule-based aggregation.
 """
 
 from __future__ import annotations
@@ -21,13 +38,10 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from archimedes.services.cost_meter import record_llm_call
+from archimedes.agents.prompts import PROMPTS
+from archimedes.services.brief_screen import quote_for_prompt
 from archimedes.services.llm_backend import LLMBackend, make_llm_backend
-from archimedes.services.strategy_signal_evaluator import (
-    GLOBAL_ASSETS,
-    synth_display,
-)
-from archimedes.services.stress_engine import SCENARIOS, stress_one
+from archimedes.services.strategy_signal_evaluator import GLOBAL_ASSETS
 
 logger = logging.getLogger(__name__)
 
@@ -46,24 +60,13 @@ class AgentPick:
 
 
 @dataclass
-class AgentToolCall:
-    """A tool call the agent made during portfolio construction."""
-
-    tool: str
-    inputs: dict
-    output_summary: str
-
-
-@dataclass
 class AgentPortfolio:
-    """Full agent output: thesis + picks + tool-call trace."""
+    """Full agent output: thesis + picks + the model that served them."""
 
     thesis: str
     picks: list[AgentPick]
     model_id: str
     served_model: str
-    tool_calls: list[AgentToolCall] | None = None
-    iterations: int = 1
 
 
 # ── Response cache ─────────────────────────────────────────────────
@@ -77,40 +80,9 @@ def _cache_key(regime: str, risk_profile: str, top_synths: tuple[str, ...]) -> s
 
 
 def _build_system_prompt() -> str:
-    return (
-        "You are Archimedes, an autonomous portfolio-construction agent for a "
-        "non-custodial USDC-settled vault on Arc.\n\n"
-        "Your responsibility: pick a diversified portfolio of *individual* tradable "
-        "instruments (individual stocks, bonds, futures, FX, crypto — not just "
-        "broad ETFs unless they are the best vehicle for a thesis). Every pick "
-        "MUST be anchored to one of the paper-grounded quant strategies in our "
-        "library (the 'strategy passport' model). You may NOT invent strategies — "
-        "anchor only to the ones provided in the user prompt.\n\n"
-        "PRINCIPLES\n"
-        "- Diversify by asset class AND by exchange (US, European, Asian, Turkish, "
-        "  metals/futures, FX, crypto).\n"
-        "- Prefer individual stocks where you have a specific thesis (e.g. NVDA, ASML "
-        "  for AI capex; THYAO, KCHOL for Turkish play; XOM, CVX for energy).\n"
-        "- Use individual bond ETFs by maturity (BIL=t-bills, SHY=1-3y, IEF=7-10y, "
-        "  TLT=20y+, TIP=inflation-linked) rather than only aggregate funds.\n"
-        "- Respect the synth-budget cap. The remainder is held as USDC (the safety "
-        "  floor) which the user already knows about — you don't list USDC.\n"
-        "- No single pick > 20% of the synth budget.\n"
-        "- Pick 5-12 instruments total.\n\n"
-        "OUTPUT FORMAT\n"
-        "Return ONLY a JSON object, nothing else (no prose before or after). Schema:\n"
-        "{\n"
-        '  "thesis": "1-2 sentence portfolio thesis tying regime + risk profile to picks",\n'
-        '  "picks": [\n'
-        '    {"ticker": "NVDA", "weight": 0.12, "paper_anchor": "moskowitz_2012_tsmom",\n'
-        '     "reasoning": "12m return +75%, qualifies for TSMOM long; AI capex cycle"},\n'
-        "    ...\n"
-        "  ]\n"
-        "}\n\n"
-        "`ticker` MUST be the display symbol shown in the AVAILABLE UNIVERSE table. "
-        "Weights are fractions of the synth budget (will be renormalized if needed). "
-        "`paper_anchor` MUST be one of the strategy ids listed below."
-    )
+    # The template lives in the prompt registry (`agents/prompts.py`), rendered
+    # into `docs/specs/prompt-inventory.md` under a drift test (#1800).
+    return PROMPTS["portfolio.construction.system"].text
 
 
 def _format_universe(scan_universe_synths: set[str]) -> str:
@@ -190,8 +162,19 @@ def _format_strategies(strategies: list[Any], rigor_statuses: dict[str, str] | N
         rule = _summarize_rule(s)
         status = (rigor_statuses or {}).get(s.id, "pending")
         rigor_label = _RIGOR_LABELS.get(status, "pending (no live verdict)")
+        # `paper_title` is third-party arXiv metadata landing raw in a
+        # line-oriented prompt: the very next line of this same entry carries
+        # `sharpe=` and `rigor=`, so an unquoted title containing a newline
+        # writes a metric onto the agent's own evidence line. `quote_for_prompt`
+        # (#1801) screens the title and returns it as ONE quoted JSON token; a
+        # refused title leaves the field empty rather than being rewritten, and
+        # the id — which is what the agent must anchor every pick to — is
+        # unaffected either way.
+        quoted_title, _ = quote_for_prompt(
+            str(s.paper_title or ""), field="paper_title", context=f"strategy {s.id[:8]}"
+        )
         lines.append(
-            f"  - id={s.id[:8]}  title={s.paper_title}\n"
+            f"  - id={s.id[:8]}  title={quoted_title}\n"
             f"      sharpe={sr:.2f}  cagr={cagr:+.1f}%  rigor={rigor_label}\n"
             f"      signal rule: {rule}"
         )
@@ -209,20 +192,17 @@ def _build_user_prompt(
     scan_universe_synths: set[str],
     rigor_statuses: dict[str, str] | None = None,
 ) -> str:
-    return (
-        f"## CONTEXT\n"
-        f"- regime: {regime} (confidence {regime_confidence:.0%})\n"
-        f"- risk_profile: {risk_profile}\n"
-        f"- usdc_floor: {usdc_floor:.0%} (held as USDC, you do not allocate this)\n"
-        f"- synth_budget: {synth_budget:.0%} (your weights must sum to <= this)\n\n"
-        f"## TOP MARKET OPPORTUNITIES (live 90-day risk-adjusted ranking)\n"
-        f"{_format_market_scan(market_ranking)}\n\n"
-        f"## PAPER STRATEGIES (you must anchor every pick to one of these ids)\n"
-        f"{_format_strategies(strategies, rigor_statuses)}\n\n"
-        f"## AVAILABLE UNIVERSE (pick any of these tickers; * = appeared in top scan)\n"
-        f"{_format_universe(scan_universe_synths)}\n\n"
-        f"## YOUR TASK\n"
-        f"Construct the portfolio. Return ONLY JSON per the schema in the system prompt."
+    # Percentages are formatted HERE, not in the template: string.Template has no
+    # format specs, so `{x:.0%}` becomes an explicit `f"{x:.0%}"` at the seam.
+    return PROMPTS["portfolio.construction.user"].render(
+        regime=regime,
+        regime_confidence=f"{regime_confidence:.0%}",
+        risk_profile=risk_profile,
+        usdc_floor=f"{usdc_floor:.0%}",
+        synth_budget=f"{synth_budget:.0%}",
+        market_scan=_format_market_scan(market_ranking),
+        strategies=_format_strategies(strategies, rigor_statuses),
+        universe=_format_universe(scan_universe_synths),
     )
 
 
@@ -291,208 +271,6 @@ class PortfolioAgent:
     @property
     def model_id(self) -> str:
         return getattr(self._backend, "model_id", "unknown")
-
-    def _anthropic_client(self):
-        """Pull the underlying anthropic.Anthropic out of the backend if possible.
-
-        Tool-use requires the raw SDK — the LLMBackend.complete() seam only
-        does text in/out.  Returns None for non-Anthropic backends.
-        """
-        client = getattr(self._backend, "_client", None)
-        if client is None:
-            return None
-        # Duck-type check: AnthropicBackend / AnthropicCompatibleBackend
-        if not hasattr(client, "messages"):
-            return None
-        return client
-
-    def propose_portfolio_with_tools(
-        self,
-        regime: str,
-        regime_confidence: float,
-        risk_profile: str,
-        usdc_floor: float,
-        synth_budget: float,
-        market_ranking: list[dict],
-        strategies: list,
-        scan_universe_synths: set[str],
-        price_histories: dict,
-        rigor_statuses: dict[str, str] | None = None,
-    ) -> AgentPortfolio | None:
-        """Multi-turn tool-use portfolio construction.
-
-        The agent gets tools for asset stats, correlation, and stress
-        testing.  It iterates up to ``MAX_AGENT_ITERATIONS`` times, then
-        must finalize via ``propose_portfolio``.  Falls back to None if
-        the underlying backend is not Anthropic.
-        """
-        client = self._anthropic_client()
-        if client is None:
-            return None
-
-        top_synth_codes = tuple(r["synth"] for r in market_ranking)
-        cache_key = "tool_" + _cache_key(regime, risk_profile, top_synth_codes)
-        cached = _RESPONSE_CACHE.get(cache_key)
-        if cached and (time.time() - cached[1]) < _CACHE_TTL_SEC:
-            return cached[0]
-
-        system = _build_system_prompt() + (
-            "\n\nThis run is interactive: you have tools (get_asset_stats, "
-            "get_correlation, stress_test_portfolio). Use them to investigate "
-            "before finalizing via propose_portfolio."
-        )
-        user = _build_tool_user_prompt(
-            regime,
-            regime_confidence,
-            risk_profile,
-            usdc_floor,
-            synth_budget,
-            market_ranking,
-            strategies,
-            scan_universe_synths,
-            rigor_statuses,
-        )
-
-        messages: list[dict] = [{"role": "user", "content": user}]
-        tool_trace: list[AgentToolCall] = []
-        final_pick_input: dict | None = None
-        final_response_model: str = self.model_id
-
-        for iteration in range(MAX_AGENT_ITERATIONS):
-            try:
-                resp = client.messages.create(
-                    model=self.model_id,
-                    max_tokens=4096,
-                    system=system,
-                    tools=_agent_tools(),
-                    messages=messages,
-                )
-            except Exception as e:  # pylint: disable=broad-except
-                logger.warning("PortfolioAgent tool-use turn %d failed: %s", iteration, e)
-                return None
-
-            served = getattr(resp, "model", None)
-            if served:
-                final_response_model = str(served)
-
-            # Cost instrumentation (#1217). This tool-use loop calls the raw SDK
-            # directly, bypassing LLMBackend.complete() where every other call is
-            # metered — so a metered job running through here would under-report
-            # without this line.
-            #
-            # INERT TODAY, and now unreachable. record_llm_call is a no-op when
-            # no meter is bound to the context, and nothing binds one on this
-            # path: propose_portfolio_with_tools() is not on the generation
-            # pipeline's call graph. Its one caller, GET /api/strategies/advisor,
-            # was deleted on this branch, so the method has ZERO callers left —
-            # the pipeline's two runners (_run_debate_leaderboard,
-            # _run_fixture_candidate) accept an `agent` argument purely for
-            # signature parity and ignore it. Nothing reaches this loop, so the
-            # call cannot contribute to any job's snapshot.
-            #
-            # This whole method is therefore dead code awaiting the follow-up
-            # deletion PR (it survives here only because portfolio_agent.py's
-            # other exports — get_portfolio_agent / PortfolioAgent — are still
-            # imported by generation_pipeline.py and the StockBench adapter, so
-            # the module could not go in the same mechanical pass). Delete the
-            # method and this instrumentation together; do not treat the
-            # record_llm_call as coverage to preserve.
-            record_llm_call(model=final_response_model, response=resp)
-
-            # Capture the assistant turn for the next iteration
-            messages.append({"role": "assistant", "content": resp.content})
-
-            # Did the model finalize?
-            tool_uses = [b for b in resp.content if getattr(b, "type", "") == "tool_use"]
-            if not tool_uses:
-                # Model stopped without finalizing — give up
-                logger.warning("PortfolioAgent: model emitted no tool calls (turn %d)", iteration)
-                break
-
-            # Resolve each tool call and append the results
-            tool_results: list[dict] = []
-            for tu in tool_uses:
-                tool_name = tu.name
-                tool_input = dict(tu.input or {})
-                if tool_name == "propose_portfolio":
-                    final_pick_input = tool_input
-                    break
-                output = _execute_tool(tool_name, tool_input, price_histories)
-                tool_trace.append(
-                    AgentToolCall(
-                        tool=tool_name,
-                        inputs=tool_input,
-                        output_summary=_summarize_tool_output(tool_name, output),
-                    )
-                )
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": tu.id,
-                        "content": json.dumps(output),
-                    }
-                )
-
-            if final_pick_input is not None:
-                break
-
-            messages.append({"role": "user", "content": tool_results})
-
-        if final_pick_input is None:
-            logger.warning("PortfolioAgent: ran out of iterations without finalize")
-            return None
-
-        # Parse the propose_portfolio inputs into AgentPick objects
-        thesis = str(final_pick_input.get("thesis", "")).strip()
-        raw_picks = final_pick_input.get("picks") or []
-        picks: list[AgentPick] = []
-        for entry in raw_picks:
-            if not isinstance(entry, dict):
-                continue
-            ticker = str(entry.get("ticker", "")).strip()
-            if not ticker:
-                continue
-            resolved = _resolve_ticker(ticker)
-            if not resolved:
-                continue
-            synth, (_yf, display, asset_class, exchange) = resolved
-            try:
-                weight = float(entry.get("weight", 0.0))
-            except (TypeError, ValueError):
-                continue
-            if weight <= 0:
-                continue
-            weight = min(weight, 0.20)
-            picks.append(
-                AgentPick(
-                    ticker=display,
-                    synth=synth,
-                    asset_class=asset_class,
-                    exchange=exchange,
-                    weight=weight,
-                    paper_anchor=str(entry.get("paper_anchor", "")).strip(),
-                    reasoning=str(entry.get("reasoning", "")).strip(),
-                )
-            )
-        if not picks:
-            return None
-
-        # Normalize weights to the synth budget
-        total = sum(p.weight for p in picks)
-        if total > 0:
-            for p in picks:
-                p.weight = round(p.weight / total * synth_budget, 4)
-
-        portfolio = AgentPortfolio(
-            thesis=thesis or f"{regime} regime, {risk_profile} risk: diversified",
-            picks=picks,
-            model_id=self.model_id,
-            served_model=final_response_model,
-            tool_calls=tool_trace,
-            iterations=iteration + 1,
-        )
-        _RESPONSE_CACHE[cache_key] = (portfolio, time.time())
-        return portfolio
 
     def propose_portfolio(
         self,
@@ -597,315 +375,6 @@ class PortfolioAgent:
         return portfolio
 
 
-# ── Tool-use (multi-turn) implementation ──────────────────────────
-#
-# Single-turn JSON output is fine for v1; for the demo we give Claude
-# real tools so it can investigate the portfolio it's about to recommend.
-# The agent gets up to MAX_AGENT_ITERATIONS tool calls before being
-# forced to emit a final ``propose_portfolio`` call that finalizes picks.
-
-MAX_AGENT_ITERATIONS = 12
-
-
-def _agent_tools() -> list[dict]:
-    """JSON-schema tool definitions surfaced to Claude."""
-    # Anchor IDs MUST be substrings of the actual strategy file paths,
-    # otherwise routes._find_strategy_for_anchor falls through to
-    # strategies[0] and the paper attribution becomes meaningless.
-    valid_anchors = (
-        "faber_2007_sma200, moreira_muir_2017_volatility, "
-        "moskowitz_ooi_pedersen_2012_tsmom, george_hwang_2004_52w, "
-        "capital_preservation_tbill, pipeline_buy_hold"
-    )
-    return [
-        {
-            "name": "get_asset_stats",
-            "description": (
-                "Get annualized return, volatility, Sharpe, and max drawdown for "
-                "a single asset over the last year. Use this to evaluate whether "
-                "a specific stock or instrument is worth allocating to."
-            ),
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "ticker": {"type": "string", "description": "Display symbol (e.g. NVDA, BIST100, USD/TRY)"}
-                },
-                "required": ["ticker"],
-            },
-        },
-        {
-            "name": "get_correlation",
-            "description": (
-                "Get the trailing 1-year correlation between two assets. Use this "
-                "to check whether a proposed addition is genuinely diversifying or "
-                "redundant (correlation > 0.7 = redundant)."
-            ),
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "ticker_a": {"type": "string"},
-                    "ticker_b": {"type": "string"},
-                },
-                "required": ["ticker_a", "ticker_b"],
-            },
-        },
-        {
-            "name": "stress_test_portfolio",
-            "description": (
-                "Apply one of 6 historical/scenario shocks (equity_crash_2008, "
-                "tech_rout_2022, covid_crash_2020, energy_supercycle, em_fx_crisis, "
-                "crypto_winter) to a candidate portfolio. Returns the P&L hit. Use "
-                "this before finalizing — if the worst case exceeds your risk "
-                "tolerance, reconsider the picks."
-            ),
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "allocations": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "ticker": {"type": "string"},
-                                "weight": {"type": "number"},
-                            },
-                            "required": ["ticker", "weight"],
-                        },
-                    },
-                    "scenario": {
-                        "type": "string",
-                        "enum": list(SCENARIOS.keys()),
-                    },
-                },
-                "required": ["allocations", "scenario"],
-            },
-        },
-        {
-            "name": "propose_portfolio",
-            "description": (
-                "Finalize the portfolio. Call this LAST, once you've used the "
-                "other tools to vet your picks. Each pick must have a paper_anchor "
-                f"from: {valid_anchors}."
-            ),
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "thesis": {
-                        "type": "string",
-                        "description": "1-2 sentence portfolio thesis tying regime + risk profile to picks",
-                    },
-                    "picks": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "ticker": {"type": "string"},
-                                "weight": {"type": "number", "minimum": 0, "maximum": 0.20},
-                                "paper_anchor": {"type": "string"},
-                                "reasoning": {"type": "string"},
-                            },
-                            "required": ["ticker", "weight", "paper_anchor", "reasoning"],
-                        },
-                        "minItems": 5,
-                        "maxItems": 12,
-                    },
-                },
-                "required": ["thesis", "picks"],
-            },
-        },
-    ]
-
-
-def _tool_get_asset_stats(
-    ticker: str,
-    price_histories: dict,
-) -> dict:
-    """Compute annualized stats for one asset over the last year."""
-    resolved = _resolve_ticker(ticker)
-    if not resolved:
-        return {"error": f"unknown ticker: {ticker}"}
-    synth, (_yf, display, asset_class, exchange) = resolved
-    series = price_histories.get(synth)
-    if series is None or series.empty or len(series) < 30:
-        return {"error": f"no usable price history for {display}"}
-    import numpy as np
-
-    returns = series.pct_change().dropna().tail(252)
-    if len(returns) < 30:
-        return {"error": f"insufficient returns for {display}"}
-    mu_d = float(returns.mean())
-    sigma_d = float(returns.std())
-    mu_ann = mu_d * 252
-    sigma_ann = sigma_d * float(np.sqrt(252))
-    sharpe = mu_ann / sigma_ann if sigma_ann > 1e-9 else 0.0
-    # Max drawdown on the 1y window
-    cum = (1 + returns).cumprod()
-    running_max = cum.cummax()
-    drawdown = (cum - running_max) / running_max
-    max_dd = float(drawdown.min())
-    return {
-        "ticker": display,
-        "asset_class": asset_class,
-        "exchange": exchange,
-        "annualized_return": round(mu_ann, 4),
-        "annualized_vol": round(sigma_ann, 4),
-        "sharpe": round(sharpe, 3),
-        "max_drawdown": round(max_dd, 4),
-        "n_obs": len(returns),
-    }
-
-
-def _tool_get_correlation(
-    ticker_a: str,
-    ticker_b: str,
-    price_histories: dict,
-) -> dict:
-    ra = _resolve_ticker(ticker_a)
-    rb = _resolve_ticker(ticker_b)
-    if not ra or not rb:
-        return {"error": f"unknown ticker(s): {ticker_a!r}/{ticker_b!r}"}
-    sa, (_y1, da, _ac1, _ex1) = ra
-    sb, (_y2, db, _ac2, _ex2) = rb
-    import pandas as pd
-
-    pa, pb = price_histories.get(sa), price_histories.get(sb)
-    if pa is None or pb is None or pa.empty or pb.empty:
-        return {"error": "missing price history"}
-    df = pd.DataFrame({sa: pa, sb: pb}).dropna(how="any")
-    if len(df) < 30:
-        return {"error": "insufficient overlap"}
-    r = df.pct_change().dropna()
-    rho = float(r[sa].corr(r[sb]))
-    return {
-        "ticker_a": da,
-        "ticker_b": db,
-        "correlation_1y": round(rho, 3),
-        "n_obs": len(r),
-        "interpretation": (
-            "highly correlated (redundant)"
-            if rho > 0.7
-            else "moderately correlated"
-            if rho > 0.4
-            else "weakly correlated (diversifying)"
-            if rho > 0
-            else "negatively correlated (strong diversifier)"
-        ),
-    }
-
-
-def _tool_stress_test(
-    allocations: list[dict],
-    scenario: str,
-) -> dict:
-    """Apply a stress scenario to a candidate portfolio."""
-    # Enrich allocations with asset_class (the tool input only has ticker + weight)
-    enriched: list[dict] = []
-    for a in allocations:
-        ticker = a.get("ticker", "")
-        resolved = _resolve_ticker(ticker)
-        if not resolved:
-            continue
-        _synth, (_yf, display, asset_class, _exchange) = resolved
-        enriched.append(
-            {
-                "symbol": display,
-                "asset_class": asset_class,
-                "weight": float(a.get("weight", 0.0)),
-            }
-        )
-    if not enriched:
-        return {"error": "no valid allocations"}
-    try:
-        result = stress_one(enriched, scenario)
-    except ValueError as e:
-        return {"error": str(e)}
-    # Top 5 contributors (positive and negative) for the LLM to react to
-    sorted_pnl = sorted(result.per_asset_pnl, key=lambda x: x["contribution_pct"])
-    return {
-        "scenario": scenario,
-        "label": result.label,
-        "portfolio_pnl_pct": round(result.portfolio_pnl * 100, 2),
-        "worst_contributors": sorted_pnl[:3],
-        "best_contributors": sorted_pnl[-3:][::-1],
-    }
-
-
-def _execute_tool(
-    name: str,
-    tool_input: dict,
-    price_histories: dict,
-) -> dict:
-    """Dispatch a tool call by name."""
-    if name == "get_asset_stats":
-        return _tool_get_asset_stats(tool_input.get("ticker", ""), price_histories)
-    if name == "get_correlation":
-        return _tool_get_correlation(
-            tool_input.get("ticker_a", ""),
-            tool_input.get("ticker_b", ""),
-            price_histories,
-        )
-    if name == "stress_test_portfolio":
-        return _tool_stress_test(
-            tool_input.get("allocations") or [],
-            tool_input.get("scenario", ""),
-        )
-    return {"error": f"unknown tool: {name}"}
-
-
-def _summarize_tool_output(name: str, output: dict) -> str:
-    """One-line summary for the trace (avoid bloating the saved portfolio)."""
-    if "error" in output:
-        return f"{name} → error: {output['error']}"
-    if name == "get_asset_stats":
-        return (
-            f"{name}({output.get('ticker')}) → μ={output.get('annualized_return', 0) * 100:+.1f}%, "
-            f"σ={output.get('annualized_vol', 0) * 100:.1f}%, sharpe={output.get('sharpe')}"
-        )
-    if name == "get_correlation":
-        return (
-            f"{name}({output.get('ticker_a')},{output.get('ticker_b')}) → "
-            f"ρ={output.get('correlation_1y')} ({output.get('interpretation', '')})"
-        )
-    if name == "stress_test_portfolio":
-        return f"{name}({output.get('scenario')}) → portfolio P&L {output.get('portfolio_pnl_pct', 0):+.1f}%"
-    return f"{name} → {json.dumps(output)[:120]}"
-
-
-def _build_tool_user_prompt(
-    regime: str,
-    regime_confidence: float,
-    risk_profile: str,
-    usdc_floor: float,
-    synth_budget: float,
-    market_ranking: list[dict],
-    strategies: list,
-    scan_universe_synths: set[str],
-    rigor_statuses: dict[str, str] | None = None,
-) -> str:
-    """Same context as single-turn, but framed for an investigative agent."""
-    return (
-        f"## CONTEXT\n"
-        f"- regime: {regime} (confidence {regime_confidence:.0%})\n"
-        f"- risk_profile: {risk_profile}\n"
-        f"- usdc_floor: {usdc_floor:.0%} (held as USDC; you do not allocate this)\n"
-        f"- synth_budget: {synth_budget:.0%} (your weights must sum to ~this)\n\n"
-        f"## TOP MARKET OPPORTUNITIES (live 90-day risk-adjusted ranking)\n"
-        f"{_format_market_scan(market_ranking)}\n\n"
-        f"## PAPER STRATEGIES (anchor every pick to one of these ids)\n"
-        f"{_format_strategies(strategies, rigor_statuses)}\n\n"
-        f"## AVAILABLE UNIVERSE (pick from here; * = appeared in top market scan)\n"
-        f"{_format_universe(scan_universe_synths)}\n\n"
-        f"## YOUR PROCESS\n"
-        f"1. Form a hypothesis about the right portfolio shape for this regime + risk profile.\n"
-        f"2. Use `get_asset_stats` on 4-8 candidate names you're considering.\n"
-        f"3. Use `get_correlation` to verify your top picks are not redundant (>0.7 = drop one).\n"
-        f"4. Use `stress_test_portfolio` on at least one adverse scenario for your tentative "
-        f"   allocation; if the loss is unacceptable for the risk profile, revise.\n"
-        f"5. Once satisfied, call `propose_portfolio` ONCE with your final 5-12 picks.\n\n"
-        f"Budget: at most {MAX_AGENT_ITERATIONS} tool calls in total before you must finalize."
-    )
-
-
 # Singleton — constructed lazily to honor env vars set after import.
 _AGENT: PortfolioAgent | None = None
 
@@ -915,15 +384,3 @@ def get_portfolio_agent() -> PortfolioAgent:
     if _AGENT is None:
         _AGENT = PortfolioAgent()
     return _AGENT
-
-
-def synth_for_display(display: str) -> str | None:
-    """Convenience for callers that have a display symbol and need the synth."""
-    for synth, (_yf, d, _ac, _ex) in GLOBAL_ASSETS.items():
-        if d == display:
-            return synth
-    return None
-
-
-# Reuse the canonical display helper for callers that import this module
-display_for_synth = synth_display

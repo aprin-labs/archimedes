@@ -1,0 +1,133 @@
+# Infra gate — the first thing in CI that actually parses a `.tf` file (issue #1483).
+#
+# Before this workflow, `grep -rn "terraform" .github/workflows/*.yml` returned
+# exactly one hit and it was a warning *string* inside deploy.yml, not a step.
+# The one infra-named job — quality-gate.yml's "Infra — user-data size guard" —
+# is a byte-count on `infra/user-data.sh`; it never opens a `.tf` file, yet it is
+# the row a reviewer watches go green on an `infra/**` PR. That is the
+# "a signal was trusted for something it does not actually measure" shape from
+# CLAUDE.md § the green check may not mean what you think.
+#
+# `infra/ecs.tf` is where the money switches live (PAYMENTS_DRY_RUN,
+# GENERATION_PAYMENTS_DRY_RUN, GENERATION_PAYMENT_REQUIRED, GENERATION_PRICE_USD,
+# the daily generation caps). Until now a typo there surfaced for the first time
+# at `terraform apply`, which is also the prod deploy path.
+#
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │ DO NOT MARK THIS A REQUIRED STATUS CHECK.                               │
+# │                                                                         │
+# │ This workflow is path-filtered. A required check that is path-filtered  │
+# │ never reports on a PR that misses the filter, and GitHub treats "never  │
+# │ reported" as "pending" forever — every non-infra PR is blocked and      │
+# │ cannot be merged without an admin override. If you want this required,  │
+# │ you must first add an always-running fallback job (no `paths:` filter)  │
+# │ that reports the same check name and passes trivially when the PR       │
+# │ touches no infra. Until that job exists, keep this advisory.            │
+# │                                                                         │
+# │ Same trap boxed at the top of docs-gate.yml and spelled out in          │
+# │ scripts/setup-branch-protection.sh (INCLUDE_CONTRACTS_CHECK). Do not    │
+# │ add "Infra — terraform fmt + validate (...)" to that script's CONTEXTS. │
+# └─────────────────────────────────────────────────────────────────────────┘
+#
+# WHY fmt + validate AND NOT plan (issue #1483 anti-goals)
+#   `plan` needs AWS credentials and reads remote state. Per CLAUDE.md § git
+#   safety the state backend is a secrets store — the `tls_private_key` resource
+#   puts a private key into state. Granting CI read access to that in order to
+#   catch syntax errors is a bad trade. `validate` is the right depth:
+#     - `fmt -check` needs no init and no network beyond the toolchain.
+#     - `init -backend=false` + `validate` need no AWS credentials and never
+#       contact the S3 backend at infra/main.tf:7-13. They resolve the provider
+#       schemas and type-check the configuration, nothing more.
+#   Verified locally with a scrubbed environment (`env -i`, no AWS_* at all):
+#   both roots return "Success! The configuration is valid." — see PR #1483.
+#
+# THREE TERRAFORM ROOTS, not one. `git ls-files '*.tf'` finds 20 files under
+# `infra/`, one under `company-site/infra/`, and one under `docs-site/infra/`.
+# The latter two are deliberately standalone stacks: their own state keys, aws
+# provider ~> 6.0 vs the product root's ~> 5.0. They cannot share a
+# `.terraform/` directory, so they are a matrix rather than one job. Covering
+# only `infra/` would leave the workflow's own name a half-truth.
+#
+# A new root must be added in BOTH places below — the `paths:` filter and the
+# `matrix.dir` list. Adding it to the matrix alone gives a job that never
+# fires on the PR that breaks it; adding it to `paths:` alone runs the two
+# existing roots and reports green on a root nobody parsed. That pairing is
+# asserted by backend/tests/test_docs_site.py::test_infra_gate_covers_the_docs_site_root.
+
+name: infra-gate
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - "company-site/infra/**"
+      - "docs-site/infra/**"
+      - ".github/workflows/infra-gate.yml"
+
+# Mirrors docs-gate.yml: two runs racing on successive pushes to one branch are
+# wasted minutes, and the later-finishing run may describe the older commit.
+concurrency:
+  group: infra-gate-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege GITHUB_TOKEN — this workflow only reads the repo. Same
+# rationale as contracts-test.yml: satisfies CodeQL
+# actions/missing-workflow-permissions and bounds blast radius if the
+# third-party action below is ever compromised.
+permissions:
+  contents: read
+
+env:
+  # Suppresses terraform's interactive "you may now run plan" epilogue, which is
+  # noise in a log nobody reads until it is red.
+  TF_IN_AUTOMATION: "1"
+
+jobs:
+  infra-gate:
+    name: Infra — terraform fmt + validate (${{ matrix.dir }})
+    runs-on: ubuntu-latest
+    strategy:
+      # Every root always reports, so one broken root cannot mask another.
+      fail-fast: false
+      matrix:
+        dir:
+          - infra
+          - company-site/infra
+          - docs-site/infra
+    steps:
+      # No `submodules:` — deliberate. No .tf file references a submodule path,
+      # so cloning them would cost minutes for zero signal.
+      - uses: actions/checkout@v7
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          # Pinned, not "latest": `terraform fmt` is a formatter, and a formatter
+          # that silently changes its mind between releases turns this gate red on
+          # a PR that touched nothing. 1.15.8 is the version the tree was verified
+          # fmt-clean against; bump it deliberately, with a re-run of `terraform
+          # fmt -recursive` in the same PR.
+          terraform_version: "1.15.8"
+          # The action's default wraps the `terraform` binary in a script that
+          # captures stdout/stderr into step outputs. We consume no step outputs
+          # here, and the wrapper is a known source of mangled exit codes in
+          # multi-line runs — turn it off and let the real binary's exit status
+          # be the gate.
+          terraform_wrapper: false
+
+      # Needs no init and no credentials. `-diff` prints exactly what to change,
+      # so a red gate is actionable without re-running anything locally.
+      # Exit codes: 0 = formatted, 3 = would reformat, 2 = the file does not parse.
+      - name: terraform fmt -check (blocking)
+        run: terraform fmt -check -recursive -diff "${{ matrix.dir }}"
+
+      # `-backend=false` skips backend initialisation entirely: no S3 call, no
+      # state read, no credentials. `-upgrade` keeps this from ever becoming a
+      # lockfile argument — .terraform.lock.hcl is gitignored (.gitignore:56,119),
+      # so CI resolves providers fresh every run, and if a lockfile is ever
+      # committed this still will not fail on a stale one (issue #1483 anti-goal).
+      - name: terraform init -backend=false (no credentials, no state)
+        run: terraform -chdir="${{ matrix.dir }}" init -backend=false -input=false -upgrade -no-color
+
+      - name: terraform validate (blocking)
+        run: terraform -chdir="${{ matrix.dir }}" validate -no-color

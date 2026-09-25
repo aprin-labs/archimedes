@@ -180,12 +180,19 @@ def _store(traces: list[dict]):
     by_id = {t["id"]: t for t in traces}
     by_id.update({t["trace_hash"]: t for t in traces})
 
-    async def _list(vault_address=None, decision_type=None, limit=20, offset=0):
+    async def _list(vault_address=None, decision_type=None, strategy_id=None, limit=20, offset=0):
+        # `strategy_id` is the real store's signature, filtered through the
+        # real predicate: a double that accepted the argument and ignored it
+        # would let a scoped listing silently widen back to the whole feed
+        # here while the production filter narrowed it.
+        from archimedes.services.redis_state import trace_references_strategy
+
         rows = [
             t
             for t in traces
             if (not vault_address or t["vault_address"].lower() == vault_address.lower())
             and (not decision_type or t["decision_type"] == decision_type)
+            and (not strategy_id or trace_references_strategy(t, strategy_id))
         ]
         return rows[offset : offset + limit], len(rows)
 
@@ -309,8 +316,16 @@ async def test_stamped_record_stays_private_when_the_identity_db_is_down():
     with (
         _store([_user_trace(stamped=True)]),
         _as(None),
+        # Both resolvers: `resolve_vault_owners` is the write-path entry point,
+        # `_resolve_vault_owners_uncached` the one the memoized read path calls
+        # (#1573). Patching only the former would leave the read path talking to
+        # a live database and quietly stop simulating the outage.
         patch(
             "archimedes.services.trace_visibility.resolve_vault_owners",
+            side_effect=RuntimeError("db down"),
+        ),
+        patch(
+            "archimedes.services.trace_visibility._resolve_vault_owners_uncached",
             side_effect=RuntimeError("db down"),
         ),
     ):
@@ -427,3 +442,126 @@ async def test_verify_leaks_without_the_gate():
 
     assert resp.status_code == 200
     assert resp.json()["vault"] == USER_VAULT
+
+
+# ── The WIDENED detail body is gated by the same rule ───────────────────────
+#
+# `GET /api/traces/{id}` used to return the summary projection. It now returns
+# `TraceDetailResponse`: market_context, portfolio_before/after,
+# consulted_paper_hashes, settlement_tx_hashes and ipfs_cid — four of the
+# thirteen _HASH_FIELDS plus the non-hashed provenance. Those are the SAME
+# fields that made `/canonical` the CRITICAL surface in this issue, in a
+# friendlier format. Widening a route is a security change to that route, so
+# the widened surface gets its own guard rather than inheriting the summary
+# route's.
+
+
+def _user_trace_with_full_body() -> dict:
+    """A private trace carrying every field the widened detail route emits."""
+    trace = _user_trace(stamped=True)
+    trace["consulted_paper_hashes"] = ["2301.00001:SECRETPAPER1556"]
+    trace["settlement_tx_hashes"] = ["0xSECRETSETTLE1556"]
+    trace["ipfs_cid"] = "bafySECRET1556"
+    return trace
+
+
+#: Every value the widened body adds, and nothing that was already exposed by
+#: the pre-widening projection — so a hit here is a leak this branch created.
+_WIDENED_SECRETS = ("SECRETTOKEN1556", "risk_off", "SECRETPAPER1556", "0xSECRETSETTLE1556", "bafySECRET1556")
+
+
+@pytest.mark.parametrize("caller", [None, OTHER_USER_ID], ids=["anonymous", "different-user"])
+async def test_widened_detail_body_is_owner_gated(caller):
+    """ACCEPTANCE: none of the newly-exposed fields reach a non-owner."""
+    _seed_vault_owner()
+    wallet = OTHER_WALLET if caller else None
+    with _store([_user_trace_with_full_body()]), _as(caller, wallet):
+        resp = await _get("/api/traces/user-trace-1")
+
+    assert resp.status_code == 404
+    for secret in _WIDENED_SECRETS:
+        assert secret not in resp.text, f"{secret} leaked through the widened detail body"
+
+
+async def test_widened_detail_body_leaks_without_the_gate():
+    """Non-tautology proof for the test above.
+
+    Run the identical request against the pre-#1556 behaviour (no predicate at
+    all). Every widened field MUST come back, or the guard above is passing for
+    a reason other than the gate — e.g. because the fields were never emitted.
+    """
+    _seed_vault_owner()
+    with _store([_user_trace_with_full_body()]), _as(None), neutralized_gate():
+        resp = await _get("/api/traces/user-trace-1")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    # Assert on the parsed body, not just the text: this simultaneously proves
+    # the widening actually happened, so the guard is not passing vacuously.
+    assert body["portfolio_before"] == {SECRET_HOLDING: 42}
+    assert body["portfolio_after"] == {SECRET_HOLDING: 99}
+    assert body["market_context"] == {"regime": "risk_off"}
+    assert body["consulted_paper_hashes"] == ["2301.00001:SECRETPAPER1556"]
+    assert body["settlement_tx_hashes"] == ["0xSECRETSETTLE1556"]
+    assert body["ipfs_cid"] == "bafySECRET1556"
+    for secret in _WIDENED_SECRETS:
+        assert secret in resp.text
+
+
+async def test_owner_reads_the_whole_widened_body():
+    """The gate must not be a wall: the widened body is the point of the change."""
+    _seed_vault_owner()
+    with _store([_user_trace_with_full_body()]), _as(OWNER_USER_ID, OWNER_WALLET):
+        resp = await _get("/api/traces/user-trace-1")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["market_context"] == {"regime": "risk_off"}
+    assert body["portfolio_before"] == {SECRET_HOLDING: 42}
+    assert body["portfolio_after"] == {SECRET_HOLDING: 99}
+    assert body["ipfs_cid"] == "bafySECRET1556"
+    # The summary fields survive the widening — the model widens, not replaces.
+    assert body["reasoning"] == SECRET_REASONING
+    assert body["trace_hash"] == "0xuserhash"
+
+
+async def test_scoped_listing_still_applies_the_ownership_filter():
+    """Passing the STRATEGY gate is not a read grant on someone else's traces.
+
+    `?strategy_id=` answers "may you know this strategy exists". #1556 answers
+    "may you read this trace". Both run: a published strategy consulted by two
+    users' vaults must not turn its passport into a window onto the other
+    user's decisions.
+    """
+    from archimedes.db import get_session
+    from archimedes.models.strategy_store import StrategyRecord
+
+    _seed_vault_owner()
+    with get_session() as session:
+        session.add(
+            StrategyRecord(
+                id="shared-strategy-1556",
+                content_hash="0x" + "5" * 64,
+                generation_method="fusion",
+                source_papers="[]",
+                strategy_name="Shared",
+                thesis="t",
+                asset_universe="[]",
+                risk_profile="moderate",
+                status="candidate",
+                is_published=True,
+            )
+        )
+        session.commit()
+
+    house, private = _house_trace(), _user_trace(stamped=True)
+    house["strategies_referenced"] = ["shared-strategy-1556"]
+    private["strategies_referenced"] = ["shared-strategy-1556"]
+
+    with _store([house, private]), _as(None):
+        resp = await _get("/api/traces/", strategy_id="shared-strategy-1556", limit=100)
+
+    assert resp.status_code == 200
+    assert [t["id"] for t in resp.json()["traces"]] == ["house-trace-1"]
+    assert resp.json()["total"] == 1
+    assert SECRET_REASONING not in resp.text

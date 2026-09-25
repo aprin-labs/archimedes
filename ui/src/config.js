@@ -6,6 +6,7 @@ import {
   circlePasskeyEnabled,
   rehydrateSmartAccount,
 } from './circle-wallet'
+import { canStore } from './storage-consent.js'
 
 // Chain identity lives in chain-config.js so the EOA path, the passkey path
 // and the switch-chain hex cannot drift apart (#1240).
@@ -286,11 +287,16 @@ export function getStoredWalletName(address) {
 // under STORAGE_KEY is unchanged so previously stored meta keeps parsing.
 function saveWalletMeta(providerId, address, name) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ providerId, address }))
+    // STORAGE_KEY is strictly necessary (reconnect is part of the signing
+    // path, #1647 anti-goal 1) so canStore always allows it; the guard is
+    // present so no write in ui/src is ungated. WALLET_NAMES_KEY is the
+    // functional half — with functional storage rejected the name simply is
+    // not kept and the UI falls back to the truncated address.
+    if (canStore(STORAGE_KEY)) localStorage.setItem(STORAGE_KEY, JSON.stringify({ providerId, address }))
     if (address && typeof name === 'string' && name.trim().length > 0) {
       const names = loadWalletNames()
       names[address.toLowerCase()] = name.trim()
-      localStorage.setItem(WALLET_NAMES_KEY, JSON.stringify(names))
+      if (canStore(WALLET_NAMES_KEY)) localStorage.setItem(WALLET_NAMES_KEY, JSON.stringify(names))
     }
   } catch { /* storage unavailable */ }
 }

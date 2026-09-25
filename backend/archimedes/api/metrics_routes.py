@@ -43,7 +43,7 @@ from archimedes.services.funnel_store import CLIENT_EMITTABLE_STAGES, STAGES, Fu
 from archimedes.services.identity_metrics import get_identity_funnel
 from archimedes.services.request_snapshot_store import get_last_snapshot_totals, record_and_get_totals
 from archimedes.services.telemetry_store import TelemetryStore
-from archimedes.services.user_stats import get_distinct_user_count
+from archimedes.services.user_stats import get_distinct_user_count_or_none
 from archimedes.services.visitor_insights_store import VisitorInsightsStore
 
 metrics_router = APIRouter(prefix="/api", tags=["metrics"])
@@ -125,8 +125,12 @@ async def get_metrics() -> MetricsResponse:
     alongside so the request tallies can't be mis-cited as users (issue #830).
 
     Fail-safe: a Redis outage falls back to the last Postgres snapshot instead
-    of reporting a false zero (AC6); ``get_distinct_user_count`` returns 0 on
-    error. This endpoint always responds 200 with a well-formed shape.
+    of reporting a false zero (AC6). ``real_users`` itself uses
+    ``get_distinct_user_count_or_none`` (round 4 fix) and stays ``None`` — not
+    a fabricated ``0`` — if the account-count query fails, so a DB outage
+    renders on ``Insights.jsx`` as an honest "—" rather than a plausible
+    "0 real users" indistinguishable from a genuinely empty user table. This
+    endpoint always responds 200 with a well-formed shape either way.
     """
     store = TelemetryStore()
     try:
@@ -143,7 +147,7 @@ async def get_metrics() -> MetricsResponse:
         human_count, agent_count = counts
         totals = record_and_get_totals(human_count, agent_count)
 
-    real_users = get_distinct_user_count()
+    real_users = get_distinct_user_count_or_none()
 
     return MetricsResponse(
         human_count=totals["human_total"],
@@ -190,8 +194,8 @@ async def get_funnel(
 
     Every stage in the ``source=visitor`` response also carries
     ``by_agent_type`` (issue #788): the same distinct-visitor count, broken out
-    by the telemetry middleware's classification (``internal``/``external``/
-    ``human``), so agent conversion through the funnel can be measured
+    by the telemetry middleware's classification (``internal``/``keyed``/
+    ``external``/``human``), so agent conversion through the funnel can be measured
     separately from human conversion. Additive — ``distinct_visitors`` and the
     ratios are unchanged. Empty per stage on ``source=identity`` (no
     per-request agent_type there).

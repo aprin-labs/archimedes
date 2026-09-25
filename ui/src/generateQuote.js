@@ -144,14 +144,32 @@ export function startErrorMessage(err, fallback) {
 }
 
 /**
- * The Depth control's offered values. MUST equal the pipeline's actually
- * enforced range — MIN_PAPERS..FUSION_MAX_PAPERS in
- * backend/archimedes/agents/strategy_fusion.py (2..6 today) — never a
- * superset. Issue #1363: the UI used to offer 8 and 10, both silently
- * clamped to 6 by the pipeline; the drift guard for the backend half of
- * this contract lives in backend/tests/test_generate_schemas_depth_drift.py.
+ * The Depth control's offered values — how many papers the pipeline
+ * RETRIEVES and shows the model, not how many it must cite.
+ *
+ * Every value must sit inside the pipeline's actually enforced range,
+ * MIN_PAPERS..FUSION_MAX_PAPERS in
+ * backend/archimedes/agents/strategy_fusion.py (2..30 since #1636) — never a
+ * superset. Issue #1363: the UI used to offer 8 and 10 when the ceiling was
+ * 6, both silently clamped; the drift guard for the backend half of this
+ * contract lives in backend/tests/test_generate_schemas_depth_drift.py.
+ *
+ * Issue #1636 dropped 2 and 3 from the picker. They are still ACCEPTED by the
+ * API (MIN_PAPERS is 2 and stays 2 — a thin corpus must degrade to a narrow
+ * strategy, not to a failed generation), but offering them as a *choice*
+ * asked the user to hand the synthesizer two abstracts and then reads the
+ * resulting two-paper citation list as evidence depth. The picker now starts
+ * at the number we actually ask the model to fuse (FUSE_TARGET_MIN = 5).
  */
-export const DEPTH_OPTIONS = [2, 3, 4, 5, 6];
+export const DEPTH_OPTIONS = [5, 8, 12, 20, 30];
+
+/**
+ * The default Depth, matching strategy_fusion.DEFAULT_MAX_PAPERS and
+ * GenerateBrief.max_papers server-side (8). Deliberately above
+ * FUSE_TARGET_MIN (5): showing the model exactly as many papers as we ask it
+ * to cite leaves it no room to reject one honestly.
+ */
+export const DEFAULT_DEPTH = 8;
 
 /**
  * The account's PRIMARY linked wallet from a GET /api/wallets response

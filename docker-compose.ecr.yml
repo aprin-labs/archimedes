@@ -1,0 +1,63 @@
+# Archimedes — OPT-IN overlay: run the app tier from ECR images instead of a
+# local build (issue #1044, leak 3).
+#
+# `docker-compose.yml` deliberately resolves to project-scoped, registry-less
+# tags (`${COMPOSE_PROJECT_NAME:-archimedes}-backend:local`) so that a fresh
+# clone can only ever run code it built itself. That is the safe default, and
+# it removed the footgun where a bare `docker compose up` — no `--build` —
+# quietly pulled and ran the last image CI pushed to production.
+#
+# This file puts the registry back, behind two explicit gates:
+#
+#   1. You have to name the file. It is NOT in `.env.example`'s COMPOSE_FILE.
+#   2. You have to set BOTH variables. They use `:?` (required), not `:-`
+#      (default), so a forgotten variable is a hard error — never a surprise
+#      production `:latest`.
+#
+#   ECR_REGISTRY=037613907429.dkr.ecr.us-east-1.amazonaws.com \
+#   IMAGE_TAG=<commit-sha> \
+#     docker compose -f docker-compose.yml -f docker-compose.ecr.yml pull
+#
+# `aws ecr get-login-password --region us-east-1 | docker login --username AWS \
+#   --password-stdin "$ECR_REGISTRY"` first; the repos are Terraformed in
+# infra/ecr.tf.
+#
+# `pull_policy: always` is deliberate: the base file leaves `build:` in place
+# (compose merge cannot remove it), and without this an unreachable registry
+# would silently fall back to a local build — the same silent substitution,
+# pointing the other way. With it, opting in either pulls or fails loudly.
+#
+# NOT a deploy mechanism. Since the Fargate cutover, production rollout is
+# `.github/workflows/deploy.yml` registering ECS task definitions with explicit
+# image URIs, plus `deploy-runners.yml` doing raw `docker pull` over SSM.
+# Nothing in CI or on any box reads this file; it exists for an operator who
+# wants to run the built artifacts locally without rebuilding them.
+
+services:
+  migrate:
+    image: ${ECR_REGISTRY:?set ECR_REGISTRY to use the ECR overlay}/archimedes-backend:${IMAGE_TAG:?set IMAGE_TAG (a commit SHA) to use the ECR overlay}
+    pull_policy: always
+
+  nginx:
+    image: ${ECR_REGISTRY:?set ECR_REGISTRY to use the ECR overlay}/archimedes-nginx:${IMAGE_TAG:?set IMAGE_TAG (a commit SHA) to use the ECR overlay}
+    pull_policy: always
+
+  auth:
+    image: ${ECR_REGISTRY:?set ECR_REGISTRY to use the ECR overlay}/archimedes-auth:${IMAGE_TAG:?set IMAGE_TAG (a commit SHA) to use the ECR overlay}
+    pull_policy: always
+
+  backend:
+    image: ${ECR_REGISTRY:?set ECR_REGISTRY to use the ECR overlay}/archimedes-backend:${IMAGE_TAG:?set IMAGE_TAG (a commit SHA) to use the ECR overlay}
+    pull_policy: always
+
+  oracle:
+    image: ${ECR_REGISTRY:?set ECR_REGISTRY to use the ECR overlay}/archimedes-backend:${IMAGE_TAG:?set IMAGE_TAG (a commit SHA) to use the ECR overlay}
+    pull_policy: always
+
+  agent:
+    image: ${ECR_REGISTRY:?set ECR_REGISTRY to use the ECR overlay}/archimedes-backend:${IMAGE_TAG:?set IMAGE_TAG (a commit SHA) to use the ECR overlay}
+    pull_policy: always
+
+  kb-runner:
+    image: ${ECR_REGISTRY:?set ECR_REGISTRY to use the ECR overlay}/archimedes-backend:${IMAGE_TAG:?set IMAGE_TAG (a commit SHA) to use the ECR overlay}
+    pull_policy: always

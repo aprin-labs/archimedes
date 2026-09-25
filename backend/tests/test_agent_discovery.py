@@ -146,9 +146,9 @@ async def test_manifest_routes_all_resolve_against_the_live_openapi():
 
 @pytest.mark.asyncio
 async def test_manifest_advertises_the_live_paper_trading_group():
-    """Paper trading is a simulated deployment path that works TODAY, distinct from
-    the real on-chain `deploy` group (also live post-T3.2, #588 closed) — an agent
-    that cannot find `paper` has no simulation-only option and risks real capital."""
+    """Paper trading is a simulated deployment path that works TODAY. Vault
+    deploy is roadmap, not a second live execution path — an agent that cannot
+    find ``paper`` has no shipped execute substitute."""
     manifest = await _manifest()
     paper = manifest["endpoints"]["paper"]
     assert paper["status"] == "live"

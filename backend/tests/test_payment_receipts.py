@@ -53,6 +53,19 @@ def _use_tmp_db(tmp_path):
     yield from redirect_to_tmp_sqlite(tmp_path)
 
 
+@pytest.fixture(autouse=True)
+def _paid_tier_only(monkeypatch):
+    """Switch the #1643 free allowance OFF for this whole file.
+
+    A receipt exists only when a payment settled, and #1643 leaves the paid
+    tier untouched from generation #4 onward. Under the default allowance of 3
+    the calls below would be served free and write no receipt at all.
+    ``FREE_GENERATIONS_PER_ACCOUNT=0`` restores the pre-#1643 gate exactly;
+    the free path is covered in ``test_free_generation_gate.py``.
+    """
+    monkeypatch.setenv("FREE_GENERATIONS_PER_ACCOUNT", "0")
+
+
 def _client() -> TestClient:
     from archimedes.main import app
 

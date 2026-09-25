@@ -8,7 +8,6 @@ import {
   ASSETS, USDC_DECIMALS,
 } from '../config'
 import { executeUserOp, encodeCall } from '../circle-tx-executor'
-import VaultChat from './VaultChat'
 
 // Wallet routing: EOA wallets sign via viem writeContract; passkey/Circle
 // Modular Wallets have no EIP-1193 provider and must sign via the bundler
@@ -136,7 +135,6 @@ export default function VaultDetail({ address, onBack }) {
   const [withdrawShares, setWithdrawShares] = useState('')
   const [shareBalance, setShareBalance] = useState(null)
   const [previewOut, setPreviewOut] = useState(null)
-  const [chatOpen, setChatOpen] = useState(true)
   const wallet = getAddress()
 
   // Fetch backend data
@@ -648,14 +646,6 @@ export default function VaultDetail({ address, onBack }) {
         </div>
       )}
 
-      {/* Chat */}
-      <div className="vault-section">
-        <VaultChat
-          vaultAddress={address}
-          isOpen={chatOpen}
-          onToggle={() => setChatOpen(o => !o)}
-        />
-      </div>
     </div>
   )
 }

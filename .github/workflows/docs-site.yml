@@ -1,102 +1,244 @@
-# Archimedes docs site — build + publish docs/ (via mkdocs-material) to
-# GitHub Pages. Issue #1381, Dan's decision: option B (GitHub Pages),
-# migrate to something else later only if we outgrow it.
+# Archimedes docs site — build docs/ and the agent-generated openwiki/ tree
+# (mkdocs-material) and publish them to docs.archimedes-arc.com.
 #
 # ═══════════════════════════════════════════════════════════════════════════
-# INERT UNTIL DAN FLIPS vars.DOCS_SITE_ENABLED — same repo-variable gate
-# pattern as deploy-runners.yml's RUNNER_DEPLOY_ENABLED. Both jobs skip
-# (grey, not red) until the variable is "true", so merging this file is safe
-# and quiet before setup. Three one-time manual steps, in order:
-#   1. Repo Settings → Pages → Source: "GitHub Actions" (custom domain +
-#      HTTPS enforcement are part of the same step; this also creates the
-#      Pages *environment* that `actions/deploy-pages` publishes into).
-#   2. Route 53 CNAME docs.archimedes-arc.com → a-apin.github.io.
-#   3. Repo Settings → Secrets and variables → Actions → Variables →
-#      DOCS_SITE_ENABLED = true (then dispatch this workflow once).
-# Enabling the variable BEFORE step 1 is still harmless: the deploy job
-# errors with "Get Pages site failed" and touches nothing. Full manual steps
-# and local-preview instructions: docs/runbooks/docs-site-setup.md.
+# TWO JOBS. Read this before changing either.
+#
+#   build   — ALWAYS runs on a qualifying push or PR. It is the check that
+#             keeps the site buildable: `mkdocs build --strict` fails on any
+#             link into docs/ or openwiki/ that names a file which does not
+#             exist. It costs ~30s and needs no credentials, so it runs
+#             regardless of whether anything can be published.
+#
+#   deploy  — pushes to main only (a PR, including a fork PR, must never be
+#             able to publish). Syncs the built site to the S3 bucket in
+#             docs-site/infra and invalidates the CloudFront distribution in
+#             front of it, authenticating with the existing GitHub OIDC role
+#             (infra/scripts/setup-github-oidc.sh). No repo-variable gate and
+#             no console step: the *resource* is the gate — until
+#             `terraform apply` has run in docs-site/infra the bucket does not
+#             exist, and the publish steps print a loud NO-OP and skip.
+#
+# Issue #1634, Dan's hosting call recorded on it 2026-08-31: our own S3 +
+# CloudFront, NOT GitHub Pages. The site is in our Route 53 zone, in the
+# account that already terminates TLS and keeps access logs, behind the same
+# edge security-headers policy as the product. Infrastructure:
+# docs-site/infra/main.tf. Procedure, including rollback:
+# docs/runbooks/docs-site-setup.md.
 # ═══════════════════════════════════════════════════════════════════════════
 
-name: Docs Site (GitHub Pages)
+name: Docs Site
 
+# The two `paths:` lists below are duplicated on purpose: GitHub Actions does
+# not expand YAML anchors/aliases in workflow files. Keep them identical — the
+# PR build is only a useful check if it fires on the same changes the push
+# build does.
 on:
   push:
     branches: [main]
     paths:
       - "docs/**"
+      # The agent-generated wiki is published as its own nav section. It lives
+      # outside docs_dir, so without this line a regenerated wiki (the
+      # openwiki-update.yml PR) would merge and never reach the site.
+      - "openwiki/**"
       - "mkdocs.yml"
+      # The 404 page is the one theme template we override, and it is what a
+      # reader hits after this PR took ~90 stale URLs off the site.
+      - "docs-site/overrides/**"
+      # The hook that mounts openwiki/ and rewrites out-of-docs_dir links, and
+      # the link regexes it reuses. A change to either changes the built site.
+      - ".github/scripts/mkdocs_hooks.py"
+      - ".github/scripts/docs_links.py"
+      - ".github/workflows/docs-site.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "openwiki/**"
+      - "mkdocs.yml"
+      - "docs-site/overrides/**"
+      - ".github/scripts/mkdocs_hooks.py"
+      - ".github/scripts/docs_links.py"
       - ".github/workflows/docs-site.yml"
   workflow_dispatch: {}
 
-# Pages deploys should never race each other — a slow run publishing after a
-# faster, newer one would put a stale site live. Don't cancel an in-flight
-# deploy though (cancel-in-progress: false is the actions/deploy-pages
-# convention): let it finish, then run the next one.
+# PR builds of the same branch supersede each other; pushes to main do not get
+# cancelled, because the publish that follows must not be interrupted half-way.
+# The deploy job carries its own concurrency group (below) so a slow run can
+# never sync over a faster, newer one.
 concurrency:
-  group: "pages"
-  cancel-in-progress: false
+  group: docs-site-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: Build (mkdocs build)
-    if: ${{ vars.DOCS_SITE_ENABLED == 'true' }}
+    name: Build (mkdocs build --strict)
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
+      # fetch-depth: 0 — the git-revision-date-localized plugin reads each
+      # page's last commit to print a real "last updated" date in the footer.
+      # On the default shallow clone every page would report the same date (or
+      # none), which is exactly the hand-typed-stamp problem the plugin
+      # replaces. It costs a few seconds on a repo this size.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
-      # mkdocs-material==9.7.7 — pinned per docs/CLAUDE.md's dep policy ("no
-      # new dep without a sentence on what it does and why"): it's the
-      # latest release on PyPI as of this workflow's authorship
-      # (2026-08-20) and the same version verified locally with
-      # `mkdocs build --strict`/`mkdocs build` (see
-      # docs/runbooks/docs-site-setup.md). Pinned rather than left open so a
-      # future mkdocs-material release can't silently change the built site
-      # (or its validation warnings) on an unrelated docs PR; bump
-      # deliberately, in its own commit, re-running the local build check
-      # from that runbook.
-      - name: Install mkdocs-material
-        run: pip install --quiet mkdocs-material==9.7.7
+      # One pinned dependency file, shared with the runbook's local-preview
+      # instructions (docs/runbooks/docs-site-setup.md), so the build a person
+      # runs is the build CI ships. Each pin carries its justification there,
+      # per docs/CLAUDE.md's dep policy ("no new dep without a sentence on what
+      # it does and why"); bump deliberately, in its own commit.
+      - name: Install the docs toolchain
+        run: pip install --quiet -r docs/requirements.txt
 
-      # Not --strict — see mkdocs.yml's own comment and
-      # docs/runbooks/docs-site-setup.md § "mkdocs --strict findings" for
-      # why: ~300 pre-existing, correct links from docs/*.md out to files
-      # outside docs_dir (../CLAUDE.md, backend/..., contracts/..., etc.,
-      # per this repo's own "every claim is a link to a file" convention)
-      # register as unresolved to mkdocs, which only ever sees docs_dir.
-      # Those links are already the blocking check in docs-gate.yml
-      # (docs_links.py), which validates them against the real repo tree,
-      # not this site's.
+      # --strict, and it is clean. mkdocs promotes WARNING to a build failure
+      # under --strict; the ~371 warnings this tree used to produce were all
+      # correct out-of-docs_dir links (../CLAUDE.md, backend/..., per the
+      # repo's "every claim is a link to a file" convention), and
+      # .github/scripts/mkdocs_hooks.py now repoints those at GitHub blob URLs
+      # at build time instead of leaving them to 404 on the published site.
+      # What is left is a real gate: a link into docs/ or openwiki/ naming a
+      # file that does not exist fails here. Do not drop --strict to make a
+      # red build green — fix the link, or say why in the PR.
       - name: mkdocs build
-        run: mkdocs build --site-dir _site
+        run: mkdocs build --strict --site-dir _site
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v5
+      # Only the publish path needs the artifact, and a PR never publishes — so
+      # a PR run stops at "did it build", with nothing uploaded.
+      - name: Upload the built site
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/upload-artifact@v5
         with:
+          name: docs-site
           path: _site
+          retention-days: 7
+          # mkdocs writes hundreds of small files whose paths are the site's
+          # URLs. A silently-empty upload here would become an empty sync
+          # below, so fail loudly instead.
+          if-no-files-found: error
 
   deploy:
-    name: Deploy to GitHub Pages
+    name: Publish to S3 + CloudFront
     needs: build
+    # Never from a PR — a fork PR must not be able to publish, and OIDC's trust
+    # policy is scoped to refs/heads/main anyway (infra/scripts/setup-github-oidc.sh).
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Two publishes must never race: a slow run syncing after a faster, newer
+    # one would put a stale site live. Don't cancel an in-flight publish
+    # either — a half-applied `s3 sync --delete` is the worst state to leave
+    # the bucket in; let it finish, then run the next one.
+    concurrency:
+      group: docs-site-publish
+      cancel-in-progress: false
     permissions:
-      pages: write # to deploy to Pages
-      id-token: write # to verify the deployment originated from this workflow run
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      contents: read
+      id-token: write # OIDC — no long-lived AWS keys in this repo
+    env:
+      AWS_REGION: us-east-1
+      # Both values are terraform outputs of docs-site/infra (`bucket`,
+      # `url`). The bucket name is deterministic so it is written down here;
+      # the distribution id is not knowable until apply, so it is looked up
+      # by alias below rather than stored in a repo variable that can drift.
+      DOCS_BUCKET: archimedes-docs-site-037613907429
+      DOCS_DOMAIN: docs.archimedes-arc.com
     steps:
-      # This is the step that fails harmlessly until Dan does Settings →
-      # Pages → Source: GitHub Actions. See the file header.
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v5
+      - name: Download the built site
+        uses: actions/download-artifact@v5
+        with:
+          name: docs-site
+          path: _site
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: arn:aws:iam::037613907429:role/archimedes-github-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      # SAFETY layer: no-op cleanly until `terraform apply` has run in
+      # docs-site/infra. Same shape as deploy.yml's "Check whether the ECS
+      # service exists yet" and deploy-runners.yml's instance probe — the real
+      # resource is the gate, so there is no variable to forget to flip and no
+      # window where the workflow is red for a reason nobody caused.
+      #
+      # 403 is NOT treated as "absent". `head-bucket` answers 403 when the
+      # bucket exists but this role cannot see it — which is exactly the state
+      # after `terraform apply` but before setup-github-oidc.sh --apply grants
+      # the docs statements. Folding that into the no-op branch would report
+      # "the bucket does not exist" on every docs push, forever, while the site
+      # sat there unpublished: a permissions outage rendered as a routine
+      # skip. That branch is an error, and it says which command fixes it.
+      - name: Check whether docs-site/infra has been applied
+        id: check
+        run: |
+          set -euo pipefail
+          if err="$(aws s3api head-bucket --bucket "$DOCS_BUCKET" 2>&1)"; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "s3://$DOCS_BUCKET exists — publishing."
+          elif printf '%s' "$err" | grep -qiE '403|forbidden|access ?denied'; then
+            echo "::error::s3://$DOCS_BUCKET exists but this role cannot read it (403). The OIDC role is missing the docs-site grants — run 'infra/scripts/setup-github-oidc.sh --apply'. Not skipping: this is a permissions failure, not an unapplied stack."
+            exit 1
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::NO-OP: s3://$DOCS_BUCKET does not exist. Run 'terraform apply' in docs-site/infra (see docs/runbooks/docs-site-setup.md), then re-run this workflow. The site was built and is attached to this run as the 'docs-site' artifact; nothing was published."
+          fi
+
+      # GUARD, and the reason it is a separate step from the sync: `aws s3 sync
+      # --delete` against an empty or truncated _site would delete the live
+      # site rather than update it. A build that produced no pages must stop
+      # here, loudly, with the bucket untouched. The floor is 50 index.html
+      # files against 177 in the tree on 2026-08-31 — low enough that a real
+      # docs deletion does not trip it, high enough that a broken or partial
+      # artifact cannot pass.
+      - name: Refuse to publish an empty or truncated site
+        if: steps.check.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          pages="$(find _site -name index.html -type f | wc -l | tr -d ' ')"
+          missing=""
+          [ -f _site/index.html ] || missing="$missing _site/index.html"
+          [ -f _site/404.html ] || missing="$missing _site/404.html"
+          if [ -n "$missing" ] || [ "$pages" -lt 50 ]; then
+            echo "::error::Refusing to sync: $pages index.html pages (floor 50); missing:${missing:- none}. The bucket was NOT touched."
+            exit 1
+          fi
+          echo "$pages pages, index.html and 404.html present — safe to sync."
+
+      - name: Sync the site to S3
+        if: steps.check.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          aws s3 sync _site "s3://$DOCS_BUCKET" --delete --no-progress
+
+      # CloudFront caches with the AWS managed CachingOptimized policy, so a
+      # sync alone would leave the old pages at the edge for hours.
+      - name: Invalidate the CloudFront distribution
+        if: steps.check.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          # `to_string` rather than a bare `contains(Aliases.Items, ...)`:
+          # CloudFront omits `Aliases.Items` entirely on a distribution with no
+          # alias, and JMESPath's `contains` raises on a null subject — one
+          # unrelated aliasless distribution in the account would turn this step
+          # into a type error instead of a lookup. `to_string(null)` is "null",
+          # which simply does not match.
+          dist="$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?contains(to_string(Aliases.Items), '${DOCS_DOMAIN}')].Id | [0]" \
+            --output text)"
+          if [ -z "$dist" ] || [ "$dist" = "None" ]; then
+            echo "::error::No CloudFront distribution carries the alias ${DOCS_DOMAIN}, but the bucket exists. docs-site/infra is applied only half-way — re-run 'terraform apply' there. The sync above already landed; the edge is serving stale content until this is fixed."
+            exit 1
+          fi
+          aws cloudfront create-invalidation --distribution-id "$dist" --paths '/*' >/dev/null
+          echo "Invalidated $dist — https://${DOCS_DOMAIN}/"

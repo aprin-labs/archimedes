@@ -8,6 +8,16 @@ const API_BASE = import.meta.env.VITE_API_BASE ?? ''
 // stays on the page. Clicking a row calls `onDrillIn(job_id)` to open that
 // job's SSE stream as a drill-down view.
 //
+// Recently-generated → Library linkage (#1646). `_job_summary`
+// (generate_routes.py) has always put `best_strategy_id` on every job row;
+// this table simply never read it, so the only thing a finished generation
+// could open was a replay of its own event stream. A `done` row that produced
+// a strategy now also offers "strategy →", navigating to that strategy's
+// passport with the SAME call shape Library already uses
+// (`Strategies.jsx:774`). The stream drill-in stays — watching a past job's
+// reasoning and reading the strategy it produced are different questions, and
+// removing either would answer only one of them.
+//
 // Protected app route already requires Better Auth account. On 401, stop polling
 // until manual retry; wallet presence is unrelated to account authentication.
 
@@ -25,6 +35,18 @@ const STATE_TAGS = {
   cancelled: { label: 'cancelled', cls: 'tag-muted' },
 }
 
+// Shared by the two row actions so a second link cannot drift visually from
+// the first — they sit side by side in the same cell.
+const LINK_BTN = {
+  background: 'none',
+  border: 'none',
+  padding: 0,
+  font: 'inherit',
+  cursor: 'pointer',
+  color: 'var(--accent)',
+  whiteSpace: 'nowrap',
+}
+
 function timeAgo(iso) {
   if (!iso) return '—'
   const d = new Date(iso)
@@ -38,7 +60,7 @@ function timeAgo(iso) {
   return `${Math.floor(secs / 86400)}d ago`
 }
 
-export default function GenerationStatus({ activeJobId, onDrillIn }) {
+export default function GenerationStatus({ activeJobId, onDrillIn, onNavigate }) {
   const [jobs, setJobs] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -197,28 +219,51 @@ export default function GenerationStatus({ activeJobId, onDrillIn }) {
                       {timeAgo(j.updated_at)}
                     </td>
                     <td style={{ padding: '8px 8px', textAlign: 'right' }}>
-                      <button
-                        type="button"
-                        className="caption"
-                        onClick={e => { e.stopPropagation(); onDrillIn?.(j.job_id) }}
-                        aria-label={`Open generation: ${j.brief_intent || j.job_id}`}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          padding: 0,
-                          font: 'inherit',
-                          cursor: 'pointer',
-                          color: 'var(--accent)',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {/* "stalled" intentionally falls through to "view →"
-                            (#1355) — it is a "running" row the server has
-                            already determined is dead; offering "resume →"
-                            would repeat the exact false liveness claim this
-                            state exists to correct. */}
-                        {j.state === 'running' || j.state === 'queued' ? 'resume →' : 'view →'}
-                      </button>
+                      <span style={{ display: 'inline-flex', gap: 12, whiteSpace: 'nowrap' }}>
+                        <button
+                          type="button"
+                          className="caption"
+                          onClick={e => { e.stopPropagation(); onDrillIn?.(j.job_id) }}
+                          aria-label={`Open generation: ${j.brief_intent || j.job_id}`}
+                          style={LINK_BTN}
+                        >
+                          {/* "stalled" intentionally falls through to "view →"
+                              (#1355) — it is a "running" row the server has
+                              already determined is dead; offering "resume →"
+                              would repeat the exact false liveness claim this
+                              state exists to correct. */}
+                          {j.state === 'running' || j.state === 'queued' ? 'resume →' : 'view →'}
+                        </button>
+                        {/* The passport link (#1646). Rendered only when the job
+                            actually produced a strategy — gated on
+                            `best_strategy_id` rather than on `state === 'done'`
+                            alone, because a job can finish having persisted
+                            nothing (every candidate rejected), and a link that
+                            navigates to a 404 is worse than no link. Never
+                            replaces "view →" beside it: the stream and the
+                            strategy answer different questions. */}
+                        {j.best_strategy_id && (
+                          <button
+                            type="button"
+                            className="caption"
+                            onClick={e => {
+                              e.stopPropagation()
+                              // Written as the guarded plain call rather than
+                              // this file's local `fn?.()` idiom so it is
+                              // BYTE-IDENTICAL to Strategies.jsx:774's
+                              // `onNavigate('strategy', { strategyId })` — one
+                              // grep finds every passport navigation in the
+                              // app, and the two call sites cannot drift into
+                              // two different route contracts.
+                              if (onNavigate) onNavigate('strategy', { strategyId: j.best_strategy_id })
+                            }}
+                            aria-label={`Open the strategy generated by: ${j.brief_intent || j.job_id}`}
+                            style={LINK_BTN}
+                          >
+                            strategy →
+                          </button>
+                        )}
+                      </span>
                     </td>
                   </tr>
                 )

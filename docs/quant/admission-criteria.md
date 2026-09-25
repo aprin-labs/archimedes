@@ -9,8 +9,16 @@
 > [`../specs/selection-bias-corrections-spec.md`](../specs/selection-bias-corrections-spec.md)
 > (the frozen control contract) and the live implementation
 > [`../../backend/archimedes/services/rigor_evaluator.py`](../../backend/archimedes/services/rigor_evaluator.py)
-> (`RigorGateResult.passes_all`). Where this doc and those drift, **the spec and the
-> code win** — the thresholds below are transcribed from `passes_all`, not invented.
+> (`RigorGateResult.passes_all`) plus the threshold table it reads,
+> [`../../backend/archimedes/services/rigor_profiles.py`](../../backend/archimedes/services/rigor_profiles.py).
+> Where this doc and those drift, **the spec and the code win** — the thresholds below are
+> transcribed from `passes_all` and `_PROFILES`, not invented.
+>
+> **Reconciled 2026-08-31 ([#1598](https://github.com/aprin-labs/archimedes/issues/1598)):**
+> against the live code and [`../adr/num-trials-self-containment.md`](../adr/num-trials-self-containment.md).
+> Two corrections landed — the threshold table is the **level-1 row of a five-level
+> strictness ladder**, not a set of literals (see below), and the promotion flow no longer
+> deflates by the library size, a convention reversed on 2026-07-09.
 
 Tier 1 ("Archimedes Verified 🏆") strategies get full agent autonomy and are
 eligible for live vault deployment. The bar to enter is the **four-primitive
@@ -24,24 +32,52 @@ principled exceptions, and what monitoring continues *after* admission.
 A strategy is admitted only when **all four** controls pass simultaneously. These
 are exactly the conditions checked in `RigorGateResult.passes_all`:
 
-| # | Control | Function | Threshold (the literal gate) |
+| # | Control | Function | Threshold at level 1 (Conservative — the Tier-1 bar) |
 |---|---|---|---|
-| 1 | Deflated Sharpe Ratio | `compute_dsr` | `dsr_p_value ≥ 0.90` (and not `None`) — recalibrated from 0.95 in PR #901 |
+| 1 | Deflated Sharpe Ratio | `compute_dsr` | `dsr_p_value ≥ 0.95` (and not `None`) — `rigor_profiles.DSR_P_BADGE_MIN`, the one definition of the bar (#1794) |
 | 2 | Probability of Backtest Overfitting | `compute_pbo` | `pbo_score < 0.5` (and not `None`) |
 | 3a | Walk-forward OOS Sharpe — absolute floor | `compute_oos_sharpe` | `oos_sharpe > 0` (and not `None`) |
 | 3b | Walk-forward OOS Sharpe — the cliff | `compute_oos_sharpe` | `oos_sharpe / in_sample_sharpe ≥ 0.5` |
 | 3c | CPCV path stability (when computed) | `compute_cpcv_oos_sharpe` | `cpcv_positive_fraction ≥ 0.5` |
 | 4 | Look-ahead static audit | `look_ahead_audit` | `look_ahead_passed == True` |
 
+### These are one rung of a ladder, not literals
+
+**`passes_all` reads a profile; it never compares against a hard-coded number.** The
+numbers above are the `level = 1` ("Conservative") row of the five-level strictness ladder
+in [`rigor_profiles.py`](../../backend/archimedes/services/rigor_profiles.py) `_PROFILES`.
+They are the right numbers for *this* document because level 1 **is** the Tier-1
+"Archimedes Verified 🏆" bar and the badge is always evaluated at `STRICTEST_LEVEL` — a
+user's personal deployment strictness can admit weaker strategies into their own vaults but
+never rewrites the global badge. Read [`methodology.md`](methodology.md) §1 for the ladder
+itself; it and this page now agree.
+
+Three of the six rows move with the level and three do not:
+
+| Row | Moves with strictness? | Level-1 → level-5 |
+|---|---|---|
+| 1 — `dsr_p_min` | **yes** (`dsr_p_min`) | `0.95 → 0.50` |
+| 2 — `pbo_max` | **yes** (`pbo_max`) | `0.50 → 0.70` |
+| 3b — OOS/IS cliff | **yes** (`oos_is_ratio_min`) | `0.50 → 0.30` |
+| 3a — OOS absolute floor | no — always-on correctness floor (`OOS_ABS_FLOOR = 0.0`) | `> 0` at every level |
+| 3c — CPCV majority | no (`CPCV_MIN_POSITIVE_FRACTION = 0.5`) | `≥ 0.5` at every level |
+| 4 — look-ahead audit | no | `PASS` at every level |
+
+A fourth always-on floor sits underneath row 1: `DSR_P_FLOOR = 0.50`, which no level
+bypasses (at level 5 `dsr_p_min` collapses onto it by design). *Losing money out of sample
+is broken, not "riskier"* — that is the line between a risk-tolerance knob and a
+correctness floor, and it is why "you can never fully bypass the rigor gate" is true on the
+live path.
+
 Notes on each threshold, with the *why* behind the number:
 
-### 1. DSR p-value ≥ 0.90
+### 1. DSR p-value ≥ 0.95
 
 The published statement of the gate — the wording the app carries on the Architecture
 page, which these thresholds must match:
 
 > Over 20+ years of backtested returns net of realistic commission, a strategy's excess Sharpe
-> must be positive at 90% one-sided confidence under standard errors robust to non-normality
+> must be positive at 95% one-sided confidence under standard errors robust to non-normality
 > and autocorrelation, and must stay positive on a 30% chronological holdout. On the generated
 > path, the Sharpe is additionally deflated against that strategy's own candidate pool.
 >
@@ -51,23 +87,46 @@ page, which these thresholds must match:
 The Deflated Sharpe Ratio (Bailey & López de Prado 2014) returns a probability that the
 excess Sharpe is positive under standard errors robust to non-normality and
 autocorrelation, *and*, where a candidate pool exists, after deflating by the expected
-best-of-`N` under the null. The bar was recalibrated from `0.95` to **`0.90` in PR #901**:
-admission requires 90% one-sided confidence.
+best-of-`N` under the null. Admission requires **95% one-sided confidence**. PR #901
+briefly lowered the bar; [#1794](https://github.com/aprin-labs/archimedes/issues/1794)
+retired that path on 2026-09-03 (owner call) because the Generate pipeline and every public
+rigor page had gone on quoting 95% throughout — two bars, and which one graded you depended
+on which code path reached you. The number now exists in exactly one place,
+`rigor_profiles.DSR_P_BADGE_MIN`, which the ladder's level-1 row *is*.
 
 **What `N` is, and is not.** On the **generated** path `num_trials` is that strategy's own
-candidate pool — the search we ran. On the **curated library** `num_trials = 1`, so
-`E[max_N] = 0` and **no deflation is applied**: there was no search of ours to charge for,
-and promoting a strategy into a larger library must not retroactively move its score (see
-[`../adr/num-trials-self-containment.md`](../adr/num-trials-self-containment.md);
-`rigor_evaluator.py` logs the undeflated case verbatim). Where a pool does exist, the
-effective-N correction (`average_correlation`) prevents a correlated parameter sweep from
-being over-penalized as `N` independent tests. See [`methodology.md`](methodology.md) §1
-for the full formula.
+candidate pool — specifically the debate's own assembled pool, `pool_size = len(pool)`, the
+search we actually ran. On the **curated library** `num_trials = 1`, so `E[max_N] = 0` and
+**no deflation is applied**: there was no search of ours to charge for, and promoting a
+strategy into a larger library must not retroactively move its score. The value is
+hard-coded on the curated serving path
+([`selection_bias_routes.py:419`](../../backend/archimedes/api/selection_bias_routes.py)),
+not read from any stored field, and `rigor_evaluator.py` logs the undeflated case verbatim.
+The ratified decision record is
+[`../adr/num-trials-self-containment.md`](../adr/num-trials-self-containment.md)
+(Accepted, ratified 2026-08-31).
 
-**Disclosure is not correction.** The board-level selection bias a user incurs by picking
-the best of N displayed strategies is *disclosed*, not *corrected*. Benjamini–Hochberg
-helpers exist in `_rigor_helpers.py:1199` with zero non-test callers — written down,
-unimplemented. Do not describe this gate as correcting selection bias across the library.
+`average_correlation` is the correlation between *trials*, and on the curated path it is
+inert by construction: `num_trials = 1` leaves nothing to deflate, and
+`assert_self_contained_cohort_correlation` fails loudly if a future edit ever pairs a
+cohort-wide correlation with `num_trials > 1` there. Where a pool does exist, correlation
+enters the expectation-of-maximum term; [`methodology.md`](methodology.md) §1 is the
+authority on the functional form and its direction.
+
+**Disclosure is not correction *inside this gate*.** The board-level selection bias a user
+incurs by picking the best of N displayed strategies is not corrected by any of the four
+controls above — do not describe this gate as correcting selection bias across the library.
+*(Corrected 2026-08-31, #1598.)* An earlier revision of this paragraph said the
+Benjamini–Hochberg helpers had "zero non-test callers — written down, unimplemented."
+That has not been true since #1185: `benjamini_hochberg_fdr` is called by
+`compute_board_level_fdr`
+([`rigor_evaluator.py:486`](../../backend/archimedes/services/rigor_evaluator.py)), whose
+`board_fdr_significant` / `board_fdr_adjusted_p` / `board_fdr_confidence` fields ship on
+every `GET /api/leaderboard` row (#1564 moved them there off the per-strategy gate, which
+is why they are correctly absent from `passes_all`). The board-level correction is
+**computed and served — it is simply not a gate criterion**, and per the ADR it currently
+disagrees with the per-strategy gate on every strategy. See the ADR's "Consequences"
+section before quoting the badge as a public claim.
 
 ### 2. PBO < 0.5
 
@@ -129,8 +188,9 @@ re-evaluation failure.
                   └─────┬─────┘      for live deployment or full agent autonomy
                         │
           run_rigor_gate(strategy_id, daily_returns,
-            num_trials=len(library), pbo_scores=…,
-            strategy_code=…, average_correlation=…)
+            num_trials=1 (curated) | pool_size (generated),
+            pbo_scores=…, strategy_code=…,
+            average_correlation=…)
                         │
             ┌───────────┴────────────┐
             │  RigorGateResult         │
@@ -148,10 +208,19 @@ Mechanics:
    visible on its passport, but it is *not* eligible for live deployment or full
    agent autonomy.
 2. **The gate runs via `run_rigor_gate(...)`**, which orchestrates all four controls
-   and returns a `RigorGateResult`. The caller passes
-   `num_trials = len(strategy_library)`, the pre-computed library-level
-   `pbo_scores`, the strategy source for the look-ahead audit, and the library's
-   `average_correlation` for the DSR effective-N correction.
+   and returns a `RigorGateResult`. The caller passes the pre-computed library-level
+   `pbo_scores`, the strategy source for the look-ahead audit, and a `num_trials`
+   **that depends on which path produced the strategy**: `1` on the curated serving
+   path, and that strategy's own debate pool size on the generated path.
+   *(Corrected 2026-08-31, #1598.)* This step used to pass the strategy library's own
+   length as the trial count. That was the #770 convention, **reversed on
+   2026-07-09** (`371a908` + `c8e0436`) and superseded by
+   [`../adr/num-trials-self-containment.md`](../adr/num-trials-self-containment.md)
+   — a library-sized trial count made a strategy's p-value move when an unrelated
+   strategy was curated in, which is a property of the catalogue rather than of the
+   strategy. Verdicts carry `"num_trials_convention": "self_contained_v2"` so
+   pre- and post-reversal numbers are distinguishable; **do not compare pass rates
+   across that boundary.**
 3. **Promotion to `VALIDATED` requires `passes_all == True`.** Every gate must pass.
    If any returns `None` (insufficient/degenerate data) or fails its threshold, the
    strategy stays `CANDIDATE`.
@@ -183,7 +252,7 @@ thresholds is an explicit anti-goal).
 
 ### A. Diversification benefit vs. a marginally lower DSR
 
-A strategy that *just* misses the `0.90` DSR bar but is **genuinely
+A strategy that *just* misses the DSR bar but is **genuinely
 decorrelated** from the rest of the validated set can be more valuable to the
 portfolio than a higher-DSR strategy that duplicates an existing bet. The portfolio
 math is the justification: adding a low-correlation sleeve lowers portfolio variance
@@ -197,8 +266,13 @@ includes its incremental diversification, measurable via
 reviewer grants this exception, two things are mandatory: (1) the decorrelation must
 be *real and measured* (low `ρ̄` against the validated set, not asserted), and (2)
 the exception is recorded on the passport so the lower DSR and the diversification
-rationale are both visible. The DSR's own effective-N machinery already encodes part
-of this logic — correlated trials are penalized harder, decorrelated ones less.
+rationale are both visible. *(Corrected 2026-08-31, #1598:)* this paragraph used to add
+that "the DSR's own effective-N machinery already encodes part of this logic — correlated
+trials are penalized harder, decorrelated ones less." It does not. `average_correlation` is
+the correlation among a strategy's **own trials**, not its correlation against the
+validated set, and on the curated path it is inert (`num_trials = 1`). Nothing in the DSR
+rewards portfolio-level decorrelation — that is exactly why this exception has to be a
+documented reviewer decision rather than something the statistic absorbs.
 
 > An exception is a documented portfolio-construction decision, not a relaxation of
 > the statistic. The DSR number shown does not change; what changes is the *admission
@@ -249,7 +323,7 @@ specifically when its tagged regime ends.
 
 Because PBO is library-level, the validated set must be re-evaluated whenever the
 library changes. Adding a new strategy that is highly correlated with the existing
-set can raise PBO across the board (and lower the DSR effective-N benefit); removing
+set can raise PBO across the board; removing
 a strategy can change every neighbor's verdict. The discipline: **recompute
 `compute_pbo(...)` and `compute_average_pairwise_correlation(...)` on every library
 mutation**, and re-run `run_rigor_gate(...)` for affected members. A strategy that
@@ -259,9 +333,14 @@ no longer passes returns to `CANDIDATE` automatically.
 
 ## Summary
 
-- Admission = all four controls pass in `RigorGateResult.passes_all`:
-  DSR `p ≥ 0.90`, PBO `< 0.5`, OOS Sharpe `> 0` and OOS/IS `≥ 0.5`
-  (plus CPCV `positive_fraction ≥ 0.5` when computable), look-ahead `PASS`.
+- Admission = all four controls pass in `RigorGateResult.passes_all` **at strictness
+  level 1**, the badge rung: DSR `p ≥ 0.95`, PBO `< 0.5`, OOS Sharpe `> 0` and
+  OOS/IS `≥ 0.5` (plus CPCV `positive_fraction ≥ 0.5` when computable), look-ahead
+  `PASS`. Three of those move down the ladder for a user's own deployment strictness;
+  the OOS floor, the CPCV majority, the look-ahead audit and `DSR_P_FLOOR = 0.50`
+  do not. The Tier-1 badge is always level 1.
+- `num_trials` is **self-contained**: `1` on the curated library, the strategy's own
+  debate pool size on the generated path — never the library size.
 - Promotion is `CANDIDATE → VALIDATED`; failures stay `CANDIDATE` with the failing
   gate shown openly; re-evaluation can demote.
 - Exceptions are documented portfolio-construction decisions (genuine

@@ -11,19 +11,17 @@
 //
 // Deliberately ONE-DIRECTIONAL (routes.js's public set must be a SUBSET of
 // the sitemap, not proven equal to it). The reverse direction — "every
-// sitemap <loc> is actually anonymous-accessible" — currently does NOT hold:
-// /insights is listed in sitemap.xml and Insights.jsx's own header comment
-// calls it "the public conversion + traction dashboard... Public-only", but
-// neither routes.js's ANON_APP_PAGES nor nginx.conf's anonymous-browse
-// carve-outs (search "Anonymous-browse carve-outs") include it — so an
-// anonymous visitor hitting /insights today is bounced to /sign-in by
-// App.jsx's redirect effect (same class of bug as the /marketplace
-// WalletGate mismatch this sprint's cluster-7 card called out). Fixing that
-// needs an ANON_APP_PAGES + nginx.conf change, which is a route/gating
-// change and out of scope for this check-script-only pass (see the PR this
-// script shipped in). Enforcing the reverse direction here would make this
-// gate fail on unrelated, pre-existing state — so it is intentionally left
-// as a documented gap, not silently swept in either direction.
+// sitemap <loc> is actually anonymous-accessible" — is still NOT enforced
+// here.
+//
+// The concrete example this comment used to cite has since been fixed: it
+// named /insights as listed-but-not-anonymous-accessible. PR #1437 (owner
+// directive 2026-08-20, supersedes issue #1028 D8) resolved that the other
+// way — /app/insights is ADMIN-ONLY, its sitemap entry was removed, and
+// ui/test/sitemap.test.js now asserts the whole served file never names it.
+// The general reverse-direction gap remains a documented gap: enforcing it
+// here would need every <loc> reconciled against routes.js's gating tables,
+// which is a bigger change than this script's scope.
 //
 // This script parses src/routes.js and public/sitemap.xml AS TEXT (regex,
 // no bundler, no module import of routes.js) — same structural-check idiom

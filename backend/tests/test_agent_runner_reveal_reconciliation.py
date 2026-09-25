@@ -7,7 +7,7 @@ back for it, so that executed trade's reasoning could never become
 on-chain-verifiable.
 
 Hermetic, boundary-mocked exactly like ``test_agent_runner_commit_reveal.py`` /
-``test_agent_runner_tick.py``: chain client, executor, trace_publisher, IPFS pin,
+``test_agent_runner_tick.py``: chain client, executor, trace_publisher,
 provider and the Redis state store are all mocked. No network, no RPC, no Redis.
 
 The dangling records under test are NOT hand-written dicts — they are produced by
@@ -56,7 +56,6 @@ def runner_env():
         patch("archimedes.chain.agent_runner.trace_publisher") as mock_tp,
         patch("archimedes.chain.agent_runner.default_provider"),
         patch("archimedes.chain.agent_runner.AgentStateStore"),
-        patch("archimedes.chain.agent_runner.pin_public_provenance", new=AsyncMock(return_value=(None, None))),
         patch("archimedes.chain.agent_runner.DRY_RUN", False),
     ):
         from archimedes.chain.agent_runner import StrategyRunner
@@ -82,8 +81,10 @@ def runner_env():
         mock_tp.publish = AsyncMock(return_value=None)
         # Signer pre-check (#1353) default: "can't be determined" — the check
         # is skipped rather than guessed, matching every existing test's
-        # commitment fixtures (none carry a "committer" key).
-        mock_executor.backend_signer_address_confirmed = MagicMock(return_value=None)
+        # commitment fixtures (none carry a "committer" key). AsyncMock since
+        # #1412: on the Circle path confirming the signer is a bounded network
+        # read of GET /wallets/{WALLET_ID}, so the executor method is async.
+        mock_executor.backend_signer_address_confirmed = AsyncMock(return_value=None)
         yield runner, mock_tp
 
 
@@ -611,7 +612,7 @@ class TestSignerPreCheck:
         mock_tp.reveal = AsyncMock(return_value=("0xSHOULDNOTHAPPEN", 999))
 
         with patch("archimedes.chain.agent_runner.chain_executor") as mock_executor:
-            mock_executor.backend_signer_address_confirmed = MagicMock(
+            mock_executor.backend_signer_address_confirmed = AsyncMock(
                 return_value="0xNEWKEY000000000000000000000000000000000"
             )
             _run_pass(runner, [record])
@@ -642,7 +643,7 @@ class TestSignerPreCheck:
         mock_tp.reveal = AsyncMock(return_value=("0xRETRYREVEAL", 150))
 
         with patch("archimedes.chain.agent_runner.chain_executor") as mock_executor:
-            mock_executor.backend_signer_address_confirmed = MagicMock(
+            mock_executor.backend_signer_address_confirmed = AsyncMock(
                 return_value="0xaaaabbbbccccddddeeeeffff000000000000aaaa"
             )
             _run_pass(runner, [record])
@@ -669,29 +670,79 @@ class TestSignerPreCheck:
         mock_tp.reveal = AsyncMock(return_value=("0xRETRYREVEAL", 150))
 
         with patch("archimedes.chain.agent_runner.chain_executor") as mock_executor:
-            mock_executor.backend_signer_address_confirmed = MagicMock(return_value=None)
+            mock_executor.backend_signer_address_confirmed = AsyncMock(return_value=None)
             _run_pass(runner, [record])
 
         mock_tp.reveal.assert_awaited_once()
         saved = _saved(runner)
         assert saved["reveal_reconcile_state"] == "reconciled"
 
-    def test_circle_path_never_terminals_on_a_stale_operator_mirror(self, runner_env):
-        """PR #1403 review finding: on the Circle path the only address
-        available is WALLET_ADDRESS, an operator-maintained env var kept in
-        sync BY HAND with the wallet's true EVM address — signing itself is
-        keyed on the separate WALLET_ID (circle_signer.py), so WALLET_ADDRESS
-        can drift stale while the real signer is unchanged. Before the fix,
-        ``chain_executor.backend_signer_address()`` returned that mirror
-        directly and a stale value would read as a confirmed key rotation,
-        permanently terminaling a perfectly recoverable dangling reveal with
-        zero attempts and zero diagnostics. ``backend_signer_address_confirmed``
-        must return None on the Circle path — unconditionally, regardless of
-        what WALLET_ADDRESS says — so this always falls through to the normal
-        (reversible) retry path instead."""
+    def test_circle_path_key_rotation_goes_terminal_via_the_real_executor(self, runner_env, monkeypatch):
+        """#1412 acceptance: a GENUINE key rotation on the Circle path — the
+        only signer production uses — now short-circuits to terminal.
+
+        This wires the REAL ``ChainExecutor.backend_signer_address_confirmed``
+        into the runner and mocks only the Circle boundary underneath it, so
+        it exercises the actual prod path (executor → circle_signer →
+        ``GET /wallets/{WALLET_ID}``) rather than restating the runner's own
+        `if`. Before #1412 the executor returned None unconditionally here and
+        this pre-check was a permanent no-op in prod: the runner fell through
+        and burned every REVEAL_RECONCILE_MAX_ATTEMPTS on 'Not committer'
+        reverts.
+
+        WALLET_ADDRESS is deliberately set to the OLD committer: if the
+        confirmed path ever regressed to reading that operator-maintained
+        mirror instead of asking Circle, it would read as a match and this
+        test would stop terminaling."""
+        from archimedes.chain.executor import ChainExecutor
+
+        monkeypatch.setenv("WALLET_ADDRESS", "0xOLDKEY000000000000000000000000000000000")
         runner, mock_tp = runner_env
         record = _dangling_record(runner, mock_tp)
-        # The REAL committer that actually signed via WALLET_ID.
+        # The commitment was signed by the OLD Circle wallet key.
+        mock_tp.get_commitment = AsyncMock(
+            return_value={
+                "revealed": False,
+                "reveal_block": None,
+                "claimed_execution_time": 0,
+                "storage_pointer": "",
+                "committer": "0xOLDKEY000000000000000000000000000000000",
+            }
+        )
+        mock_tp.reveal = AsyncMock(return_value=("0xSHOULDNOTHAPPEN", 999))
+
+        real_executor = ChainExecutor(loader=MagicMock())
+        with (
+            patch("archimedes.chain.executor.circle_signer") as mock_signer,
+            patch("archimedes.chain.agent_runner.chain_executor") as mock_executor,
+        ):
+            mock_signer.is_configured = True  # the prod signer path
+            # Circle now reports a DIFFERENT wallet address than the committer.
+            mock_signer.get_wallet_address = AsyncMock(return_value="0xNEWKEY000000000000000000000000000000000")
+            mock_executor.backend_signer_address_confirmed = real_executor.backend_signer_address_confirmed
+            _run_pass(runner, [record])
+
+        mock_tp.reveal.assert_not_awaited()  # zero gas burned on a doomed revert
+        saved = _saved(runner)
+        assert saved["reveal_reconcile_state"] == "terminal"
+        assert "signer mismatch" in saved["reveal_reconcile_terminal_reason"]
+        # The mismatching address is logged, not swallowed — the operator needs
+        # to see which key the backend is signing with now.
+        assert "0xNEWKEY000000000000000000000000000000000" in saved["reveal_reconcile_terminal_reason"]
+        assert saved.get("reveal_reconcile_attempts", 0) == 0
+
+    def test_circle_path_unconfirmable_still_never_terminals(self, runner_env):
+        """Anti-goal guard (#1412, and the standing #1403 review finding): when
+        the Circle lookup itself fails, ``backend_signer_address_confirmed``
+        returns None and the pre-check must NOT fire. None means "could not
+        confirm", never "confirmed" — terminal here is irreversible, so an
+        unreachable Circle must leave the reveal on the ordinary retry path.
+
+        Same real-executor wiring as above; only the Circle answer changes."""
+        from archimedes.chain.executor import ChainExecutor
+
+        runner, mock_tp = runner_env
+        record = _dangling_record(runner, mock_tp)
         mock_tp.get_commitment = AsyncMock(
             return_value={
                 "revealed": False,
@@ -703,10 +754,14 @@ class TestSignerPreCheck:
         )
         mock_tp.reveal = AsyncMock(return_value=("0xRETRYREVEAL", 150))
 
-        with patch("archimedes.chain.agent_runner.chain_executor") as mock_executor:
-            # backend_signer_address_confirmed() is None on the Circle path —
-            # even though a (stale) WALLET_ADDRESS mirror would disagree.
-            mock_executor.backend_signer_address_confirmed = MagicMock(return_value=None)
+        real_executor = ChainExecutor(loader=MagicMock())
+        with (
+            patch("archimedes.chain.executor.circle_signer") as mock_signer,
+            patch("archimedes.chain.agent_runner.chain_executor") as mock_executor,
+        ):
+            mock_signer.is_configured = True
+            mock_signer.get_wallet_address = AsyncMock(return_value=None)  # Circle unreachable / non-200
+            mock_executor.backend_signer_address_confirmed = real_executor.backend_signer_address_confirmed
             _run_pass(runner, [record])
 
         mock_tp.reveal.assert_awaited_once()  # the retry actually ran — not short-circuited
@@ -724,7 +779,7 @@ class TestSignerPreCheck:
         mock_tp.reveal = AsyncMock(return_value=("0xRETRYREVEAL", 150))
 
         with patch("archimedes.chain.agent_runner.chain_executor") as mock_executor:
-            mock_executor.backend_signer_address_confirmed = MagicMock(
+            mock_executor.backend_signer_address_confirmed = AsyncMock(
                 return_value="0xANYADDRESS0000000000000000000000000000"
             )
             _run_pass(runner, [record])

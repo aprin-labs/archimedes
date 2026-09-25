@@ -232,7 +232,7 @@ function CandidateRow({ c, rank, isWinner, onNavigate }) {
       {/* Rigor chips (skip for abstain — those have no real stats) */}
       {!abstain && (
         <div className="caption" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', marginBottom: 4 }}>
-          <RigorChip label="DSR p" value={dsrP} bad={dsrBad} />
+          <RigorChip label="DSR conf" value={dsrP} bad={dsrBad} />
           <RigorChip label="PBO" value={pbo} bad={pboBad} />
           <RigorChip label="OOS" value={oos} bad={oosBad} />
         </div>

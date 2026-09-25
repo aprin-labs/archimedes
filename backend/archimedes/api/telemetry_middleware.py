@@ -6,14 +6,39 @@ of the hackathon win-condition instrument: a real, live "agents vs humans"
 traction number backed by the live request path rather than a claim.
 
 Classifier (deterministic — identity model as of today):
-  - HUMAN  = Better Auth middleware resolved canonical account state.
   - AGENT (internal) = a valid ``X-Internal-Agent-Key`` header (HMAC-compared
              against ``INTERNAL_AGENT_API_KEY``), agent_type="internal".
-  - AGENT (external) = no session AND a non-browser User-Agent (no "Mozilla";
-             matches curl / python-requests / boto / axios / *bot*),
+  - AGENT (keyed)    = the account identity was proved by a scoped API key
+             (``Authorization: Bearer archim_…``), agent_type="keyed".
+  - HUMAN  = Better Auth middleware resolved canonical account state from the
+             session cookie.
+  - AGENT (external) = no account identity AND a non-browser User-Agent (no
+             "Mozilla"; matches curl / python-requests / boto / axios / *bot*),
              agent_type="external".
   - Default (browser UA, no session) = HUMAN — the demo is open, so an
     un-signed-in browser visitor still counts as a human.
+
+Why ``keyed`` had to be added (issue #1653, finding 1)
+------------------------------------------------------
+Before the API-key lane, rule "session ⇒ human" fired before the User-Agent
+heuristic, and every stage of the funnel past ``landed`` sits behind
+``require_current_user``. So **no agent generation could ever be attributed to
+an agent** — the moment a script signed in, it was counted as a human, and the
+live funnel's ``external: 0`` at ``generation_started`` measured the absence of
+the question, not the absence of agents.
+
+A key is the first credential that says what the caller *is* rather than
+guessing from a header a client chooses. So it is classified ahead of the
+session rule, and it gets its own ``agent_type`` rather than being folded into
+``external``: ``external`` means "unauthenticated non-browser, inferred from a
+UA string", which is a different and much weaker claim than "authenticated by a
+credential minted for machine use". Collapsing them would destroy the only
+high-confidence agent signal we have. UA heuristics remain a courtesy label.
+
+Adding a value to this vocabulary is a deliberate act with three other sites:
+``services/funnel_store.AGENT_TYPES`` (which silently drops an unrecognised
+type), ``models/telemetry.py``'s field description, and the docs. All four move
+together or the breakdown quietly loses a population.
 
 This module only reads request state resolved by auth middleware; it never changes auth.
 
@@ -100,30 +125,49 @@ def _has_valid_internal_key(request: Request) -> bool:
 
 
 def _has_valid_session(request: Request) -> bool:
-    """True iff Better Auth middleware resolved canonical account state."""
+    """True iff the identity middleware resolved canonical account state."""
     return getattr(request.state, "current_user", None) is not None
+
+
+def _has_api_key_credential(request: Request) -> bool:
+    """True iff that account state was proved by a scoped API key, not a cookie.
+
+    Reads ``request.state.auth_credential``, set by the one identity chokepoint
+    (``api/account_auth.py``). This is a *read* of a resolved fact — the header
+    is not re-parsed and no verification is repeated here, so telemetry can
+    never disagree with auth about who the caller is.
+    """
+    from archimedes.api.account_auth import CREDENTIAL_API_KEY
+
+    return getattr(request.state, "auth_credential", None) == CREDENTIAL_API_KEY
 
 
 def classify_request(request: Request) -> tuple[bool, str]:
     """Classify a request. Returns ``(is_agent, agent_type)``.
 
-    ``agent_type`` is one of ``"internal"``, ``"external"``, or ``"human"``.
-    Deterministic and side-effect-free so it is trivially testable.
+    ``agent_type`` is one of ``"internal"``, ``"keyed"``, ``"external"``, or
+    ``"human"``. Deterministic and side-effect-free so it is trivially testable.
     """
     # 1. Internal agent — explicit, strongest signal.
     if _has_valid_internal_key(request):
         return True, "internal"
 
-    # 2. Human — canonical account session.
+    # 2. Scoped API key — an account identity, proved by a machine credential.
+    #    Ahead of rule 3 on purpose: the key is a stronger and more honest
+    #    signal than the cookie's silence. See the module docstring.
+    if _has_valid_session(request) and _has_api_key_credential(request):
+        return True, "keyed"
+
+    # 3. Human — canonical account session (cookie).
     if _has_valid_session(request):
         return False, "human"
 
-    # 3. No session: a non-browser UA is an external agent/script.
+    # 4. No account identity: a non-browser UA is an external agent/script.
     user_agent = request.headers.get("user-agent", "")
     if not _is_browser_ua(user_agent) or _AGENT_UA_PATTERN.search(user_agent):
         return True, "external"
 
-    # 4. Default — browser UA, no session: an open-demo human.
+    # 5. Default — browser UA, no session: an open-demo human.
     return False, "human"
 
 

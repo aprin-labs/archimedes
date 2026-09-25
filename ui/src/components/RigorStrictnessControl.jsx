@@ -13,7 +13,7 @@ import { MIN_LEVEL, MAX_LEVEL, BADGE_LEVEL } from '../hooks/useRigorStrictness'
 
 const FALLBACK_LADDER = {
   levels: [
-    { level: 1, label: 'Conservative', dsr_p_min: 0.9, pbo_max: 0.5, oos_is_ratio_min: 0.5 },
+    { level: 1, label: 'Conservative', dsr_p_min: 0.95, pbo_max: 0.5, oos_is_ratio_min: 0.5 },
     { level: 2, label: 'Balanced', dsr_p_min: 0.8, pbo_max: 0.55, oos_is_ratio_min: 0.45 },
     { level: 3, label: 'Moderate', dsr_p_min: 0.7, pbo_max: 0.6, oos_is_ratio_min: 0.4 },
     { level: 4, label: 'Aggressive', dsr_p_min: 0.6, pbo_max: 0.65, oos_is_ratio_min: 0.35 },
@@ -32,14 +32,10 @@ const LEVEL_COLOR = {
   5: 'var(--negative, #ef4444)',
 }
 
-// Static label map so callers without the fetched ladder (e.g. the passport's
-// deploy copy) still render names, not "Level 3".
-const STATIC_LABELS = { 1: 'Conservative', 2: 'Balanced', 3: 'Moderate', 4: 'Aggressive', 5: 'Speculative' }
-
-export function levelLabel(ladder, level) {
-  const found = (ladder?.levels || []).find((l) => l.level === level)
-  return found?.label || STATIC_LABELS[level] || `Level ${level}`
-}
+// `levelLabel` now lives in ../rigorLevels.js (#1645) so a caller that only
+// needs the LABEL does not have to import the module that defines the control.
+// Re-exported here so existing importers (StrategyPassport.jsx) are unchanged.
+export { levelLabel } from '../rigorLevels'
 
 export default function RigorStrictnessControl({ level, onChange }) {
   const [ladder, setLadder] = useState(FALLBACK_LADDER)
@@ -124,7 +120,7 @@ export default function RigorStrictnessControl({ level, onChange }) {
           className="grid grid-cols-3 gap-3 mt-4 pt-3"
           style={{ borderTop: '1px solid var(--glass-border)' }}
         >
-          <Threshold label="DSR p-value" value={`≥ ${current.dsr_p_min.toFixed(2)}`} />
+          <Threshold label="DSR confidence" value={`≥ ${current.dsr_p_min.toFixed(2)}`} />
           <Threshold label="PBO" value={`< ${current.pbo_max.toFixed(2)}`} />
           <Threshold label="OOS / IS Sharpe" value={`≥ ${current.oos_is_ratio_min.toFixed(2)}`} />
         </div>
@@ -144,7 +140,7 @@ export default function RigorStrictnessControl({ level, onChange }) {
 
       <p className="caption mt-3 text-[var(--text-4)] leading-relaxed">
         <strong>Always enforced, at every level:</strong> the look-ahead audit must pass, the
-        out-of-sample Sharpe must be positive, and the deflated Sharpe p-value must be ≥{' '}
+        out-of-sample Sharpe must be positive, and the deflated Sharpe confidence must be ≥{' '}
         {(floors.dsr_p_floor ?? 0.5).toFixed(2)}. You can trade statistical confidence for breadth —
         you can never fully bypass the gate.
       </p>

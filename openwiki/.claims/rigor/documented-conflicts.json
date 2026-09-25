@@ -1,0 +1,154 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:a50bc5309b07105e68fe24b8298f1419c387857e4acb46becea57efd10ceaddb",
+  "claims": [
+    {
+      "id": "claim_7aed695f2cda4e03bf80332558ab9eb7",
+      "statement": "The quant docs disagree on whether the DSR bar is a single literal threshold or a profile-selected one: the admission document states dsr_p_value >= 0.90 as the literal gate transcribed from passes_all, while the methodology document states 0.90 is the strictest level of a five-level strictness ladder whose live values come from a rigor-profiles table and that the gate reads the selected profile, never a literal.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L22-L37",
+          "version": "repo-lines-v1:sha256:4140904ba0baccdbbaafe6e0f51ba9ee6f648e056704609ec0fc8a675b55256c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRjZGNlODQ3ZTg3NjdhMDkyODViMTk5ZDQzNWQ0MGUyNjM4NWI3MjAwODI1YzYyYTNhYTk0MTQ3Njc0YzU1MGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdkODExNWU5OWRjODAyZjhiODliMmNlY2U1YzM1NmYwOTU2MTdkMmZiYWIyMzc4NjNjOGYzZTg1MGYyNmI1NmIifQ"
+        },
+        {
+          "resource": "repo://docs/quant/methodology.md#L155-L173",
+          "version": "repo-lines-v1:sha256:b4763776f81afa71f08ea137ca8645fd18cb12af0044db56c2ef12d95845327e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI0NDc1OWE1YzA0MmIwZGZjZjIwMTIxMGJlMjhiN2EzYTE1YWVmNTEzM2MyNGEzNTA4MDk2OTIzZGZhYjQ0MWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ3NWExNDY2ODQ5ZjVmZjZkYzBkMmM0N2M1NjQ2NTg0MjJlMzdiYTU3Y2VjMDc5MTE1ZWQyNWYwM2NjNTE0ZjIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4YzdiMjhkYjNkMDExZjhkYmQzOGIyOTI3NGZjYTIxOTU2NTNlOTc2YjJmNzg0YzhjMjljZWM1M2Y4MTk4ZDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9422d4c0d472433294a63910e8e928da",
+      "statement": "The admission document assigns num_trials two different values roughly a hundred lines apart: its threshold section says the curated library uses num_trials = 1 with no deflation applied, and its promotion-flow section says the caller passes num_trials = len(strategy_library).",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L118-L160",
+          "version": "repo-lines-v1:sha256:d9e1502acfbc03afad6096f39330db431938346b4c45910a1e03a7ed4e6e739a:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJiZGY2MjdhNzM5NWVlNmE2Njk5NjJjZmEzNDU2YjlmMWQxODk1NWNmODhjZTIyMDYyNDQ1NGViNmVlZWEwYTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ0YzlkNmE3NDJjNmY5ZWIxYzJkOThmZDYwZDRmNDE0MDkwMDM1ZjUzY2RhODNkYTk5NDdjMzIwNDQ5ZGUxMTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM4MzI1YmNlZGMzYzc5ZDc0YWIxOGVjYjMwODM2N2ZjMDg2MDVmY2IxODJjYjEzZmFjOTQ5Yjc2ZTczYzg2NzcifQ"
+        },
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L38-L71",
+          "version": "repo-lines-v1:sha256:9c3b9fcb7f7d98e8ee5419ae05ede4eacfe0e741904d2431b4683452bb983bc1:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0YTdkYTNmOWU4NGZiZWE2NmY1ZDI0MDQwOTVmN2E0YmUzM2YyYjlmNGRkYjc4OWQ0OTdkODE5ZmQyNTYwNDkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhiOTAwYzE2OTFmYTAwNGRiYzNjZjYzNzZkOGYwYzIxNGM5OGY2ZWFkZmM4YjU3Y2MzY2IzODQxNmFmY2E0ZjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZiNGRkYTI1NjQ0YTg2OTNiMWViMWM2NzY5NzUyY2Y0NWJhYzc0ZGU5YTkwY2QyZjNmYjg4NzQxN2ZlOGVkOTkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3a12a1b68d764429b5d31bb9ca19e1ea",
+      "statement": "The universe experiment's num_trials sweep table still evaluates against the pre-recalibration bar, asking whether each p-value passes p >= 0.95, even though two other documents in the same slice carry dated corrections recording 0.90 as the live bar since PR #901; the row at num_trials = 22 shows p = 0.941 marked as failing although 0.941 clears 0.90.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/backtest-interpretation.md#L156-L169",
+          "version": "repo-lines-v1:sha256:9e4bfdb3089273d23acb3f23b8bd4315c8ead5760fa7518bf3f257af02483db0:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQwMDEyMGFiYTlkZDYxN2EwYjBhYzE3NDFjNzFmNjI0MmVlOTFjMTRjZjQ2MjZiMzIyMjNiNTQ2MzlhZGRhMTAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQyMjA1MGVmYTg5MTY3ZjhiM2FkYmY3YjFjYjJkZDc5NzA5YjNjNDJiOWQ0YTM1ODkyODk5N2I1NjNkZWYxZDEifQ"
+        },
+        {
+          "resource": "repo://docs/quant/methodology.md#L155-L173",
+          "version": "repo-lines-v1:sha256:b4763776f81afa71f08ea137ca8645fd18cb12af0044db56c2ef12d95845327e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI0NDc1OWE1YzA0MmIwZGZjZjIwMTIxMGJlMjhiN2EzYTE1YWVmNTEzM2MyNGEzNTA4MDk2OTIzZGZhYjQ0MWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ3NWExNDY2ODQ5ZjVmZjZkYzBkMmM0N2M1NjQ2NTg0MjJlMzdiYTU3Y2VjMDc5MTE1ZWQyNWYwM2NjNTE0ZjIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4YzdiMjhkYjNkMDExZjhkYmQzOGIyOTI3NGZjYTIxOTU2NTNlOTc2YjJmNzg0YzhjMjljZWM1M2Y4MTk4ZDEifQ"
+        },
+        {
+          "resource": "repo://docs/quant/second-wave-universe-experiment.md#L89-L107",
+          "version": "repo-lines-v1:sha256:8e22e8189ce95c4f52e13b3e309b5108aebc137f9a34ea5780be2aa9a8db5b4c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJkN2JlYmI4NWIwM2ExOWM5MWNiNzU3ODI1MjEyZjU3M2RhMDFiYjA3ZjZhYTlkYWY3MzE0NWU5NzJkMGFiY2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM3MGJhMWQ4ZTVmNDQ2YzA3Yzc2NTUyODk1NjVjNzk4MDdkNmE2M2Q3MDEwODgyMzY3NzZmNTg4MjYyOWI2NjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE2ZjRhZGY1ZDZmNGZhMGYxZjExMGM1ZTgyYjc5MWNiMjE5YjMxMjkyNjBjMTVhM2RlMmU5MTRiYjY1ZmIyOTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1b630caef01d496cbb7a946eff30d682",
+      "statement": "Three strategy-shelf entries carry pass/fail markers in their headings that contradict the status lines directly beneath them: TSMOM and Moreira-Muir are both headed as passing while their status lines defer to the live gate and declare failure respectively, and Faber is headed as failing while its status line defers to the live gate.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L337-L359",
+          "version": "repo-lines-v1:sha256:cb8190cbd9ad1256eb04f14959c0c4d684277d5a38585fb7b24531b81dcfd779:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc1NTA0MDk3MDNkMzI0ZmE1YTk2M2IxMDU0YzEwNjQyZmZlMjQ0MTkxOTdjNGY5ZThjYWEzNGY4MDVhYmQwNjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIyZWIyNWZiMTU1YjFkNjI2MjE4Y2FlNGQ5ZTNmZmM3ZmMyYThiYjY4MDE4M2YzZDM2ZGI3OTE5YTVlNTdmZjEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYyZGQzMDEwZmVhYjc3NWEyMTg2MjViNzkwMjkxYmVhNjMzNjk5NTlkM2U5N2ZiYjg1MjUwZWE2ZGI3YmE2NzIifQ"
+        },
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L51-L63",
+          "version": "repo-lines-v1:sha256:3adcc3cc078c2668e7097d7569d8022e4726d0626260378077b0e850b094e15b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ1ODkwNTlkYWVjZWJmNTk3YzNhMWFhNzJhNGI2NmQ5ZmU3NzQwMjkyMzVlNjA5ZmE1Y2MxZDAxNDgzMGVlMjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVkNWE0ZjJjZWJjZDc2Y2NmMDAxMTIxMDBiYmQzNmMwMmE0NDJiN2E4OGEzMmU2YmRkNTExZTRkYTYyNDUwOWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVmNzlhNDIxNTk3YzY2ZTg0MDVjNjczNjEyYjA0NTljZGE0YTA5NTRjNTIzODc5MGRjYWFmMTQ3N2RhOTU1ZDgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0147bdd92e9a46b89272905592099a8b",
+      "statement": "The Moreira-Muir status line contains text about Faber — 'The earlier claim that Faber passed was wrong' — stranded under a different strategy, the signature of a partially applied edit.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L337-L350",
+          "version": "repo-lines-v1:sha256:9d14d160692d59fb15e6a12cce3211c1005917805240feadcdf2667716600154:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc1NTA0MDk3MDNkMzI0ZmE1YTk2M2IxMDU0YzEwNjQyZmZlMjQ0MTkxOTdjNGY5ZThjYWEzNGY4MDVhYmQwNjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIyZWIyNWZiMTU1YjFkNjI2MjE4Y2FlNGQ5ZTNmZmM3ZmMyYThiYjY4MDE4M2YzZDM2ZGI3OTE5YTVlNTdmZjEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY0MTJkMjE0MGZiYzlmMjE5ODI5OGFkMzI2MDJjNTYwNzI2Y2U0ZWQyNTFkYTZhNTgyY2ZlODQ0MjIwYzFiMDUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4485b625bea84503aa882ccf1b039076",
+      "statement": "Two passages state that a strategy fails because its walk-forward OOS Sharpe of 0.612 is 'under the 0.90 gate', which compares a Sharpe ratio against the DSR p-value threshold; the out-of-sample Sharpe has its own thresholds of > 0 and an OOS/IS ratio >= 0.5, and 0.612 clears the absolute floor.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L22-L37",
+          "version": "repo-lines-v1:sha256:4140904ba0baccdbbaafe6e0f51ba9ee6f648e056704609ec0fc8a675b55256c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRjZGNlODQ3ZTg3NjdhMDkyODViMTk5ZDQzNWQ0MGUyNjM4NWI3MjAwODI1YzYyYTNhYTk0MTQ3Njc0YzU1MGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdkODExNWU5OWRjODAyZjhiODliMmNlY2U1YzM1NmYwOTU2MTdkMmZiYWIyMzc4NjNjOGYzZTg1MGYyNmI1NmIifQ"
+        },
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L15-L31",
+          "version": "repo-lines-v1:sha256:4a3740e2cb88b6f60702aa5f35fc6c315521fbaf18ac27c03b2b1aef72e98051:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUyYTIzNTZmYWY3ZDMwZDgzNmEwZGZmYjg2NDc1ZmIzNTU0ZGEzMDA3MzExOGFmOTYwZGY2ZTM4YzI0MjgzZjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJlNGIyMmMyYTc1ZjI3NWRhMzM2ZjFjOGNmZTA5OGJlOWZkYjIwNjE2OGQ0YmVlZjBmZDM3NzUyZmY0ZDI0MTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ5NWJmN2VhYmY5NGM5MDA5Y2E5ZDBjNTA0NGVkNzc4MzA4MTgyYTgwNDlkNmViNjI2MzUwYWQwNDRlN2QxNmMifQ"
+        },
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L337-L350",
+          "version": "repo-lines-v1:sha256:9d14d160692d59fb15e6a12cce3211c1005917805240feadcdf2667716600154:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc1NTA0MDk3MDNkMzI0ZmE1YTk2M2IxMDU0YzEwNjQyZmZlMjQ0MTkxOTdjNGY5ZThjYWEzNGY4MDVhYmQwNjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIyZWIyNWZiMTU1YjFkNjI2MjE4Y2FlNGQ5ZTNmZmM3ZmMyYThiYjY4MDE4M2YzZDM2ZGI3OTE5YTVlNTdmZjEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY0MTJkMjE0MGZiYzlmMjE5ODI5OGFkMzI2MDJjNTYwNzI2Y2U0ZWQyNTFkYTZhNTgyY2ZlODQ0MjIwYzFiMDUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0018f38ec36841febf34a5c5be1e49ca",
+      "statement": "The slice states three different library sizes without reconciling them: the strategy shelf documents 34 strategy files, while both 2026-06-11 findings notes work with a 22-strategy selection set out of 23, so a reader cannot tell that the findings numbers were computed on a smaller library than the one now shipped.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/library-pbo.md#L116-L130",
+          "version": "repo-lines-v1:sha256:5ffc7eec10d749d8e8d148d9b0680db4af2d83d4b6d4f5e3398d711b2de072ea:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNmZjE4MWU1OTEzN2Q2NGMzZTE2ZmE4MDhlOTZjNGFiNzhkMzg0MGE5YmM3MGY2MDBmYzkwZGY3ZWVlNDkyNjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNjZWIzNTk0ZmZjYjAwMjhjZGNlMzcyNThlMzBkNzU0OGQ5MTA1MjQ1Y2U1YWNlOTQ3OWU0NjgyZmFiOTg3ZTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQwNzdkMzRiMzcwNzA1ZDg4YjAzYjYzZWNmNDQ0OWVkZTQwZWY0MGFmYzQxYTJkZjk2NDFmY2E5MGUxZGFjMTcifQ"
+        },
+        {
+          "resource": "repo://docs/quant/second-wave-universe-experiment.md#L24-L37",
+          "version": "repo-lines-v1:sha256:49835b40bc89df972b6a356fb3599e44787e3b28449faf25d101a0068a1b420d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ5OGQzODJhY2Y3MTNhNWJmNDBjNDgwYjA5OThmMWIxZmJlYmE1ZTdmZGEyYjIzMTA3YmMyZjdiZWYyYzE0N2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFlYmZjZjZlZTQzYzJhNjA5NzI5YWIzYTk4MGExYWM5MTU1OTA2MjFkODUyOWZmNDU4OTc1MDFiYjczNWM1MTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkxZTM2YTlmMDAxN2QyNzljYzMwMzE3YTA2N2M4YjhhZjAzNTc3NmRjMDExN2JkZTUzYTg2ZWE4NmVhNDhkNDYifQ"
+        },
+        {
+          "resource": "repo://docs/quant/strategy-library.md#L15-L31",
+          "version": "repo-lines-v1:sha256:4a3740e2cb88b6f60702aa5f35fc6c315521fbaf18ac27c03b2b1aef72e98051:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUyYTIzNTZmYWY3ZDMwZDgzNmEwZGZmYjg2NDc1ZmIzNTU0ZGEzMDA3MzExOGFmOTYwZGY2ZTM4YzI0MjgzZjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJlNGIyMmMyYTc1ZjI3NWRhMzM2ZjFjOGNmZTA5OGJlOWZkYjIwNjE2OGQ0YmVlZjBmZDM3NzUyZmY0ZDI0MTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ5NWJmN2VhYmY5NGM5MDA5Y2E5ZDBjNTA0NGVkNzc4MzA4MTgyYTgwNDlkNmViNjI2MzUwYWQwNDRlN2QxNmMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_62d32292d6da4578bfe489a51d86a389",
+      "statement": "Two findings notes state a strategy pass count that three other documents in the same slice forbid quoting: the universe experiment names two gate-passers with DSR p-values of 0.995 and 0.976, and the third-wave re-test refers to 'the two gate-passers' and to Faber holding LIVE status.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/admission-criteria.md#L160-L177",
+          "version": "repo-lines-v1:sha256:01848f73e9a1aba6d93ad4dd984cf68b4e6148103464f64ba54f50770e405ca8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ0YzlkNmE3NDJjNmY5ZWIxYzJkOThmZDYwZDRmNDE0MDkwMDM1ZjUzY2RhODNkYTk5NDdjMzIwNDQ5ZGUxMTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE5YzYzZGIzYmU5NDhkMjM3ZjhjMDhmNGQ3OGQyMmM5NWEwZDVjZWYzOGVjMTdjOWI0ZDczM2FhNGQwZDVkNGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZmNGNmMDJiYjhiZTA5NjE5OTY0NTViZDEyMjhlMjhkOTE3ZTViZGVkN2I4NmI1MDgxZGZjMTU5YzM0NDUwMjgifQ"
+        },
+        {
+          "resource": "repo://docs/quant/second-wave-universe-experiment.md#L24-L37",
+          "version": "repo-lines-v1:sha256:49835b40bc89df972b6a356fb3599e44787e3b28449faf25d101a0068a1b420d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ5OGQzODJhY2Y3MTNhNWJmNDBjNDgwYjA5OThmMWIxZmJlYmE1ZTdmZGEyYjIzMTA3YmMyZjdiZWYyYzE0N2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFlYmZjZjZlZTQzYzJhNjA5NzI5YWIzYTk4MGExYWM5MTU1OTA2MjFkODUyOWZmNDU4OTc1MDFiYjczNWM1MTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkxZTM2YTlmMDAxN2QyNzljYzMwMzE3YTA2N2M4YjhhZjAzNTc3NmRjMDExN2JkZTUzYTg2ZWE4NmVhNDhkNDYifQ"
+        },
+        {
+          "resource": "repo://docs/quant/third-wave-retest.md#L10-L36",
+          "version": "repo-lines-v1:sha256:8236b8cb0d96ba0650c7f3b102124c0cc0b2176cce6cc42c6adab111129d6304:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVlNDRmZWM5MDU2MGI1NzhjNjM4YWJlMDQ3N2Y5NGFhODhiNjkyZTdlZmRmMmRmNGU4MTNhZTMyOTc5NjUzY2MiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQyYjlhZDc4N2Q2MWRhZjk5NjZiZDQ4ZWQ1NjkyYTRjMTM5NDQ1ODUzOGZmNTA5YTQ1NjU1YjAyNGNlZjdmNmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQyMTRhNGJjMTE1ODdkZDQ0NjIwMjQ2YzYyMDk3ODJkYWYzZGEzZWI0ZTNkOTBhNGI5MjUzNzY4Mjg4M2ViODAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_43d7c47a8738439e89ab68a4d1733fcf",
+      "statement": "The methodology document retracts its own blanket claim that every excess-return figure is computed on the same basis, because the rigor statistics can be graded against the historical T-bill series while Kelly and the portfolio optimizer still take only the flat constant.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L586-L598",
+          "version": "repo-lines-v1:sha256:2e15ce68c7c8ec274866c39dca9f491343d91f4c06e7bd985a6e168ff0b0ac2e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFkZDQzMWQwNzRkYWQxYjlkZWI2ZDE4YWViYTc4YTA5OTZkYWE5ZjQ4YWIwYzljMWM3MmQ2NzQwMmI0YzgzZDQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAxYmNhYTZhZWU3ZDdkYThiZDM1M2RkMjA5MWRmNjA2OTI0MjU5MDczN2YwYmY1YmE2NjFmOTE1NWFkODZmMjMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f26241da942e496c8b7e0d50a8da89ac",
+      "statement": "The quant README describes the slice as 'these four docs' and tables four of them, while the directory holds eight files — the three point-in-time findings notes, which carry the numbers most likely to be quoted, are absent from that index table.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/README.md#L1-L23",
+          "version": "repo-lines-v1:sha256:265c8e927a1555ceeb2c30dd11ddd44655f1e27cba16803b2070bdb707bad0ad:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFjOTQ4OTkxMTQzY2E4MWVmZDYwY2E1ZjY3ZjFlZDMwOThkN2MwYTRiMWU2MjI5YWNiYjY0NGU4ZjE0MTQ5MTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVlZmY2N2UwZTM0OWE2YTlhZGJhYTVmYzQ5Y2ExN2IwODZmZjU3NDMwY2E5ZjQzZGYyNTA4OTRhZGQyMTVlOGUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.4.3",
+    "at": "2026-08-31T05:55:43.566Z"
+  }
+}

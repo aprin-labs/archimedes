@@ -8,16 +8,37 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+import time
 from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from archimedes.models.backtest import BacktestResult
 from archimedes.models.backtest_store import BacktestResultRecord
 
 logger = logging.getLogger(__name__)
+
+# Process-local memo of the Library's cohort daily-returns read (#1713).
+# ``rigor_cache`` cannot absorb this cost: the returns ARE that cache's key, so
+# a rigor HIT still used to re-decode every artifact_json blob (~12s on a
+# cold task). This layer is the missing half: same 600s TTL + the same
+# insert_backtest_if_missing invalidation as rigor_cache, so a write still
+# forces the next Library read to recompute against live data. The key is
+# the sorted id set (order-insensitive) so the two page-load callers
+# (``/api/strategies/`` and ``/api/selection-bias/gate``) share one entry.
+_COHORT_RETURNS_TTL_SECONDS = 600.0
+_cohort_returns_lock = threading.Lock()
+_cohort_returns_store: dict[tuple[str, ...], tuple[float, dict[str, list[float]]]] = {}
+
+
+def clear_cohort_returns_cache() -> None:
+    """Drop every cached cohort-returns entry. Called from the writer path."""
+    with _cohort_returns_lock:
+        _cohort_returns_store.clear()
+
 
 # Canonical source_pipeline values — every writer through
 # insert_backtest_if_missing must pass one of these (the function has no
@@ -142,8 +163,65 @@ def insert_backtest_if_missing(
         rigor_cache.clear()
     except Exception as exc:
         logger.warning("rigor_cache invalidation failed after new backtest row (non-fatal): %s", exc)
+    try:
+        clear_cohort_returns_cache()
+    except Exception as exc:
+        logger.warning(
+            "cohort-returns cache invalidation failed after new backtest row (non-fatal): %s",
+            exc,
+        )
 
     return row, True
+
+
+def _daily_returns_from_columns(
+    artifact_json: str | None,
+    equity_curve_json: str | None,
+) -> list[float]:
+    """Decode ONE persisted row's daily returns: artifact first, equity-curve second.
+
+    Single source of truth for both readers below — ``get_daily_returns`` (one
+    strategy, one row) and ``get_all_daily_returns`` (the batched Library read).
+    They used to be the same code because the batch was a Python loop over the
+    single; now that the batch issues its own query, a duplicated decoder is
+    exactly how the two would drift into disagreeing about the same row.
+
+    Takes raw COLUMN VALUES rather than a ``BacktestResultRecord``: the batched
+    reader projects only the two columns it needs and never hydrates an ORM
+    object, so there is no row to hand in. ``equity_curve_json`` is parsed here
+    with the same ``json.loads(... or "[]")`` that
+    ``BacktestResultRecord.to_backtest_result()`` applies to it, so the fallback
+    branch produces the identical series it produced when this code read
+    ``result.equity_curve``.
+
+    Deliberately NOT hardened beyond the original: the artifact parse catches
+    only ``JSONDecodeError``/``KeyError`` and the equity-curve parse catches
+    nothing, exactly as before. Widening either would change which malformed
+    rows raise out of the caller's ``except``, which is a behavior change, not a
+    perf fix.
+    """
+    import json as _json
+
+    # Try artifact_json first (has raw daily_returns from analytics-engine)
+    if artifact_json:
+        try:
+            artifact = _json.loads(artifact_json)
+            for r in artifact.get("results", []):
+                daily = r.get("metrics", {}).get("daily_returns", [])
+                if daily:
+                    return daily
+        except (_json.JSONDecodeError, KeyError):
+            logger.debug("cached backtest parse failed", exc_info=True)
+
+    # Fallback: derive from equity_curve
+    equity_curve = _json.loads(equity_curve_json or "[]")
+    if equity_curve and len(equity_curve) > 1:
+        import numpy as np
+
+        ec = np.array(equity_curve)
+        return ((ec[1:] - ec[:-1]) / ec[:-1]).tolist()
+
+    return []
 
 
 def get_daily_returns(session: Session, strategy_id: str) -> list[float]:
@@ -152,6 +230,9 @@ def get_daily_returns(session: Session, strategy_id: str) -> list[float]:
     Daily returns are stored in the artifact_json blob (not as a separate column).
     Falls back to deriving from equity_curve if artifact is unavailable.
     Returns an empty list if no persisted result exists.
+
+    For MANY strategies use ``get_all_daily_returns`` — it is one query for the
+    whole cohort, not a loop over this function.
     """
     row = (
         session.query(BacktestResultRecord)
@@ -162,43 +243,115 @@ def get_daily_returns(session: Session, strategy_id: str) -> list[float]:
     if row is None:
         return []
 
-    # Try artifact_json first (has raw daily_returns from analytics-engine)
-    import json as _json
-
-    if row.artifact_json:
-        try:
-            artifact = _json.loads(row.artifact_json)
-            for r in artifact.get("results", []):
-                daily = r.get("metrics", {}).get("daily_returns", [])
-                if daily:
-                    return daily
-        except (_json.JSONDecodeError, KeyError):
-            logger.debug("cached backtest parse failed", exc_info=True)
-
-    # Fallback: derive from equity_curve
-    result = row.to_backtest_result()
-    if result.equity_curve and len(result.equity_curve) > 1:
-        import numpy as np
-
-        ec = np.array(result.equity_curve)
-        return ((ec[1:] - ec[:-1]) / ec[:-1]).tolist()
-
-    return []
+    return _daily_returns_from_columns(row.artifact_json, row.equity_curve_json)
 
 
 def get_all_daily_returns(
     session: Session,
     strategy_ids: list[str],
 ) -> dict[str, list[float]]:
-    """Fetch daily returns for multiple strategies.
+    """Fetch daily returns for multiple strategies in ONE query.
 
     Returns {strategy_id: [daily_returns]} for strategies with persisted data.
+
+    This was a Python loop over ``get_daily_returns``, i.e. N un-projected
+    single-row reads, each dragging a ~349 KB ``artifact_json`` blob (this
+    repo's own verified 2026-08-19 column average, quoted in
+    ``scripts/archive_backtest_results.py``) across the wire and through
+    ``json.loads`` on the event loop. The Library runs it over the full curated
+    cohort and ``/api/selection-bias/gate`` runs the IDENTICAL read over the
+    IDENTICAL ids from the same page load, so one Library mount paid it twice:
+    measured ~24 MB off Aurora and 68 blob deserializations, with
+    ``/api/strategies/`` at p50 12.85 s and ``/api/selection-bias/gate`` at p50
+    15.62 s (2026-08-31 ALB-log evidence sprint).
+
+    **The shared rigor cache cannot absorb this by itself.** The returns ARE
+    the cohort cache key (``rigor_cache.cohort_key``, called from
+    ``selection_bias_routes.evaluate_rigor_gate``), so a
+    rigor HIT still used to pay the full read. #1713 adds a process-local
+    memo IN FRONT of this function, invalidated on the same writer path as
+    ``rigor_cache.clear()`` (``insert_backtest_if_missing``) and capped at the
+    same 600s TTL. The read still produces the key — a cache HIT here serves
+    the same decoded series a live read would have, so ``cohort_key`` cannot
+    drift from the data it fingerprints. A writer that bypassed
+    ``insert_backtest_if_missing`` would be the same staleness window rigor
+    already had.
+
+    Query shape mirrors ``latest_backtests_by_strategy`` below (#1543): resolve
+    "latest row per strategy" with a window function IN THE DATABASE, then
+    select only the columns this reader actually decodes. The inner query
+    selects the ``id`` column alone so the window function never drags the JSON
+    payloads through the client buffer, and the outer query projects
+    ``strategy_id``/``artifact_json``/``equity_curve_json`` explicitly rather
+    than hydrating a ``BacktestResultRecord`` — the equity-curve fallback needs
+    ``equity_curve_json``, and hydrating the ORM object would additionally pull
+    ~30 scalar columns and register the row in the identity map for a value
+    nobody keeps.
+
+    Ordering, dedup, and the drop-empties rule are preserved from the loop this
+    replaces: the returned dict is keyed in ``strategy_ids`` order, a repeated
+    id contributes one entry, and a strategy whose decode yields ``[]`` is
+    ABSENT rather than present-and-empty. (``cohort_key`` sorts ids and treats
+    absent as empty, so the key derivation is untouched either way — but four
+    callers read this dict, and one of them, ``live_rigor_gate``, distinguishes
+    "no persisted returns" from "returns present".)
     """
+    # dict.fromkeys: dedup while preserving caller order. The old loop called
+    # get_daily_returns once per occurrence and wrote the same key each time;
+    # one IN-list entry is equivalent and cheaper.
+    ids = list(dict.fromkeys(strategy_ids))
+    if not ids:
+        return {}
+
+    cache_key = tuple(sorted(ids))
+    now = time.monotonic()
+    with _cohort_returns_lock:
+        hit = _cohort_returns_store.get(cache_key)
+        if hit is not None and now - hit[0] < _COHORT_RETURNS_TTL_SECONDS:
+            cached = hit[1]
+            return {sid: list(cached[sid]) for sid in ids if sid in cached}
+
+    ranked = (
+        select(
+            BacktestResultRecord.id.label("id"),
+            func.row_number()
+            .over(
+                partition_by=BacktestResultRecord.strategy_id,
+                order_by=(
+                    BacktestResultRecord.created_at.desc(),
+                    BacktestResultRecord.id.desc(),
+                ),
+            )
+            .label("rank"),
+        )
+        .where(BacktestResultRecord.strategy_id.in_(ids))
+        .subquery()
+    )
+    latest_ids = select(ranked.c.id).where(ranked.c.rank == 1)
+
+    rows = session.execute(
+        select(
+            BacktestResultRecord.strategy_id,
+            BacktestResultRecord.artifact_json,
+            BacktestResultRecord.equity_curve_json,
+        ).where(BacktestResultRecord.id.in_(latest_ids))
+    ).all()
+
+    decoded = {
+        strategy_id: _daily_returns_from_columns(artifact_json, equity_curve_json)
+        for strategy_id, artifact_json, equity_curve_json in rows
+    }
+
     out: dict[str, list[float]] = {}
-    for sid in strategy_ids:
-        returns = get_daily_returns(session, sid)
+    for sid in ids:
+        returns = decoded.get(sid)
         if returns:
             out[sid] = returns
+    with _cohort_returns_lock:
+        _cohort_returns_store[cache_key] = (
+            time.monotonic(),
+            {sid: list(series) for sid, series in out.items()},
+        )
     return out
 
 
@@ -284,6 +437,41 @@ def latest_backtests_by_strategy(
     )
     latest_ids = select(ranked.c.id).where(ranked.c.rank == 1)
 
-    rows = session.query(BacktestResultRecord).filter(BacktestResultRecord.id.in_(latest_ids)).all()
+    # PROJECTION, not just row count (issue #1543). The inner query above already
+    # stopped this reader from hydrating N_refreshes x N_strategies ROWS; the
+    # outer query still selected every COLUMN of the winners, so each of the
+    # ~30-96 rows it does return dragged its `artifact_json` blob across the
+    # wire. Nothing downstream of this function reads that column:
+    # `BacktestResultRecord.to_backtest_result()` never touches it, and neither
+    # does any caller (strategy_provider._load_backtests, the
+    # num_trials/returns/rigor route lookups, and audit_backtest_universe all
+    # read scalars or call to_backtest_result). The
+    # readers that genuinely need the blob — `get_daily_returns` and
+    # `get_all_daily_returns` above — issue their OWN queries with their own
+    # projections and are unaffected by a per-query option here.
+    #
+    # Size, using this repo's own verified column averages (2026-08-19, quoted in
+    # scripts/archive_backtest_results.py): artifact_json ~349 KB/row against
+    # equity_curve_json ~63 KB/row, so the deferred column is ~85% of each
+    # returned row's payload bytes. equity_curve_json is deliberately NOT
+    # deferred: `to_backtest_result()` deserializes it and `api/risk_routes.py`
+    # consumes `BacktestResult.equity_curve` off the provider cache, so deferring
+    # it would either change what those surfaces return or trigger a lazy load
+    # against a session `strategy_provider._load_backtests` has already closed.
+    #
+    # `defer` (a per-query option) rather than `deferred=True` on the mapper: it
+    # keeps the change scoped to this hot read instead of silently re-shaping
+    # every other query against the table. Plain `defer`, not
+    # `defer(..., raiseload=True)`: a future caller that touches the attribute
+    # inside the session gets one extra small SELECT, whereas raiseload would
+    # raise into `_load_backtests`'s except-branch and silently degrade the whole
+    # library to "no backtests" — a fail-soft path turning a perf option into a
+    # correctness bug.
+    rows = (
+        session.query(BacktestResultRecord)
+        .options(defer(BacktestResultRecord.artifact_json))
+        .filter(BacktestResultRecord.id.in_(latest_ids))
+        .all()
+    )
 
     return {row.strategy_id: row for row in rows}

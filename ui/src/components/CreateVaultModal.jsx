@@ -305,7 +305,7 @@ export default function CreateVaultModal({ strategy, walletAddr, strictnessLevel
           className="card-elevated p-6 max-w-[560px] w-[92vw]"
           style={{ background: 'var(--surface-1)', maxHeight: '90vh', overflowY: 'auto' }}
         >
-          <div className="caption mb-2 uppercase tracking-wider text-[var(--text-4)]">Agent setup pending</div>
+          <div className="caption mb-2 uppercase tracking-wider text-[var(--text-3)]">Agent setup pending</div>
           <h3 id="agent-pending-title" className="font-serif text-[1.5rem] mb-1">Vault created — agent not authorized</h3>
           <p className="caption mb-4 leading-relaxed">
             Your vault was created on-chain, but the second step (<code>setAgent</code>,
@@ -362,7 +362,7 @@ export default function CreateVaultModal({ strategy, walletAddr, strictnessLevel
         onClick={e => e.stopPropagation()}
         style={{ background: 'var(--surface-1)', maxHeight: '90vh', overflowY: 'auto' }}
       >
-        <div className="caption mb-2 uppercase tracking-wider text-[var(--text-4)]">Deploy vault</div>
+        <div className="caption mb-2 uppercase tracking-wider text-[var(--text-3)]">Deploy vault</div>
         <h3 id="deploy-modal-title" className="font-serif text-[1.5rem] mb-1">
           {strategy?.paper_title || 'Deploy strategy'}
         </h3>
@@ -430,7 +430,7 @@ export default function CreateVaultModal({ strategy, walletAddr, strictnessLevel
               className="chat-input w-full p-2.5 mono"
               disabled={submitting}
             />
-            <p className="caption mt-1 text-[var(--text-4)]">
+            <p className="caption mt-1 text-[var(--text-3)]">
               Amount to deposit via the 3-step deposit flow after vault creation.
             </p>
           </label>

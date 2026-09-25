@@ -252,8 +252,8 @@ def _build_analyzers():
     """Wire backtrader analyzer classes for equity-curve and trade-stats capture.
 
     Returns:
-        A tuple (_EquityCurve, _TradeStats) of backtrader Analyzer subclasses,
-        ready to be passed to cerebro.addanalyzer().
+        A tuple (_EquityCurve, _TradeStats, _DecisionJournal) of backtrader
+        Analyzer subclasses, ready to be passed to cerebro.addanalyzer().
 
     Note:
         Called once at module load time to defer backtrader import; Analyzer
@@ -328,7 +328,73 @@ def _build_analyzers():
                 "avg_holding_period_days": avg_hold,
             }
 
-    return _EquityCurve, _TradeStats
+    class _DecisionJournal(bt.Analyzer):
+        """Dated record of every order the interpreted strategy actually placed.
+
+        OBSERVER-ONLY, and that is the whole point (#1575 §1.4). Paper trading
+        replays *the same* ``run_dsl_backtest`` the grader calls, so anything
+        that could influence the run would move every open deployment's
+        recorded history. An Analyzer receives ``notify_order`` and cannot
+        place orders or touch the broker, so binding it is a no-op on the
+        graded numbers — pinned by a parity test rather than asserted here
+        (``test_decision_journal.py::test_journal_is_a_no_op``).
+
+        ``order.created.dt`` is the bar the strategy DECIDED on;
+        ``order.executed.dt`` is the bar the fill landed (backtrader fills at
+        the next bar's open unless cheat-on-close). Both are recorded because
+        conflating them would misdate the decision, and the decision date is
+        what the trace is keyed and timestamped on.
+
+        The cash/position pair is captured at fill time and the "before" side
+        derived from the executed leg rather than sampled separately, so the
+        two sides of the portfolio delta cannot disagree with the leg that
+        produced them:
+
+            cash_before = cash_after + size * price + commission
+
+        ``size`` is signed (negative on a sell), so the one identity covers
+        both directions. It is deliberately NOT written in terms of
+        ``order.executed.value``: for a CLOSING order backtrader reports
+        ``value`` as the *opened* position's value — positive, and at the
+        entry price — so ``cash_after + value + comm`` overstates a sell's
+        pre-trade cash by roughly the whole position. Verified against a real
+        run rather than read off the docs.
+        """
+
+        def start(self):
+            self._events: list[dict] = []
+
+        def notify_order(self, order):
+            if order.status != order.Completed:
+                return
+            size = float(order.executed.size)
+            price = float(order.executed.price)
+            comm = float(order.executed.comm)
+            cash_after = float(self.strategy.broker.getcash())
+            position_after = float(self.strategy.position.size)
+            self._events.append(
+                {
+                    "decided_on": bt.num2date(order.created.dt).date(),
+                    "filled_on": bt.num2date(order.executed.dt).date(),
+                    "side": "buy" if order.isbuy() else "sell",
+                    "size": size,
+                    "price": price,
+                    # Signed notional of THIS leg, which is what the cash delta
+                    # is made of. See the docstring for why executed.value is
+                    # not the right number here.
+                    "value": size * price,
+                    "commission": comm,
+                    "cash_after": cash_after,
+                    "cash_before": cash_after + size * price + comm,
+                    "position_after": position_after,
+                    "position_before": position_after - size,
+                }
+            )
+
+        def get_analysis(self):
+            return {"events": list(self._events)}
+
+    return _EquityCurve, _TradeStats, _DecisionJournal
 
 
 # ── Module-level analyzer instantiation ────────────────────────────────
@@ -336,4 +402,4 @@ def _build_analyzers():
 # cerebro.addanalyzer(_EquityCurveAnalyzer, ...) works.
 # Done lazily inside a function so module import doesn't pull
 # backtrader (matters for environments where backtrader is optional).
-_EquityCurveAnalyzer, _TradeStatsAnalyzer = _build_analyzers()
+_EquityCurveAnalyzer, _TradeStatsAnalyzer, _DecisionJournalAnalyzer = _build_analyzers()

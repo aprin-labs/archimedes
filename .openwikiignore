@@ -1,0 +1,203 @@
+# .openwikiignore — the read boundary for every OpenWiki run in this repo.
+#
+# Syntax is gitignore-style (comments, blanks, `*`/`**`/`?`, leading `/` to
+# anchor at the repo root, trailing `/` for directories, `!` to re-include) with
+# LAST-MATCH-WINS ordering. It is a read boundary for OpenWiki's own discovery,
+# separate from .gitignore: OpenWiki never reads, scans, or reproduces an
+# excluded path, and while any rule is active it also refuses arbitrary shell.
+#
+# ---------------------------------------------------------------------------
+# SECTION A — the readable slice.  READ THIS BEFORE EDITING.
+# ---------------------------------------------------------------------------
+# This file is an ALLOW-LIST: Section A excludes the whole repository with `/*`
+# and then re-includes the parts a wiki run may read.
+#
+# The slice is the RUNNING SYSTEM plus what the repository claims about it —
+# backend, analytics engine, UI, contracts, infra, CI, and all of `docs/`. That
+# is deliberate and it is a change of kind from the 2026-08-31 bootstrap, which
+# re-included `docs/quant/` alone. A documentation-only boundary can find that
+# two documents disagree; it cannot find that both are wrong. Three of the seven
+# conflicts that run surfaced could not be settled from documentation at all, and
+# an eighth defect (a stale `N_eff` formula every doc reproduced *consistently*)
+# was invisible to it by construction. The wiki's job now is code↔docs alignment,
+# so the code has to be inside the boundary.
+#
+# `/*` DOES exclude dotted entries — verified against OpenWiki's own matcher, so
+# `.git/`, `.claude/`, `.secrets.baseline` and friends are out by default and
+# `.github/` is in only because a `!` line below says so.
+#
+# WHAT IS STILL OUT, on purpose, and why (each is a candidate for a later
+# widening, one at a time, with its cost recorded in
+# docs/decisions/tooling-adoptions-2026-08.md):
+#
+#   backend/tests/    ~98k lines — larger than the implementation it tests, and
+#                     the marginal claim it buys ("this guard is exercised") is
+#                     worth its own measured wave rather than a silent doubling
+#                     of the first codebase-wide run.
+#   ui/test/          same reasoning, same wave.
+#   auth/             the Better Auth sidecar: small, real, and security-
+#                     relevant. Next-wave candidate on merit, not on cost.
+#   cli/  wallet-setup/  company-site/  nginx/  reports/  skills/  tests/
+#                     peripheral surfaces; none is load-bearing for the
+#                     alignment question the wiki is being pointed at.
+#   submodules/       vendored upstream trees, not hand-authored here.
+#   data/             the 14MB corpus manifest and friends. Bulk, not behaviour.
+#
+# Every one of those has a case in scripts/check_openwiki_ignore.mjs asserting
+# it is EXCLUDED today. Widening means moving the case from DENIED to ALLOWED
+# and watching the guard go red first — see the header of that script.
+#
+# ORDER IS LOAD-BEARING. Matching is last-match-wins, so a hard deny placed
+# above the allow-list is silently re-included by it — Section B must stay last.
+# Verify with `node scripts/check_openwiki_ignore.mjs` after ANY edit here; it
+# runs the real OpenWiki matcher against paths that must be rejected, including
+# traversal out of the slice and secrets nested inside it.
+
+# Exclude everything at the root, recursively.
+/*
+
+# --- the running system ----------------------------------------------------
+# backend/ holds the test suite, one-off scripts and a benchmarks doc tree
+# beside the package. Re-include the package, the Alembic migrations (the schema
+# is the truth `docs/database-architecture.md` is checked against), and the two
+# dependency/deploy contracts CLAUDE.md makes claims about — leaving
+# `requirements.txt` out while `environment.yml` is in would let a run assert
+# alignment having read only one side of it.
+!/backend/
+/backend/*
+!/backend/archimedes/
+!/backend/migrations/
+!/backend/requirements.txt
+!/backend/requirements-base.txt
+!/backend/alembic.ini
+!/backend/Dockerfile
+
+# The rigor math (pbo.py, purged_kfold.py, walk_forward.py) and the curated
+# strategy files the quant docs describe. `artifacts/` and `tests/` stay out.
+!/analytics-engine/
+/analytics-engine/*
+!/analytics-engine/src/
+!/analytics-engine/strategies/
+
+# ui/ holds node_modules, build output and the test tree beside the source.
+!/ui/
+/ui/*
+!/ui/src/
+
+!/contracts/
+!/infra/
+!/scripts/
+
+# CI is where "what blocks a merge" is actually defined; CLAUDE.md's gate table
+# is a copy of it, and copies drift.
+!/.github/
+
+# --- what the repository claims about itself -------------------------------
+!/docs/
+
+# --- root files that are themselves contracts ------------------------------
+!/README.md
+!/SETUP.md
+!/DESIGN.md
+!/Makefile
+!/mkdocs.yml
+!/pytest.ini
+!/ruff.toml
+!/environment.yml
+!/docker-compose.yml
+!/docker-compose.local.yml
+!/docker-compose.production.yml
+
+# OpenWiki's own output tree and the marker files it maintains must stay
+# writable, or the run is denied permission to emit anything.
+!/openwiki/
+!/AGENTS.md
+!/CLAUDE.md
+
+# ---------------------------------------------------------------------------
+# SECTION B — hard denies. These come last so last-match-wins keeps them
+# excluded no matter what Section A re-includes later.
+# ---------------------------------------------------------------------------
+
+# --- dependencies / vendored code (not hand-authored source) ---
+node_modules/
+contracts/lib/
+
+# --- build output (regenerated, not a source of truth) ---
+ui/dist/
+contracts/out/
+contracts/cache/
+# ABIs are compiler output cached for the backend and UI to read. That they are
+# cached there is worth a wiki page; 220KB of JSON is not evidence for it.
+contracts/abis/
+# Solidity emitted by scripts/gen_asset_universe_doc.py and friends.
+contracts/src/generated/
+
+# --- git internals and agent/session-local state (not repo documentation) ---
+.git/
+.claude/
+
+# --- sibling git worktrees (this repo is worked in named worktrees off the
+#     main checkout; none live inside this tree today, but excluded
+#     defensively so a future in-tree worktree is never scanned) ---
+.git/worktrees/
+**/archimedes-wt-*/
+**/wt-*/
+
+# --- lockfiles (machine-generated, no narrative content) ---
+*.lock
+package-lock.json
+**/*.lock.hcl
+
+# --- superseded history. `docs/archive/` is superseded BY DEFINITION
+#     (docs/CONVENTIONS.md), so a disagreement between an archived doc and the
+#     code is not a conflict to report — it is the archive working. Reading it
+#     would fill the conflicts page with noise and drown the real findings. ---
+docs/archive/
+
+# --- test fixtures over 100KB (bulk sample data, not behavior) ---
+backend/tests/fixtures/spy_ohlcv_2004_2026.csv
+ui/test/fixtures/**
+
+# --- other bulk/generated data, same cost-bounding rationale as fixtures ---
+# 10k-paper corpus manifest (14MB); the corpus is LEXICAL only, no embeddings,
+# so reading this file buys tokens without buying signal.
+data/corpus/manifest.jsonl
+# Timestamped analytics run artifacts and contract-deploy broadcast logs:
+# generated output, already .gitignore'd, present in some checkouts.
+analytics-engine/artifacts/**
+contracts/broadcast/**
+# Reference data payloads shipped inside the backend package: a 187KB T-bill
+# series, the synthetic universe and its addresses. The code that READS them is
+# in the slice; the rows are not behaviour.
+backend/archimedes/data/
+
+# --- non-text assets: no claim can be grounded in them, and one of them
+#     (ui/src/App.css) is 198KB on its own ---
+**/*.css
+**/*.svg
+**/*.png
+**/*.jpg
+**/*.jpeg
+**/*.gif
+**/*.ico
+**/*.woff
+**/*.woff2
+**/*.pkl
+
+# --- secrets, always, in every spelling ---
+*.env
+.env*
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.crt
+# Terraform state and variable files. State can hold real private keys
+# (CLAUDE.md § Git safety: the `tls_private_key` resource writes one into
+# state), and a widened boundary that reaches infra/ is exactly the boundary
+# where a stray local state file would be read. `terraform.tfvars.example` ends
+# in `.example`, so it survives these rules and stays readable.
+*.tfstate
+*.tfstate.*
+*.tfvars

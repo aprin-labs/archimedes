@@ -1069,3 +1069,383 @@ test('notifyAccountChange logs the SAME greppable marker for its other, previous
   // empty, confirming the assertion actually depends on the new log call and
   // not on some other side effect. Reverted.
 })
+
+// ── #1367 (D2/D4): the account-management write surface ─────────────────
+//
+// Everything below covers capabilities Account Settings gained in this PR:
+// email change, password change, session list + revoke, and account
+// deletion. All four are Better Auth's own endpoints — nothing here
+// hand-rolls crypto or session invalidation — so these tests exist to pin
+// the parts that are OURS: the two opt-in switches in auth.js's `user`
+// block, the mail callback wired to them, and the /revoke-session honesty
+// guard in hooks.before.
+//
+// Same idiom as the freshness tests above: drive the REAL HTTP handler
+// (auth.handler), never auth.api.* alone, because hooks.before and
+// originCheck only run on that path.
+
+async function accountAuth(overrides = {}) {
+  const database = new DatabaseSync(':memory:')
+  const mailer = capturingMailer()
+  const auth = createAuth({ database, env: { ...env, ...overrides }, mailer })
+  await (await getMigrations(auth.options)).runMigrations()
+  return { auth, database, mailer }
+}
+
+function getWithCookie(auth, path, cookie) {
+  return auth.handler(new Request(`http://localhost:3000${path}`, {
+    headers: { cookie, origin: 'http://localhost:3000' },
+  }))
+}
+
+async function signInAgain(auth, email, password = 'correct horse battery staple') {
+  const login = await auth.api.signInEmail({ body: { email, password }, asResponse: true })
+  assert.equal(login.status, 200)
+  return cookieHeader(login)
+}
+
+async function signUpAndIn(auth, email, password = 'correct horse battery staple', name = 'Owner') {
+  await auth.api.signUpEmail({ body: { email, password, name }, asResponse: true })
+  return signInAgain(auth, email, password)
+}
+
+function tokenFromLatestMail(mailer, to) {
+  const message = [...mailer.sent].reverse().find(sent => sent.to === to)
+  assert.ok(message, `no mail was sent to ${to}; saw ${JSON.stringify(mailer.sent.map(m => m.to))}`)
+  const url = message.text.match(/https?:\/\/\S+/)?.[0]
+  assert.ok(url, `mail to ${to} carried no link: ${message.text}`)
+  return { message, token: new URL(url).searchParams.get('token') }
+}
+
+// ── Email change ────────────────────────────────────────────────────────
+
+test('changing a VERIFIED address is two-step: the old address confirms, the new address proves, and the switchover happens only at the end', async () => {
+  const { auth, mailer } = await accountAuth()
+  const password = 'correct horse battery staple'
+  const oldEmail = 'old-address@example.com'
+  const newEmail = 'new-address@example.com'
+
+  await auth.api.signUpEmail({ body: { email: oldEmail, password, name: 'Owner' }, asResponse: true })
+  await auth.api.verifyEmail({ query: { token: tokenFromLatestMail(mailer, oldEmail).token } })
+  const cookie = await signInAgain(auth, oldEmail, password)
+
+  const requested = await postJson(auth, '/api/auth/change-email', { newEmail }, cookie)
+  assert.equal(requested.status, 200)
+
+  // Step 1 goes to the CURRENT address, not the new one — this is the
+  // "someone is taking my account" signal, and it must not be skippable.
+  const confirmation = tokenFromLatestMail(mailer, oldEmail)
+  assert.equal(confirmation.message.subject, 'Confirm your Archimedes email change')
+  assert.equal(mailer.sent.filter(sent => sent.to === newEmail).length, 0)
+
+  // Nothing has changed yet: the old credentials still sign in, the new
+  // address does not exist.
+  assert.equal((await auth.api.signInEmail({ body: { email: oldEmail, password }, asResponse: true })).status, 200)
+  assert.equal((await auth.api.signInEmail({ body: { email: newEmail, password }, asResponse: true })).status, 401)
+
+  // Step 2: opening the confirmation link mails the NEW address.
+  await auth.api.verifyEmail({ query: { token: confirmation.token } })
+  const verification = tokenFromLatestMail(mailer, newEmail)
+  assert.ok(verification.token)
+  // Still not switched over — proving the new address is what switches it.
+  assert.equal((await auth.api.signInEmail({ body: { email: newEmail, password }, asResponse: true })).status, 401)
+
+  // Step 3: opening the new address's link is the switchover.
+  await auth.api.verifyEmail({ query: { token: verification.token } })
+  assert.equal((await auth.api.signInEmail({ body: { email: newEmail, password }, asResponse: true })).status, 200)
+  assert.equal((await auth.api.signInEmail({ body: { email: oldEmail, password }, asResponse: true })).status, 401)
+})
+
+test('changing an UNVERIFIED address still requires proving the new one before the switchover', async () => {
+  const { auth, mailer } = await accountAuth()
+  const password = 'correct horse battery staple'
+  const oldEmail = 'unverified-old@example.com'
+  const newEmail = 'unverified-new@example.com'
+  const cookie = await signUpAndIn(auth, oldEmail, password)
+
+  const requested = await postJson(auth, '/api/auth/change-email', { newEmail }, cookie)
+  assert.equal(requested.status, 200)
+
+  // No proven old address to confirm from, so there is no confirmation
+  // mail — but the address still does not move until the NEW one is opened.
+  assert.equal(mailer.sent.filter(sent => sent.subject === 'Confirm your Archimedes email change').length, 0)
+  assert.equal((await auth.api.signInEmail({ body: { email: newEmail, password }, asResponse: true })).status, 401)
+
+  await auth.api.verifyEmail({ query: { token: tokenFromLatestMail(mailer, newEmail).token } })
+  assert.equal((await auth.api.signInEmail({ body: { email: newEmail, password }, asResponse: true })).status, 200)
+  assert.equal((await auth.api.signInEmail({ body: { email: oldEmail, password }, asResponse: true })).status, 401)
+})
+
+test('requesting a change to an address that already has an account looks identical to a free one, and sends nothing (no account-existence oracle)', async () => {
+  const { auth, mailer } = await accountAuth()
+  const password = 'correct horse battery staple'
+  await auth.api.signUpEmail({ body: { email: 'squatter@example.com', password, name: 'Squatter' }, asResponse: true })
+  const cookie = await signUpAndIn(auth, 'mover@example.com', password)
+  const before = mailer.sent.length
+
+  const taken = await postJson(auth, '/api/auth/change-email', { newEmail: 'squatter@example.com' }, cookie)
+
+  assert.equal(taken.status, 200)
+  assert.deepEqual(await taken.json(), { status: true })
+  assert.equal(mailer.sent.length, before, 'a mail went out for a taken address — that is the enumeration channel')
+  // ...and the free-address request above returns the same 200 {status:true}.
+})
+
+test('a failing mailer cannot turn an email-change request into a 500 (the status code would leak which addresses exist)', async () => {
+  const database = new DatabaseSync(':memory:')
+  // Records what it was asked to send and THEN fails — so the signup
+  // verification link is still recoverable (the account has to reach
+  // emailVerified for the confirmation callback under test to be the branch
+  // Better Auth takes) while every send still throws, SES-sandbox style.
+  const sent = []
+  const mailer = {
+    kind: 'test',
+    sender: 'x',
+    send: async message => { sent.push(message); throw new Error('SES sandbox: address not verified') },
+  }
+  const auth = createAuth({ database, env, mailer })
+  await (await getMigrations(auth.options)).runMigrations()
+  const email = 'failsoft-change@example.com'
+  const password = 'correct horse battery staple'
+
+  const originalError = console.error
+  const logged = []
+  console.error = (...args) => logged.push(args)
+  let requested
+  try {
+    await auth.api.signUpEmail({ body: { email, password, name: 'Owner' }, asResponse: true })
+    await auth.api.verifyEmail({ query: { token: tokenFromLatestMail({ sent }, email).token } })
+    const cookie = await signInAgain(auth, email, password)
+    requested = await postJson(auth, '/api/auth/change-email', { newEmail: 'somewhere-else@example.com' }, cookie)
+    await new Promise(resolve => setImmediate(resolve))
+  } finally {
+    console.error = originalError
+  }
+
+  assert.equal(requested.status, 200)
+  assert.equal(sent.at(-1).subject, 'Confirm your Archimedes email change')
+  // Fail-soft, never fail-silent — same rule as ACCOUNT_CHANGE_NOTIFY_FAILED.
+  assert.ok(
+    logged.some(args => String(args[0]).includes('CHANGE_EMAIL_CONFIRM_SEND_FAILED')),
+    `expected a loud, greppable failure log; saw: ${JSON.stringify(logged)}`,
+  )
+})
+
+// ── Password change ─────────────────────────────────────────────────────
+
+test('changing the password requires the current one, and revoking other sessions actually kills them', async () => {
+  const { auth } = await accountAuth()
+  const email = 'rotate-password@example.com'
+  const password = 'correct horse battery staple'
+  const newPassword = 'a different correct horse battery'
+  const first = await signUpAndIn(auth, email, password)
+  const second = await signInAgain(auth, email, password)
+
+  const wrong = await postJson(auth, '/api/auth/change-password', {
+    currentPassword: 'not the current password', newPassword, revokeOtherSessions: true,
+  }, first)
+  assert.equal(wrong.status, 400)
+  assert.equal((await wrong.json()).code, 'INVALID_PASSWORD')
+  // Refused means refused: the old password still works.
+  assert.equal((await auth.api.signInEmail({ body: { email, password }, asResponse: true })).status, 200)
+
+  const changed = await postJson(auth, '/api/auth/change-password', {
+    currentPassword: password, newPassword, revokeOtherSessions: true,
+  }, first)
+  assert.equal(changed.status, 200)
+
+  assert.equal((await auth.api.signInEmail({ body: { email, password }, asResponse: true })).status, 401)
+  assert.equal((await auth.api.signInEmail({ body: { email, password: newPassword }, asResponse: true })).status, 200)
+  // The OTHER session is gone; the one that made the change survives on the
+  // rotated cookie the response set.
+  assert.equal(await auth.api.getSession({ headers: new Headers({ cookie: second }) }), null)
+  assert.ok(await auth.api.getSession({ headers: new Headers({ cookie: cookieHeader(changed) }) }))
+})
+
+// ── Session list + revoke ───────────────────────────────────────────────
+
+test('/list-sessions returns this account\'s live sessions with the token /revoke-session needs', async () => {
+  const { auth } = await accountAuth()
+  const email = 'lists-sessions@example.com'
+  const first = await signUpAndIn(auth, email)
+  await signInAgain(auth, email)
+
+  const listed = await getWithCookie(auth, '/api/auth/list-sessions', first)
+  assert.equal(listed.status, 200)
+  const sessions = await listed.json()
+  assert.equal(sessions.length, 2)
+  for (const session of sessions) {
+    assert.equal(typeof session.token, 'string')
+    assert.equal(typeof session.id, 'string')
+    assert.ok(session.createdAt && session.expiresAt)
+  }
+})
+
+test('/list-sessions is fresh-session gated by the library, so Account Settings must handle SESSION_NOT_FRESH', async () => {
+  const { auth, database } = await accountAuth()
+  const cookie = await signUpAndIn(auth, 'stale-list@example.com')
+  assert.equal((await getWithCookie(auth, '/api/auth/list-sessions', cookie)).status, 200)
+
+  ageSession(database, cookie, 25)
+
+  const stale = await getWithCookie(auth, '/api/auth/list-sessions', cookie)
+  assert.equal(stale.status, 403)
+  assert.equal((await stale.json()).code, 'SESSION_NOT_FRESH')
+})
+
+test('revoking one of your OWN sessions ends it and leaves the others alone', async () => {
+  const { auth } = await accountAuth()
+  const email = 'revokes-own@example.com'
+  const keeper = await signUpAndIn(auth, email)
+  const doomed = await signInAgain(auth, email)
+
+  const sessions = await (await getWithCookie(auth, '/api/auth/list-sessions', keeper)).json()
+  const doomedToken = doomed.split('=')[1].split('.')[0]
+  assert.ok(sessions.some(session => session.token === doomedToken))
+
+  const revoked = await postJson(auth, '/api/auth/revoke-session', { token: doomedToken }, keeper)
+  assert.equal(revoked.status, 200)
+  assert.equal(await auth.api.getSession({ headers: new Headers({ cookie: doomed }) }), null)
+  assert.ok(await auth.api.getSession({ headers: new Headers({ cookie: keeper }) }))
+})
+
+// THE DENY PATH — see auth.js's hooks.before comment for why this needs a
+// hook at all. Better Auth's own handler already refuses to DELETE another
+// account's session (session.mjs:434), but answers `{status: true}` at :443
+// either way; without the hook this test's `assert.equal(status, 404)` sees
+// a 200 and Account Settings renders "Session revoked." for a session that
+// is still very much alive.
+test('revoking a session that belongs to ANOTHER account is refused with 404, and that account stays signed in', async () => {
+  const { auth } = await accountAuth()
+  const attacker = await signUpAndIn(auth, 'attacker@example.com')
+  const victim = await signUpAndIn(auth, 'victim@example.com')
+  const victimToken = victim.split('=')[1].split('.')[0]
+
+  const refused = await postJson(auth, '/api/auth/revoke-session', { token: victimToken }, attacker)
+
+  assert.equal(refused.status, 404)
+  assert.equal((await refused.json()).code, 'SESSION_NOT_FOUND')
+  assert.ok(
+    await auth.api.getSession({ headers: new Headers({ cookie: victim }) }),
+    "the victim's session was revoked by another account",
+  )
+})
+
+test('revoking a token that does not exist at all gets the SAME 404 — no live-token oracle', async () => {
+  const { auth } = await accountAuth()
+  const cookie = await signUpAndIn(auth, 'probes-tokens@example.com')
+
+  const missing = await postJson(auth, '/api/auth/revoke-session', { token: 'no-such-session-token' }, cookie)
+
+  assert.equal(missing.status, 404)
+  assert.equal((await missing.json()).code, 'SESSION_NOT_FOUND')
+})
+
+test('/revoke-session with no session at all still gets the library\'s 401, not the hook\'s 404', async () => {
+  const { auth } = await accountAuth()
+  const anonymous = await postJson(auth, '/api/auth/revoke-session', { token: 'anything' }, '')
+  assert.equal(anonymous.status, 401)
+})
+
+test('/revoke-other-sessions ends every session but the caller\'s', async () => {
+  const { auth } = await accountAuth()
+  const email = 'revokes-others@example.com'
+  const keeper = await signUpAndIn(auth, email)
+  const otherOne = await signInAgain(auth, email)
+  const otherTwo = await signInAgain(auth, email)
+
+  const revoked = await postJson(auth, '/api/auth/revoke-other-sessions', {}, keeper)
+  assert.equal(revoked.status, 200)
+
+  assert.equal(await auth.api.getSession({ headers: new Headers({ cookie: otherOne }) }), null)
+  assert.equal(await auth.api.getSession({ headers: new Headers({ cookie: otherTwo }) }), null)
+  assert.ok(await auth.api.getSession({ headers: new Headers({ cookie: keeper }) }))
+})
+
+// ── Account deletion ────────────────────────────────────────────────────
+
+test('deleting the account requires the current password, and a wrong one changes nothing', async () => {
+  const { auth, database } = await accountAuth()
+  const email = 'deletes-itself@example.com'
+  const password = 'correct horse battery staple'
+  const cookie = await signUpAndIn(auth, email, password)
+
+  const wrong = await postJson(auth, '/api/auth/delete-user', { password: 'not my password' }, cookie)
+  assert.equal(wrong.status, 400)
+  assert.equal((await wrong.json()).code, 'INVALID_PASSWORD')
+  assert.equal(database.prepare('SELECT COUNT(*) AS n FROM auth_users').get().n, 1)
+
+  const deleted = await postJson(auth, '/api/auth/delete-user', { password }, cookie)
+  assert.equal(deleted.status, 200)
+  assert.deepEqual(await deleted.json(), { success: true, message: 'User deleted' })
+
+  // The bare `DELETE FROM auth_users` this ends in is the statement
+  // migration 85ca5310b7a1's ON DELETE actions and purge trigger are
+  // written to fire on — see backend/tests/test_account_deletion_cascade.py.
+  assert.equal(database.prepare('SELECT COUNT(*) AS n FROM auth_users').get().n, 0)
+  assert.equal(database.prepare('SELECT COUNT(*) AS n FROM auth_sessions').get().n, 0)
+  assert.equal(database.prepare('SELECT COUNT(*) AS n FROM auth_accounts').get().n, 0)
+  assert.equal(await auth.api.getSession({ headers: new Headers({ cookie }) }), null)
+  assert.equal((await auth.api.signInEmail({ body: { email, password }, asResponse: true })).status, 401)
+})
+
+test('a stale session cannot delete an account without re-authenticating', async () => {
+  const { auth, database } = await accountAuth()
+  const cookie = await signUpAndIn(auth, 'stale-delete@example.com')
+  ageSession(database, cookie, 25)
+
+  // No password in the body — the path an account with no credential row
+  // (Google/GitHub-only) necessarily takes.
+  const refused = await postJson(auth, '/api/auth/delete-user', {}, cookie)
+
+  assert.equal(refused.status, 400)
+  assert.equal((await refused.json()).code, 'SESSION_EXPIRED')
+  assert.equal(database.prepare('SELECT COUNT(*) AS n FROM auth_users').get().n, 1)
+})
+
+test('deletion is opt-in: with user.deleteUser.enabled removed the endpoint 404s, so the config in auth.js is what makes the button real', async () => {
+  const { auth } = await accountAuth()
+  assert.equal(auth.options.user.deleteUser.enabled, true)
+  assert.equal(auth.options.user.changeEmail.enabled, true)
+  // No sendDeleteAccountVerification — see auth.js's comment: with it set,
+  // /delete-user NEVER deletes in-request, it only mails a link, which
+  // while SES is sandboxed is a button that silently does nothing.
+  assert.equal(auth.options.user.deleteUser.sendDeleteAccountVerification, undefined)
+  // Nor updateEmailWithoutVerification — that would switch an unverified
+  // account's address over with no proof the new address exists.
+  assert.equal(auth.options.user.changeEmail.updateEmailWithoutVerification, undefined)
+})
+
+test("deleting an account does not email the owner about 'unlinked' sign-in methods, and does not trip the notify-failure alarm", async () => {
+  const { auth, mailer } = await accountAuth()
+  const email = 'quiet-delete@example.com'
+  const password = 'correct horse battery staple'
+  const cookie = await signUpAndIn(auth, email, password)
+  const mailsBefore = mailer.sent.length
+
+  const originalError = console.error
+  const logged = []
+  console.error = (...args) => logged.push(args)
+  let deleted
+  try {
+    deleted = await postJson(auth, '/api/auth/delete-user', { password }, cookie)
+    await new Promise(resolve => setImmediate(resolve))
+  } finally {
+    console.error = originalError
+  }
+
+  assert.equal(deleted.status, 200)
+  assert.equal(
+    mailer.sent.length, mailsBefore,
+    `deletion sent mail it should not have: ${JSON.stringify(mailer.sent.slice(mailsBefore))}`,
+  )
+  // Mutation-prove: remove the `/delete-user` early return from
+  // notifyAccountChange in auth.js and rerun — this assertion fails with
+  // ACCOUNT_CHANGE_NOTIFY_FAILED logged, because the queued delete.after
+  // hook runs once the auth_users row is already gone. Transcript in the
+  // PR body.
+  assert.ok(
+    !logged.some(args => String(args[0]).includes('ACCOUNT_CHANGE_NOTIFY_FAILED')),
+    `account deletion tripped the link/unlink notify alarm: ${JSON.stringify(logged)}`,
+  )
+})

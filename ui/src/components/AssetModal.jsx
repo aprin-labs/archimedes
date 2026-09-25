@@ -146,13 +146,13 @@ export default function AssetModal({ asset, onClose }) {
         {/* Price block */}
         <div style={{ display: 'flex', gap: 24, alignItems: 'baseline', marginTop: 18, flexWrap: 'wrap' }}>
           <div>
-            <div className="caption" style={{ color: 'var(--text-4)', fontSize: '0.7rem' }}>Current price</div>
+            <div className="caption" style={{ color: 'var(--text-3)', fontSize: '0.7rem' }}>Current price</div>
             <div className="mono" style={{ fontSize: '2rem', fontWeight: 600 }}>
               {fmtPrice(asset.current_price)}
             </div>
           </div>
           <div>
-            <div className="caption" style={{ color: 'var(--text-4)', fontSize: '0.7rem' }}>
+            <div className="caption" style={{ color: 'var(--text-3)', fontSize: '0.7rem' }}>
               {changeWindowLabel(asset)} change
             </div>
             <div
@@ -164,11 +164,11 @@ export default function AssetModal({ asset, onClose }) {
             </div>
           </div>
           <div>
-            <div className="caption" style={{ color: 'var(--text-4)', fontSize: '0.7rem' }}>24h high</div>
+            <div className="caption" style={{ color: 'var(--text-3)', fontSize: '0.7rem' }}>24h high</div>
             <div className="mono" style={{ fontSize: '1.1rem' }}>{fmtPrice(high24)}</div>
           </div>
           <div>
-            <div className="caption" style={{ color: 'var(--text-4)', fontSize: '0.7rem' }}>24h low</div>
+            <div className="caption" style={{ color: 'var(--text-3)', fontSize: '0.7rem' }}>24h low</div>
             <div className="mono" style={{ fontSize: '1.1rem' }}>{fmtPrice(low24)}</div>
           </div>
         </div>
@@ -191,7 +191,7 @@ export default function AssetModal({ asset, onClose }) {
               {r}
             </button>
           ))}
-          <span className="caption" style={{ marginLeft: 'auto', color: 'var(--text-4)', fontSize: '0.7rem' }}>
+          <span className="caption" style={{ marginLeft: 'auto', color: 'var(--text-3)', fontSize: '0.7rem' }}>
             {range === '1D' ? 'Intraday 5-minute bars' : 'Daily close'}
           </span>
         </div>
@@ -213,29 +213,29 @@ export default function AssetModal({ asset, onClose }) {
           }}
         >
           <div>
-            <div className="caption" style={{ color: 'var(--text-4)', fontSize: '0.7rem' }}>Source</div>
+            <div className="caption" style={{ color: 'var(--text-3)', fontSize: '0.7rem' }}>Source</div>
             <div className="body" style={{ fontSize: '0.9rem' }}>{sourceLabel(asset.price_source)}</div>
           </div>
           <div>
-            <div className="caption" style={{ color: 'var(--text-4)', fontSize: '0.7rem' }}>Last updated</div>
+            <div className="caption" style={{ color: 'var(--text-3)', fontSize: '0.7rem' }}>Last updated</div>
             <div className="mono" style={{ fontSize: '0.82rem' }}>
               {asset.last_updated ? new Date(asset.last_updated).toLocaleString() : '—'}
             </div>
           </div>
           <div>
-            <div className="caption" style={{ color: 'var(--text-4)', fontSize: '0.7rem' }}>7d change</div>
+            <div className="caption" style={{ color: 'var(--text-3)', fontSize: '0.7rem' }}>7d change</div>
             <div className={`mono ${changeClass(asset.change_7d_pct)}`} title={rejectedTitle(asset, 'change_7d_pct')}>
               {fmtPct(asset.change_7d_pct)}
             </div>
           </div>
           <div>
-            <div className="caption" style={{ color: 'var(--text-4)', fontSize: '0.7rem' }}>30d change</div>
+            <div className="caption" style={{ color: 'var(--text-3)', fontSize: '0.7rem' }}>30d change</div>
             <div className={`mono ${changeClass(asset.change_30d_pct)}`} title={rejectedTitle(asset, 'change_30d_pct')}>
               {fmtPct(asset.change_30d_pct)}
             </div>
           </div>
           <div>
-            <div className="caption" style={{ color: 'var(--text-4)', fontSize: '0.7rem' }}>
+            <div className="caption" style={{ color: 'var(--text-3)', fontSize: '0.7rem' }}>
               Realized vol (30d, annualized)
             </div>
             <div className="mono" title={rejectedTitle(asset, 'realized_vol_30d')}>
@@ -251,7 +251,7 @@ export default function AssetModal({ asset, onClose }) {
               a card whose displayed price actually came from that oracle (#1371). */}
           {asset.oracle_address && asset.price_source === 'oracle' && (
             <div>
-              <div className="caption" style={{ color: 'var(--text-4)', fontSize: '0.7rem' }}>Oracle address</div>
+              <div className="caption" style={{ color: 'var(--text-3)', fontSize: '0.7rem' }}>Oracle address</div>
               <div className="mono" style={{ fontSize: '0.72rem', wordBreak: 'break-all' }}>
                 {asset.oracle_address}
               </div>

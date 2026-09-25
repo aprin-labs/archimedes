@@ -1,140 +1,188 @@
-import { useEffect, useState } from 'react'
-import { apiGet, apiDelete } from '../api'
-import { getAddress } from '../config'
+import { useCallback, useEffect, useState } from "react";
 
-function shortAddr(a) {
-  return a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '—'
+import { apiDelete, apiGet } from "../api";
+import { getAddress } from "../config";
+
+function shortAddr(address) {
+	return address
+		? `${address.slice(0, 6)}…${address.slice(-4)}`
+		: "Not available";
 }
 
 function fmtTime(iso) {
-  if (!iso) return ''
-  const d = new Date(iso)
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+	if (!iso) return "";
+	return new Intl.DateTimeFormat(undefined, {
+		month: "short",
+		day: "numeric",
+		hour: "2-digit",
+		minute: "2-digit",
+	}).format(new Date(iso));
 }
 
 export default function SubscriptionsPage({ onNavigate }) {
-  const walletAddr = getAddress()
-  const [subs, setSubs] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [unsubscribing, setUnsubscribing] = useState(null)
+	const walletAddr = getAddress();
+	const [subs, setSubs] = useState([]);
+	const [loading, setLoading] = useState(true);
+	const [error, setError] = useState("");
+	const [unsubscribing, setUnsubscribing] = useState(null);
+	const [confirming, setConfirming] = useState(null);
 
-  const load = async () => {
-    try {
-      const data = await apiGet('/api/marketplace/my-subscriptions')
-      setSubs(data)
-    } catch (err) {
-      setError(err.message || 'Failed to load subscriptions')
-    } finally {
-      setLoading(false)
-    }
-  }
+	const load = useCallback(async () => {
+		setLoading(true);
+		setError("");
+		try {
+			setSubs(await apiGet("/api/marketplace/my-subscriptions"));
+		} catch (err) {
+			setError(err.message || "Subscriptions could not load");
+		} finally {
+			setLoading(false);
+		}
+	}, []);
 
-  useEffect(() => {
-    if (walletAddr) load()
-    else setLoading(false)
-  }, [walletAddr])
+	useEffect(() => {
+		if (walletAddr) load();
+		else setLoading(false);
+	}, [walletAddr, load]);
 
-  const handleUnsubscribe = async (strategyId) => {
-    if (
-      !window.confirm(
-        `Unsubscribe from "${strategyId}"? This stops future charges immediately. ` +
-          `It does NOT move funds — any USDC remaining in your subscription wallet ` +
-          `stays there; self-service withdrawal is coming soon.`,
-      )
-    )
-      return
-    setUnsubscribing(strategyId)
-    setError('')
-    try {
-      await apiDelete(`/api/marketplace/subscribe/${encodeURIComponent(strategyId)}`)
-      await load()
-    } catch (err) {
-      setError(err.message || 'Unsubscribe failed')
-    } finally {
-      setUnsubscribing(null)
-    }
-  }
+	const handleUnsubscribe = async (strategyId) => {
+		setUnsubscribing(strategyId);
+		setError("");
+		try {
+			await apiDelete(
+				`/api/marketplace/subscribe/${encodeURIComponent(strategyId)}`,
+			);
+			setConfirming(null);
+			await load();
+		} catch (err) {
+			setError(err.message || "Unsubscribe failed");
+		} finally {
+			setUnsubscribing(null);
+		}
+	};
 
-  if (!walletAddr) {
-    return (
-      <div className="page-panel">
-        <div className="max-w-[720px] mx-auto">
-          <h2 className="serif text-[2rem] mb-2">My Subscriptions</h2>
-          <p className="body text-[var(--color-muted)]">
-            Connect your wallet to view your subscriptions.
-          </p>
-        </div>
-      </div>
-    )
-  }
+	return (
+		<div className="subscriptions-page">
+			<header className="app-page-heading">
+				<p className="app-eyebrow">Marketplace control</p>
+				<h1>Subscriptions</h1>
+				<p>Review active copy-trading subscriptions and stop future charges.</p>
+			</header>
 
-  if (loading) {
-    return (
-      <div className="page-panel">
-        <div className="max-w-[720px] mx-auto">
-          <h2 className="serif text-[2rem] mb-2">My Subscriptions</h2>
-          <p className="text-[var(--color-muted)]">Loading…</p>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="page-panel">
-      <div className="max-w-[720px] mx-auto">
-        <h2 className="serif text-[2rem] mb-2">My Subscriptions</h2>
-
-        {error && (
-          <p className="text-sm text-[var(--color-danger)] mb-4">{error}</p>
-        )}
-
-        {subs.length === 0 && (
-          <div className="card p-4">
-            <p className="text-[var(--color-muted)] mb-2">No subscriptions yet.</p>
-            <button className="btn" onClick={() => onNavigate('marketplace')}>
-              Browse Marketplace
-            </button>
-          </div>
-        )}
-
-        <div className="space-y-3">
-          {subs.map((s) => (
-            <div key={s.sub_id} className="card p-4">
-              <div className="flex items-start justify-between">
-                <div className="space-y-1">
-                  <h3 className="font-semibold">{s.strategy_id}</h3>
-                  <div className="text-xs text-[var(--color-muted)] space-y-0.5">
-                    <div>Sub ID: <span className="font-mono">{shortAddr(s.sub_id)}</span></div>
-                    <div>Pool: <span className="font-mono">{shortAddr(s.pool_id)}</span></div>
-                    <div>Wallet: <span className="font-mono">{shortAddr(s.subscriber_wallet)}</span></div>
-                    <div>Created: {fmtTime(s.created_at)}</div>
-                  </div>
-                </div>
-                <div className="flex flex-col items-end gap-2">
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${
-                    s.status === 'running' ? 'bg-green-500/10 text-green-500' : 'text-[var(--color-muted)] bg-[var(--color-surface)]'
-                  }`}>
-                    {s.status}
-                  </span>
-                  {s.status === 'running' && (
-                    <button
-                      className="btn btn-ghost text-xs text-[var(--color-danger)]"
-                      onClick={() => handleUnsubscribe(s.strategy_id)}
-                      disabled={unsubscribing === s.strategy_id}
-                    >
-                      {unsubscribing === s.strategy_id ? '…' : 'Unsubscribe'}
-                    </button>
-                  )}
-                </div>
-              </div>
-              <p className="text-xs text-[var(--color-muted)] mt-2 border-t border-[var(--color-border)] pt-2">
-                To top up, call <code className="bg-[var(--color-surface)] px-1">SubscriptionManager.renewEphemeralWallet(sub_id, amount)</code> from your wallet.
-              </p>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
+			{!walletAddr ? (
+				<section className="card subscription-state">
+					<h2>Linked wallet required</h2>
+					<p>
+						Connect the wallet that owns your subscriptions to read or change
+						them.
+					</p>
+				</section>
+			) : loading ? (
+				<section className="card subscription-state" aria-live="polite">
+					<p>Reading subscriptions…</p>
+				</section>
+			) : (
+				<>
+					{error && (
+						<div className="status mb-4" role="alert">
+							{error}
+						</div>
+					)}
+					{subs.length === 0 ? (
+						<section className="card subscription-state">
+							<p className="label">No subscriptions</p>
+							<h2>Nothing is mirroring trades.</h2>
+							<p>
+								Browse published strategies and inspect each one before
+								subscribing.
+							</p>
+							<button
+								type="button"
+								className="btn btn-primary"
+								onClick={() => onNavigate("marketplace")}
+							>
+								Browse marketplace
+							</button>
+						</section>
+					) : (
+						<div className="subscription-list">
+							{subs.map((subscription) => (
+								<article
+									key={subscription.sub_id}
+									className="card subscription-row"
+								>
+									<div>
+										<h2>{subscription.strategy_id}</h2>
+										<dl>
+											<div>
+												<dt>Pool</dt>
+												<dd>{shortAddr(subscription.pool_id)}</dd>
+											</div>
+											<div>
+												<dt>Wallet</dt>
+												<dd>{shortAddr(subscription.subscriber_wallet)}</dd>
+											</div>
+											<div>
+												<dt>Created</dt>
+												<dd>{fmtTime(subscription.created_at)}</dd>
+											</div>
+										</dl>
+									</div>
+									<div className="subscription-actions">
+										<span
+											className={`tag ${subscription.status === "running" ? "tag-positive" : "tag-muted"}`}
+										>
+											{subscription.status}
+										</span>
+										{subscription.status === "running" &&
+											confirming !== subscription.strategy_id && (
+												<button
+													type="button"
+													className="btn btn-outline btn-sm"
+													onClick={() =>
+														setConfirming(subscription.strategy_id)
+													}
+												>
+													Unsubscribe
+												</button>
+											)}
+										{confirming === subscription.strategy_id && (
+											<div className="subscription-confirm" role="alert">
+												<p>
+													This stops future charges. Remaining wallet funds do
+													not move.
+												</p>
+												<div>
+													<button
+														type="button"
+														className="btn btn-outline btn-sm"
+														onClick={() => setConfirming(null)}
+													>
+														Cancel
+													</button>
+													<button
+														type="button"
+														className="btn btn-outline-danger btn-sm"
+														disabled={
+															unsubscribing === subscription.strategy_id
+														}
+														onClick={() =>
+															handleUnsubscribe(subscription.strategy_id)
+														}
+													>
+														{unsubscribing === subscription.strategy_id
+															? "Stopping…"
+															: "Confirm"}
+													</button>
+												</div>
+											</div>
+										)}
+									</div>
+								</article>
+							))}
+						</div>
+					)}
+				</>
+			)}
+		</div>
+	);
 }

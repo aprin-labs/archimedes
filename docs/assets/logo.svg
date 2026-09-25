@@ -1,0 +1,22 @@
+<!--
+  The product's own brand mark, redrawn as a standalone file for the docs
+  header: a bracketed square, crosshair ticks and a centred point — a thing
+  being measured. It is the same geometry as ui/src/components/BrandMark.jsx
+  (.brand-mark in ui/src/App.css: 1.5px rounded square, 12px crosshair ticks at
+  0.58 opacity, a 6px point ringed in the same colour) in the product's accent
+  gold, --accent #d4a853.
+
+  No wordmark: mkdocs-material renders site_name ("Archimedes") in type right
+  beside this file, so lettering here would set the name twice. No analogy
+  branding — the identity is "Portfolio strategy, under scrutiny."
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Archimedes">
+  <g fill="none" stroke="#d4a853" stroke-width="1.5">
+    <rect x="1.75" y="1.75" width="28.5" height="28.5" rx="5.5"/>
+    <g stroke-width="1" opacity="0.58">
+      <path d="M10 16h12"/>
+      <path d="M16 10v12"/>
+    </g>
+    <circle cx="16" cy="16" r="3" fill="#09090b"/>
+  </g>
+</svg>

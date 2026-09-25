@@ -110,7 +110,21 @@ class BacktestResult:
     # this field a reader cannot tell a genuine audit pass from the constant.
     #   "broker_config_only"                — execution-timing check only, never fails
     #   "ast_audit"                         — rigor_evaluator.look_ahead_audit ran on real source
-    #   "self_attested"                     — closed-DSL path, no inspectable source
+    #   "dsl_structural_audit"              — closed-DSL path, the audit reached a verdict
+    #                                          about this strategy (pass or fail): the spec
+    #                                          was checked against a surface whose interpreter
+    #                                          was AST-audited to read only bar t and earlier,
+    #                                          and the broker cheat-on-close/open check ran
+    #                                          (services/dsl_lookahead_audit.py)
+    #   "dsl_audit_not_run"                 — closed-DSL path, the audit reached NO verdict
+    #                                          ("pending"/"degenerate"): the boolean beside this
+    #                                          label is False because nothing was proven, NOT
+    #                                          because a check found a leak
+    #   "self_attested"                     — RETIRED, never written any more. Closed-DSL rows
+    #                                          from when the LLM's own look_ahead_safe
+    #                                          declaration was the "source". That field is gone
+    #                                          from the DSL; a row carrying this value asserts
+    #                                          nothing and must not be read as an audit result
     #   "static_rebalance_no_signal_shift"  — portfolio simulator: t-1 held weights
     #                                          earn t returns (mechanically look-ahead-
     #                                          free), but the weight matrix itself is
@@ -151,8 +165,8 @@ class BacktestResult:
     # ── Deliberately NOT here: passes_validation / passes_rigor_gate ────────
     #
     # This dataclass used to carry its own gate, with its own thresholds
-    # (sharpe>0.5, dsr_p>0.95, pbo<0.5, oos/is>=0.5, sharpe_vs_paper>=0.5,
-    # max_dd<0.5). The curated read path grades through
+    # (a raw-Sharpe floor, its own DSR bar, pbo<0.5, oos/is>=0.5,
+    # sharpe_vs_paper>=0.5, max_dd<0.5). The curated read path grades through
     # ``live_rigor_gate.verdict_from_returns`` and the strictness ladder in
     # ``rigor_profiles``. So "generated and curated are graded on the same
     # scale" was not true — there were two gates, and which one you got

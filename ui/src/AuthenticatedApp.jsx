@@ -1,32 +1,46 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 
+import { _resetAdminProbeCache } from "./adminProbe.js";
 import { disconnectWallet, reconnectWallet } from "./config";
 import { EXECUTION_CHAIN_ID } from "./chain-config";
 import { checkLegacyWallet, listLinkedWallets } from "./linked-wallets";
-import AccountSettings from "./components/AccountSettings";
-import CorpusExplorer from "./components/CorpusExplorer";
 import ErrorBoundary from "./components/ErrorBoundary";
-import Explore from "./components/Explore";
-import Generate from "./components/Generate";
-import Insights from "./components/Insights";
-import Leaderboard from "./components/Leaderboard";
 import Layout from "./components/Layout";
-import Learnings from "./components/Learnings";
-import MarketplacePage from "./components/MarketplacePage";
 import OnboardingTour, {
 	hasCompletedOnboarding,
 } from "./components/OnboardingTour";
-import PaperTrading from "./components/PaperTrading";
-import Portfolio from "./components/Portfolio";
-import PublishPage from "./components/PublishPage";
-import QuantLab from "./components/QuantLab";
-import Reasoning from "./components/Reasoning";
-import Strategies from "./components/Strategies";
-import StrategyDetailPage from "./components/StrategyDetailPage";
-import StrategyPassport from "./components/StrategyPassport";
-import SubscriptionsPage from "./components/SubscriptionsPage";
-import VaultDetail from "./components/VaultDetail";
 import WalletGate from "./components/WalletGate";
+import { canStore } from "./storage-consent.js";
+
+const AccountSettings = lazy(() => import("./components/AccountSettings"));
+const CorpusExplorer = lazy(() => import("./components/CorpusExplorer"));
+const Explore = lazy(() => import("./components/Explore"));
+const Generate = lazy(() => import("./components/Generate"));
+const Insights = lazy(() => import("./components/Insights"));
+const Leaderboard = lazy(() => import("./components/Leaderboard"));
+const Learnings = lazy(() => import("./components/Learnings"));
+const MarketplacePage = lazy(() => import("./components/MarketplacePage"));
+const PaperTrading = lazy(() => import("./components/PaperTrading"));
+const Portfolio = lazy(() => import("./components/Portfolio"));
+const PublishPage = lazy(() => import("./components/PublishPage"));
+const QuantLab = lazy(() => import("./components/QuantLab"));
+const Reasoning = lazy(() => import("./components/Reasoning"));
+const Strategies = lazy(() => import("./components/Strategies"));
+const StrategyDetailPage = lazy(
+	() => import("./components/StrategyDetailPage"),
+);
+const StrategyPassport = lazy(() => import("./components/StrategyPassport"));
+const SubscriptionsPage = lazy(() => import("./components/SubscriptionsPage"));
+const VaultDetail = lazy(() => import("./components/VaultDetail"));
+
+function AppRouteFallback() {
+	return (
+		<div className="app-route-fallback" role="status" aria-live="polite">
+			<span className="spinner" aria-hidden="true" />
+			Loading view…
+		</div>
+	);
+}
 
 const openConnectModal = () =>
 	window.dispatchEvent(new Event("open-wallet-modal"));
@@ -96,6 +110,12 @@ export default function AuthenticatedApp({
 	useEffect(() => {
 		const handler = async (event) => {
 			const address = event.detail.address;
+			// The admin-gate probe (owner directive 2026-08-20) can key off
+			// the connected wallet (X-Wallet-Address), so a wallet swap must
+			// not leave a stale admin/non-admin determination cached for the
+			// rest of its TTL window — connecting a DIFFERENT wallet is
+			// exactly the case the gate exists to re-check.
+			_resetAdminProbeCache();
 			if (!address) {
 				setWalletAddr(null);
 				return;
@@ -134,6 +154,7 @@ export default function AuthenticatedApp({
 					<Generate
 						onNavigate={navigateToPage}
 						onStageChange={setJourneyStage}
+						user={user}
 					/>
 				);
 			case "library":
@@ -236,6 +257,12 @@ export default function AuthenticatedApp({
 				features={features}
 				journeyStage={journeyStage}
 			>
+				{/* Also renders for a wallet whose rows #1283's adoption
+				    migration stamped with the platform account: /api/wallets/check
+				    counts the adoption ledger, so an adopted row still reports
+				    has_legacy_data and linking still hands it back. The copy below
+				    stays true for that case — nothing was deleted, and only the
+				    holder of that address can claim it. */}
 				{legacyWalletDetected && !walletAddr && (
 					<div
 						role="status"
@@ -295,7 +322,9 @@ export default function AuthenticatedApp({
 				<ErrorBoundary
 					key={`${route.page}:${route.strategyId ?? ""}:${route.vaultAddress ?? ""}:${route.traceId ?? ""}:${route.highlight ?? ""}:${route.tab ?? ""}`}
 				>
-					{renderPage()}
+					<Suspense fallback={<AppRouteFallback />}>
+						{renderPage()}
+					</Suspense>
 				</ErrorBoundary>
 			</Layout>
 			<OnboardingTour
@@ -303,7 +332,11 @@ export default function AuthenticatedApp({
 				onClose={() => {
 					setTourOpen(false);
 					try {
-						localStorage.setItem("archimedes.onboarding.v1", "completed");
+						// Functional category (#1647) — same key OnboardingTour's own
+						// finish() writes; both sites are gated so rejecting functional
+						// storage cannot be defeated by dismissing from this one.
+						if (canStore("archimedes.onboarding.v1"))
+							localStorage.setItem("archimedes.onboarding.v1", "completed");
 					} catch {
 						/* non-fatal */
 					}

@@ -27,6 +27,8 @@ from archimedes.services.asset_market_service import (
     _CACHE_TTL_SECONDS,
     _CRYPTO_TRADING_DAYS_PER_YEAR,
     _EQUITY_TRADING_DAYS_PER_YEAR,
+    _HISTORY_FETCH_BUDGET_SECONDS,
+    _ORACLE_TOTAL_BUDGET_SECONDS,
     AssetMarketService,
     _bar_timestamp,
     _change_window,
@@ -1242,3 +1244,152 @@ class TestServedItemCarriesItsChangeWindow:
         assert spy.change_24h_pct is not None
         assert spy.change_window_hours is None
         assert spy.change_window_label is None
+
+
+# ── #1664: oracle fan-out width + TTL-vs-rebuild invariant ────────────────
+
+
+def _wide_chain_client(symbols: list[str]):
+    """A mock chain_client with an oracle AND synth address for every symbol.
+
+    Deliberately configures *all* of them: that makes the address filter alone
+    unable to narrow anything, so a passing fan-out test can only be passing
+    because of the push-set intersection.
+    """
+    from pathlib import Path
+
+    mock_settings = MagicMock()
+    mock_settings.oracle_addresses = {s: f"0xo{i:039x}" for i, s in enumerate(symbols)}
+    mock_settings.synth_addresses = {s: f"0xs{i:039x}" for i, s in enumerate(symbols)}
+    mock_settings.abi_dir = str(Path(__file__).resolve().parents[2] / "contracts" / "abis")
+
+    mock_client = MagicMock()
+    mock_client.settings = mock_settings
+    mock_client.to_checksum = lambda addr: addr
+    return mock_client
+
+
+class TestOracleFanOut:
+    """#1664 — Explore must read the pushed oracles, not the whole universe.
+
+    The prod shape walked ~281 SSOT symbols serially on every rebuild, and the
+    rebuild ran essentially continuously because the cache TTL was shorter than
+    the rebuild budget. Both halves are pinned here.
+    """
+
+    @pytest.mark.asyncio
+    async def test_reads_only_the_pushed_intersection_not_the_universe(self):
+        """A 300-symbol universe with a 3-symbol push set → exactly 3 getPrice calls.
+
+        Adversarial check: drop the ``symbol in pushed`` clause from
+        ``_read_oracle_prices``' candidate comprehension and this reports 300.
+        """
+        universe = [f"sSYM{i:03d}" for i in range(300)]
+        pushed_equity = {"sSYM007": "SYM7", "sSYM100": "SYM100", "^GSPC": "^GSPC"}
+        pushed_crypto = {"sSYM250": "some-coin"}
+
+        service = AssetMarketService()
+        mock_contract = MagicMock()
+        mock_contract.functions.getPrice.return_value.call = AsyncMock(
+            return_value=(100_000_000, int(time.time())),
+        )
+        mock_client = _wide_chain_client(universe)
+        mock_client.w3 = MagicMock()
+        mock_client.w3.eth.contract.return_value = mock_contract
+
+        with (
+            patch("archimedes.chain.client.chain_client", mock_client),
+            patch("archimedes.chain.oracle_updater.YFINANCE_MAP", pushed_equity),
+            patch("archimedes.chain.oracle_updater.CRYPTO_MAP", pushed_crypto),
+        ):
+            result = await service._read_oracle_prices(universe)
+
+        assert mock_contract.functions.getPrice.call_count == 3, (
+            f"expected 3 chain reads (the push set), got "
+            f"{mock_contract.functions.getPrice.call_count} for a 300-symbol universe"
+        )
+        assert set(result) == {"sSYM007", "sSYM100", "sSYM250"}
+        # ^GSPC is in YFINANCE_MAP but is a regime-signal index, never a synth
+        # and never pushed on-chain — it must not become a read.
+        assert "^GSPC" not in result
+
+    @pytest.mark.asyncio
+    async def test_pushed_symbol_without_addresses_is_not_read(self):
+        """Push-set membership alone is not enough — the addresses must resolve."""
+        universe = ["sSPY", "sBTC"]
+        service = AssetMarketService()
+        mock_contract = MagicMock()
+        mock_contract.functions.getPrice.return_value.call = AsyncMock(
+            return_value=(100_000_000, int(time.time())),
+        )
+        mock_client = _wide_chain_client(universe)
+        del mock_client.settings.synth_addresses["sBTC"]  # oracle configured, synth not
+        mock_client.w3 = MagicMock()
+        mock_client.w3.eth.contract.return_value = mock_contract
+
+        with (
+            patch("archimedes.chain.client.chain_client", mock_client),
+            patch("archimedes.chain.oracle_updater.YFINANCE_MAP", {"sSPY": "SPY"}),
+            patch("archimedes.chain.oracle_updater.CRYPTO_MAP", {"sBTC": "bitcoin"}),
+        ):
+            result = await service._read_oracle_prices(universe)
+
+        assert mock_contract.functions.getPrice.call_count == 1
+        assert set(result) == {"sSPY"}
+
+    @pytest.mark.asyncio
+    async def test_reads_run_concurrently_not_serially(self):
+        """Five 0.1s reads must cost ~one round trip, not five.
+
+        Adversarial check: replace the ``asyncio.gather`` with a ``for`` loop
+        that awaits ``_read_one`` per symbol and the elapsed time crosses 0.5s.
+        """
+        universe = [f"sSYM{i:03d}" for i in range(5)]
+        read_delay = 0.1
+
+        async def _slow_read(*_args, **_kwargs):
+            await asyncio.sleep(read_delay)
+            return (100_000_000, int(time.time()))
+
+        service = AssetMarketService()
+        mock_contract = MagicMock()
+        mock_contract.functions.getPrice.return_value.call = AsyncMock(side_effect=_slow_read)
+        mock_client = _wide_chain_client(universe)
+        mock_client.w3 = MagicMock()
+        mock_client.w3.eth.contract.return_value = mock_contract
+
+        with (
+            patch("archimedes.chain.client.chain_client", mock_client),
+            patch("archimedes.chain.oracle_updater.YFINANCE_MAP", {s: s for s in universe}),
+            patch("archimedes.chain.oracle_updater.CRYPTO_MAP", {}),
+        ):
+            started = time.monotonic()
+            result = await service._read_oracle_prices(universe)
+            elapsed = time.monotonic() - started
+
+        assert len(result) == 5, "all five reads must still land"
+        serial_cost = read_delay * len(universe)
+        assert elapsed < serial_cost / 2, (
+            f"reads took {elapsed:.3f}s; serial would be ~{serial_cost:.1f}s — fan-out is not concurrent"
+        )
+
+
+class TestCacheTtlInvariant:
+    def test_cache_ttl_exceeds_rebuild_budget(self):
+        """The TTL must outlast the worst-case rebuild it caches (#1664).
+
+        Asserted as an invariant over the two budget constants, not against the
+        literal 120, so a future budget increase re-trips this instead of
+        silently restoring the always-refreshing state: a TTL shorter than the
+        rebuild means every entry is born expired, every request re-kicks a
+        background refresh, and the refresher never rests.
+        """
+        rebuild_budget = _ORACLE_TOTAL_BUDGET_SECONDS + _HISTORY_FETCH_BUDGET_SECONDS
+        # Written budget-first only to satisfy ruff's SIM300 (it reads the
+        # SCREAMING_CASE side as a literal); the invariant is unchanged —
+        # _CACHE_TTL_SECONDS > oracle budget + history budget.
+        assert rebuild_budget < _CACHE_TTL_SECONDS, (
+            f"cache TTL {_CACHE_TTL_SECONDS}s must exceed the worst-case rebuild "
+            f"budget {rebuild_budget}s (oracle {_ORACLE_TOTAL_BUDGET_SECONDS}s + "
+            f"history {_HISTORY_FETCH_BUDGET_SECONDS}s)"
+        )

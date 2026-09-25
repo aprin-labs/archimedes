@@ -44,7 +44,9 @@ test("index.html head references an apple-touch-icon, PNG fallbacks, and a manif
 		/<link rel="apple-touch-icon" sizes="180x180" href="\/apple-touch-icon\.png" \/>/,
 	);
 	assert.match(head, /<link rel="manifest" href="\/site\.webmanifest" \/>/);
-	assert.match(head, /<meta name="theme-color" content="#0a0a0b" \/>/);
+	// Rebrand palette: the plain fallback meta and the manifest agree on the
+	// brand dark (#15131D); media-scoped light/dark variants sit beside it.
+	assert.match(head, /<meta name="theme-color" content="#15131D" \/>/);
 });
 
 test("apple-touch-icon.png is a real 180x180 PNG", () => {

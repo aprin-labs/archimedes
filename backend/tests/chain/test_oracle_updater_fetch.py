@@ -38,15 +38,23 @@ def updater() -> OracleUpdater:
     return OracleUpdater()
 
 
-def _fake_yfinance_multi(prices_by_ticker: dict[str, float]):
+_BAR_TS = datetime(2026, 8, 30, 19, 45, tzinfo=UTC)
+
+
+def _fake_yfinance_multi(prices_by_ticker: dict[str, float], bar_ts: datetime = _BAR_TS):
     """A fake `yfinance` module whose download() returns a multi-ticker frame.
 
-    The real code reads `data["Close"]` and indexes `.columns` per ticker, then
-    takes `.dropna().iloc[-1]`. We mimic the pandas surface the code touches.
+    The real code reads `data["Close"]`, indexes `.columns` per ticker, then
+    takes `.dropna()` and reads BOTH `.iloc[-1]` (the price) and `.index[-1]`
+    (the bar's upstream observation time). The index is therefore a real
+    tz-aware DatetimeIndex, not the default RangeIndex — the bar time is part
+    of the batch-quote contract now (intraday design §2 item 0), so a fake
+    without one is not a faithful stand-in for the vendor.
     """
     import pandas as pd
 
-    close = pd.DataFrame({t: [p] for t, p in prices_by_ticker.items()})
+    index = pd.DatetimeIndex([pd.Timestamp(bar_ts)])
+    close = pd.DataFrame({t: [p] for t, p in prices_by_ticker.items()}, index=index)
     frame = MagicMock()
     frame.empty = False
     frame.__getitem__ = MagicMock(side_effect=lambda k: close if k == "Close" else None)
@@ -63,6 +71,38 @@ class TestFetchYfinance:
         by_symbol = {r.symbol: r.price_usd for r in results}
         assert by_symbol["sTSLA"] == 250.0
         assert by_symbol["sSPY"] == 500.0
+
+    def test_stamps_the_poll_time_unchanged_by_the_widened_batch_seam(self, updater):
+        """ON-CHAIN BEHAVIOR IS UNCHANGED by the paper-marks batch-seam widening.
+
+        `get_intraday_quotes_batch` now returns `(price, bar_ts)` because the
+        paper-marks loop cannot be honest without an upstream observation
+        time. This leg unpacks that tuple and DISCARDS `bar_ts`: the
+        `AssetPrice` still carries the poll time, so `_validate_for_push`'s
+        `age_s` — and therefore which prices get pushed on-chain — is bit-for-
+        bit what it was before this branch.
+
+        This is a REGRESSION PIN, not an endorsement. Stamping `bar_ts` here
+        is a real improvement (it makes the staleness gate able to reject a
+        stale bar at all) AND it silently stops every off-hours equity push,
+        because a Friday-close bar is hours older than the 900s cap. That
+        trade is split out to `dbrowneup/oracle-bar-time-stamp` with its own
+        off-hours test. A paper-trading PR must not change what gets written
+        on-chain at the weekend, and this test is what makes that visible.
+
+        Demonstrated to reject: changing `timestamp=timestamp` back to
+        `timestamp=bar_ts or timestamp` in `_fetch_yfinance` makes this test
+        fail (the stamp becomes `_BAR_TS`), while
+        `test_parses_multi_ticker_close` above still passes — the prices stay
+        right and only the *time* moves, which is exactly why the price test
+        alone could never have caught it.
+        """
+        poll_time = datetime(2026, 8, 30, 23, 59, tzinfo=UTC)
+        fake_yf = _fake_yfinance_multi({"SPY": 500.0})
+        with patch.dict(sys.modules, {"yfinance": fake_yf}):
+            results = updater._fetch_yfinance({"sSPY": "SPY"}, poll_time)
+        assert results[0].timestamp == poll_time
+        assert results[0].timestamp != _BAR_TS, "the bar time is available here and deliberately not used (yet)"
 
     def test_import_error_returns_empty(self, updater):
         # Force the `import yfinance as yf` inside to raise (no mock object needed —
@@ -110,14 +150,27 @@ class TestFetchCrypto:
         by_symbol = {r.symbol: r.price_usd for r in results}
         assert by_symbol["sBTC"] == 64000.0
 
-    async def test_coingecko_error_is_swallowed(self, updater):
-        # A non-200 / raising session must not crash — returns [] for that symbol.
+    async def test_coingecko_error_is_swallowed(self, updater, monkeypatch):
+        """A raising session must not crash the cycle.
+
+        Pinned to ``ORACLE_CRYPTO_SOURCE=coingecko_only`` (#1710) so this keeps
+        asserting exactly what it always asserted — the CoinGecko leg alone,
+        returning [] on failure. The DEFAULT mode now consults the provider
+        seam after a CoinGecko miss, which is a different contract and is
+        covered by ``test_oracle_crypto_source.py``; leaving this test on the
+        default would silently turn it into a LIVE yfinance fetch (it has no
+        provider double), which is both non-hermetic and no longer a test of
+        this leg.
+        """
+        monkeypatch.setenv("ORACLE_CRYPTO_SOURCE", "coingecko_only")
         session_cm = MagicMock()
         session_cm.__aenter__ = AsyncMock(side_effect=RuntimeError("network down"))
         session_cm.__aexit__ = AsyncMock(return_value=False)
         with patch("archimedes.chain.oracle_updater.aiohttp.ClientSession", return_value=session_cm):
             results = await updater._fetch_crypto(datetime.now(UTC))
         assert results == []
+        # Not silent: the symbol carries a named reason for _log_push_exclusions.
+        assert "network down" in updater._source_miss_reasons["sBTC"]
 
 
 class TestFetchMarketSnapshot:

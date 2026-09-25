@@ -201,3 +201,30 @@ output "kb_runner_log_group_name" {
   description = "CloudWatch log group the kb-runner scheduled task ships to — `aws logs tail <this> --since 10m` to verify a run."
   value       = aws_cloudwatch_log_group.kb_runner.name
 }
+
+# ── SES bounce/complaint feedback (#1804, infra/ses_events.tf) ──────────────
+
+output "ses_configuration_set_name" {
+  description = "SES configuration set every outgoing message names (auth container's SES_CONFIGURATION_SET) — without it SES publishes no bounce or complaint event at all. `aws sesv2 get-configuration-set-event-destinations --configuration-set-name <this>` to confirm the destination is ENABLED."
+  value       = aws_sesv2_configuration_set.mail.configuration_set_name
+}
+
+output "ses_events_queue_url" {
+  description = "SQS queue URL the SES bounce/complaint events land in (via SNS). The value the backend container receives as SES_EVENTS_QUEUE_URL, and the argument `python -m archimedes.scripts.ses_events drain --queue-url <this>` takes when run from an operator shell."
+  value       = aws_sqs_queue.ses_events.id
+}
+
+output "ses_events_drain_task_definition_family" {
+  description = "ECS task definition family for the scheduled SES bounce/complaint drain (infra/ses_events.tf) — the family aws_scheduler_schedule.ses_events_drain invokes every tick. `aws ecs run-task --task-definition <this>` to force one drain by hand; `aws logs tail /archimedes/app --log-stream-name-prefix ses-events-drain --since 30m` to read the last one."
+  value       = aws_ecs_task_definition.ses_events_drain.family
+}
+
+output "ses_events_dlq_url" {
+  description = "Dead-letter queue for SES events the consumer could not parse or write five times running — a non-empty ApproximateNumberOfMessages here means the parser is behind an AWS schema change, not that mail is fine."
+  value       = aws_sqs_queue.ses_events_dlq.id
+}
+
+output "dmarc_reports_bucket" {
+  description = "S3 bucket the SES receipt rule writes DMARC aggregate reports into (infra/dmarc_reports.tf, #1504). Feed it to the parser: `python scripts/dmarc_report_summary.py --bucket $(terraform output -raw dmarc_reports_bucket) --since-days 14`. An empty bucket means no reports have been collected, NOT that nothing is spoofing the domain — see docs/runbooks/dmarc-reports.md."
+  value       = aws_s3_bucket.dmarc_reports.id
+}

@@ -5,8 +5,14 @@
 > [`fourth-wave-handover.md`](../handovers/fourth-wave-handover.md); evidence base in
 > [`third-wave-retest.md`](third-wave-retest.md).
 >
-> **Status of these numbers:** a new, parallel diagnostic on current-vintage
-> data (2026-06-11). They do **not** replace the per-cohort `pbo_score` values
+> **Status of these numbers:** **Historical — read at their vintage.** A parallel
+> diagnostic run on **2026-06-11**, over **22 of the 23 strategies in the library on that
+> date**. The shelf has grown since (count it with `ls analytics-engine/strategies/*.py`);
+> the 0.047 headline is a 22-strategy figure, and because CSCV PBO is a property of the
+> selection set, **every library addition changes it** — do not quote this number as the
+> library PBO of a larger shelf. One pass-count phrasing was retracted in place on
+> 2026-08-31 ([#1598](https://github.com/aprin-labs/archimedes/issues/1598)). These numbers do
+> **not** replace the per-cohort `pbo_score` values
 > in `backtest_fixtures.json` (different data vintage, different selection
 > set; the fixture file is add-only). Whether/how to promote library PBO into
 > the served passports is an open team decision — see the follow-up issue.
@@ -86,10 +92,15 @@ Notable details:
   the 12 870 splits — the CANDIDATE failures are unambiguous at every horizon,
   not artifacts of one unlucky window.
 - **Risk parity and buy-and-hold dominate selection** (3484 + 3596 splits) and
-  both hold a ~0.77 median OOS rank quantile when selected — the two-passers
-  story (`moreira_muir`, `tsmom`) plus risk parity (the #537 near-miss) is what
-  a *stable* top shelf looks like.
-- The gate-passers' fixture-era `pbo_score` was 0.39 (legacy cohort of 4–6);
+  both hold a ~0.77 median OOS rank quantile when selected — that, together with
+  `moreira_muir`, `tsmom` and risk parity (the #537 near-miss) holding the top
+  joint-window Sharpes, is what a *stable* top shelf looks like.
+  *(Retracted 2026-08-31, [#1598](https://github.com/aprin-labs/archimedes/issues/1598): this
+  bullet used to identify those strategies by how many of them cleared the gate.
+  `CLAUDE.md` forbids quoting a curated-library pass count anywhere; the corrected count is
+  **unestablished**, and the ranking stability this bullet is actually about does not depend
+  on one. The live rigor gate is the only authority on pass/fail.)*
+- Those strategies' fixture-era `pbo_score` was 0.39 (legacy cohort of 4–6);
   the new-cohort entries carry 0.006–0.30. The full-library 0.047 sits inside
   that band but is now measured the way Bailey et al. intend: one selection
   set, simultaneous dated series, honest calendar alignment.

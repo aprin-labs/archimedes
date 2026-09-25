@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+	DEFAULT_DEPTH,
 	DEPTH_OPTIONS,
 	PAYMENT_STATUS,
 	buildPaymentSignatureHeader,
@@ -239,8 +240,22 @@ test("startErrorMessage: fallback NAMES the HTTP status when known, never the ba
 // ── DEPTH_OPTIONS: must equal the pipeline's actually enforced range,
 // never a superset the pipeline silently clamps. ──────────────────────────
 
-test("DEPTH_OPTIONS: exactly the enforced [MIN_PAPERS, FUSION_MAX_PAPERS] range, no 8 or 10", () => {
-	assert.deepEqual(DEPTH_OPTIONS, [2, 3, 4, 5, 6]);
+test("DEPTH_OPTIONS: inside the enforced [MIN_PAPERS, FUSION_MAX_PAPERS] range, and no 2 or 3", () => {
+	// #1636 raised FUSION_MAX_PAPERS 6 → 30 and dropped 2 and 3 from the
+	// picker. The #1363 contract is unchanged in substance: never offer a
+	// value the pipeline would silently clamp.
+	assert.deepEqual(DEPTH_OPTIONS, [5, 8, 12, 20, 30]);
+	for (const n of DEPTH_OPTIONS) {
+		assert.ok(n >= 2 && n <= 30, `${n} is outside the enforced [2, 30] range`);
+	}
+	// The cheapest single fix in #1636: the two values that hand the
+	// synthesizer barely more than the hard floor and then let the resulting
+	// citation count read as evidence depth.
+	assert.ok(!DEPTH_OPTIONS.includes(2) && !DEPTH_OPTIONS.includes(3));
+	// The default is offered, and sits ABOVE the fuse target (5) so the model
+	// is never asked to cite every paper it was shown.
+	assert.ok(DEPTH_OPTIONS.includes(DEFAULT_DEPTH));
+	assert.ok(DEFAULT_DEPTH > 5);
 });
 
 // ── primaryLinkedWallet / describePayerMismatch: payer binding ────────────
@@ -588,6 +603,17 @@ test("Generate.jsx renders the non-payment /start error through startErrorMessag
 
 test("Generate.jsx offers DEPTH_OPTIONS, not a hardcoded superset the pipeline silently clamps", () => {
 	assert.match(generate, /DEPTH_OPTIONS\.map/);
+});
+
+test("Generate.jsx's depth default is DEFAULT_DEPTH, not a second copy of the number", () => {
+	// #1636: the default lived in three places (generate_schemas.py said 5,
+	// strategies_routes.py said 4, Generate.jsx said 5), so the same brief
+	// retrieved a different amount of evidence per entry point. The UI half
+	// now reads the shared constant rather than restating it — including in
+	// the "active" badge comparison, which was its own literal 5.
+	assert.match(generate, /useState\(DEFAULT_DEPTH\)/);
+	assert.match(generate, /depth !== DEFAULT_DEPTH/);
+	assert.doesNotMatch(generate, /useState\(5\)/);
 });
 
 // ── featureFlags.js: GENERATION_QUOTE_ENABLED now defaults ON ─────────────

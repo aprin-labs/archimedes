@@ -90,6 +90,55 @@ class TestSanitizeDebateText:
         assert "Phase-4" not in clean[0]["claims"][0]
         assert clean[0]["claims"][1] == "genuine claim about momentum"  # untouched
 
+    def test_sanitize_transcript_scrubs_dict_claims(self):
+        """#1636 companion fix. The scrubber's claim loop was guarded by
+        ``isinstance(c, str)``, so the moment claims became
+        ``{claim, candidate_id, arxiv_ids}`` dicts — carrying paper
+        attribution — every one of them passed through UNSCRUBBED. A shape
+        change silently re-opened the exact jargon-leak path this write-time
+        sanitizer exists to close. Revert ``_sanitize_claim`` to the old
+        string-only guard and this fails.
+
+        The arXiv ids are deliberately NOT scrubbed: they are validated
+        provenance, and redacting them would corrupt the record rather than
+        protect it.
+        """
+        dirty = [
+            {
+                "role": "bear",
+                "round": 2,
+                "verdict": "decline",
+                "claims": [
+                    {
+                        "claim": "the T1.1 cutover data is stale",
+                        "candidate_id": "C1",
+                        "arxiv_ids": ["2401.00001"],
+                    },
+                    {"claim": "genuine claim about drawdown", "candidate_id": "C2", "arxiv_ids": []},
+                ],
+                "discard": [{"arxiv_id": "2402.00003", "reason": "superseded in Phase-4"}],
+            }
+        ]
+        clean = sanitize_transcript(dirty)
+        leaked = clean[0]["claims"][0]["claim"]
+        assert "T1.1" not in leaked
+        assert "cutover" not in leaked.lower()
+        assert "[redacted]" in leaked
+        # Attribution survives untouched — scrubbing an id would corrupt provenance.
+        assert clean[0]["claims"][0]["arxiv_ids"] == ["2401.00001"]
+        assert clean[0]["claims"][0]["candidate_id"] == "C1"
+        assert clean[0]["claims"][1]["claim"] == "genuine claim about drawdown"
+        # `discard` reasons are model prose too, and were scrubbed by nothing at all.
+        assert "Phase-4" not in clean[0]["discard"][0]["reason"]
+        assert clean[0]["discard"][0]["arxiv_id"] == "2402.00003"
+
+    def test_sanitize_transcript_still_scrubs_legacy_string_claims(self):
+        """Rows persisted before #1636 are bare strings and must keep working
+        — the dict branch is an addition, never a replacement."""
+        clean = sanitize_transcript([{"role": "bull", "round": 1, "claims": ["a T3.5 leak", "clean text"]}])
+        assert "T3.5" not in clean[0]["claims"][0]
+        assert clean[0]["claims"][1] == "clean text"
+
     def test_sanitize_transcript_drops_non_dict_entries(self):
         assert sanitize_transcript(["not a dict", 42, None]) == []
 

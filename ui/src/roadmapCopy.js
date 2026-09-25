@@ -37,25 +37,17 @@
 //      that reintroduces the cross-chunk sharing problem above. Add to
 //      roadmapCopyApp.js instead.
 
-export const landing = {
-	kickerVault: "vault",
-	heroLede:
-		"Archimedes turns a plain-language brief into a paper-grounded " +
-		"strategy, tests it for selection bias, then runs accepted methods " +
-		"in a non-custodial vault on Arc.",
-	spiralTitle: "Brief, debate, rigor, vault proof flow",
-	spiralDesc:
-		"An Archimedean spiral traces a strategy from the user brief through " +
-		"multi-agent debate and the rigor gate to a user-authorized vault.",
-	spiralVaultLabel: "Vault",
-	authorityWithdrawBullet: "Withdraw assets from your vault",
-};
+// The `landing` export was deleted in the 2026-08-30 claim scrub (owner
+// decision): Landing.jsx now makes no execution claim in either flag state,
+// so it imports nothing from here and every string that used to live in this
+// object was dead weight — exactly the case rule 2 above says to remove.
+// `architecture.ledgerVaultLabel` went with it: the honesty ledger's
+// execution row is now ungated and roadmap-toned, so the label is inline.
 
 export const architecture = {
 	pipelineDeployTitle: "Deploy as vault",
 	pipelineDeployActLabel: "five wallet signatures, all yours",
 	marketplaceTitle: "Pay creators, not the house",
-	ledgerVaultLabel: "Non-custodial vault deploy + deposits",
 	ctaLede:
 		"Describe a strategy in plain English. Sign in with any wallet or a " +
 		"passkey; deploying into a vault uses free testnet USDC.",

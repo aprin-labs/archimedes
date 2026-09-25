@@ -19,13 +19,24 @@ function walletHeaders() {
 
 /**
  * GET a JSON endpoint. Throws a clean error on non-2xx responses.
+ *
+ * `signal` is optional and additive — every existing caller omits it and is
+ * unaffected. It exists so a caller that supersedes its own requests (the
+ * corpus catalog's debounced search, #1665) can actually *cancel* the request
+ * rather than merely ignore the answer: without the signal reaching `fetch`,
+ * an abandoned keystroke still costs a full backend table scan. An aborted
+ * request rejects with an `AbortError`; see `corpusSearch.isSupersededError`
+ * for why that must not be painted as an outage.
+ *
  * @param {string} path — API path (e.g. "/api/strategies/")
+ * @param {{signal?: AbortSignal}} [options]
  * @returns {Promise<any>} parsed JSON
  */
-export async function apiGet(path) {
+export async function apiGet(path, { signal } = {}) {
   const res = await fetch(`${API_BASE}${path}`, {
     credentials: 'include',
     headers: walletHeaders(),
+    signal,
   })
   if (!res.ok) {
     const err = new Error(`Backend returned ${res.status}`)

@@ -1,8 +1,12 @@
 """Hermetic tests for the curated ∪ generated "unify source" decouples —
-leaderboard, risk, and chat vault-context now include GENERATED strategies
+leaderboard and risk now include GENERATED strategies
 (StrategyRecord + StrategyPassportRecord) alongside the curated fixtures,
 never curated-only (docs/CURATED-STRATEGY-DECOUPLE-AND-CONSOLIDATE-2026-07-08.md
-Part A, low-pri decouples: leaderboard, risk endpoints, chat vault-context).
+Part A, low-pri decouples: leaderboard, risk endpoints).
+
+The third surface that decouple covered — the chat vault-context builder — is
+gone: per-vault chat was removed on 2026-08-31 (see the PR that deleted
+`services/chat_service.py`), and its two tests here went with it.
 
 Each surface is exercised against a REAL temp-sqlite DB (the `_use_tmp_db`
 pattern from test_strategy_ownership.py) so the actual resolver code runs —
@@ -14,10 +18,12 @@ real (never fabricated) values.
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime
 
 import archimedes.db as db
 import pytest
 from archimedes.api.auth_siwe import _COOKIE_NAME, _sign_session
+from archimedes.services.rigor_gate_version import gate_version
 from httpx import ASGITransport, AsyncClient
 
 _W_OWNER = "0xAbC0000000000000000000000000000000000001"
@@ -114,7 +120,16 @@ def _mk_passport(
             dsr_p_value=dsr,
             pbo_score=pbo,
             out_of_sample_sharpe=oos,
+            # The verdict of record, seeded COUPLED — the only shape
+            # passport_loader can write (docs/adr/rigor-verdict-of-record.md).
+            # Seeding the boolean alone would leave rigor_gate_status at its
+            # "pending" default, which every read surface now (correctly) serves
+            # as "no gate has graded this" regardless of the boolean beside it.
             passes_rigor_gate=passes,
+            rigor_gate_status="pass" if passes else "fail",
+            graded_at=datetime(2026, 8, 1, tzinfo=UTC),
+            gate_version=gate_version(),
+            cohort_n=1,
         )
         record.paper_refs = [PassportPaperRef(passport_id=sid, arxiv_id="2401.00001", title=title)]
         session.add(record)
@@ -216,40 +231,3 @@ async def test_risk_greeks_and_cvar_do_not_break_on_generated_strategy():
     assert cvar.status_code == 200
     greek_ids = [g["strategy_id"] for g in greeks.json()["strategies"]]
     assert "gen-risk-3" in greek_ids
-
-
-# ── Chat vault-context ───────────────────────────────────────────────────────
-
-
-def test_chat_vault_context_includes_generated_strategy():
-    _mk_wallet(_W_OWNER)
-    _mk_strategy("gen-chat-1", owner=_W_OWNER, published=True, status="live")
-    _mk_passport("gen-chat-1", owner=_W_OWNER, status="live", passes=True, sharpe=1.3, title="Chat Strat")
-
-    from archimedes.models.chat import VaultMetadata
-    from archimedes.services.chat_service import ChatService
-
-    vault_addr = "0x" + "9" * 40
-    with db.get_session() as session:
-        session.add(
-            VaultMetadata(
-                vault_address=vault_addr,
-                name="Test Vault",
-                symbol="TV",
-                creator_address=_W_OWNER.lower(),
-                strategy_ids='["gen-chat-1"]',
-            )
-        )
-        session.commit()
-
-    ctx = ChatService()._build_vault_context(vault_addr)
-    assert "Chat Strat" in ctx
-    assert "Rigor gate: passed" in ctx
-    assert ctx != "<vault_context>No metadata available for this vault.</vault_context>"
-
-
-def test_chat_vault_context_no_metadata_is_honest_not_silent_crash():
-    from archimedes.services.chat_service import ChatService
-
-    ctx = ChatService()._build_vault_context("0x" + "8" * 40)
-    assert "No metadata available" in ctx

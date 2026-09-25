@@ -23,14 +23,24 @@
 #   DATABASE_URL=postgresql://archimedes:<pw>@<aurora-endpoint>:5432/archimedes
 #   REDIS_URL=rediss://<elasticache-endpoint>:6379/0
 #
-# Image refs (config consolidation, issue #1039 P5): services below now
-# carry an explicit `image:` (ECR-hosted) alongside `build:`, mirroring the
-# same addition already made to docker-compose.yml (issue #1039 P1) — so
-# `docker compose pull` has something to pull instead of always needing
-# `--build` on this tier's instances too. `build:` stays so the documented
-# `--build` usage above (and any local exercising of this file) is
-# unaffected. ECR_REGISTRY / IMAGE_TAG read from `.env` / the shell env, same
-# defaults as docker-compose.yml — see docs/deployment.md.
+# Image refs (issue #1044, leak 3 — was #1039 P5): services below carry an
+# explicit `image:` alongside `build:` so `docker compose pull` has something
+# to pull, but the ECR registry prefix is now `${ECR_REGISTRY:+…}` — `:+`, not
+# `:-`. The prefix appears ONLY when ECR_REGISTRY is explicitly exported.
+#
+# It used to default to the live production registry, which meant anyone
+# exercising this file — including on a laptop — resolved to
+# `037613907429.dkr.ecr.us-east-1.amazonaws.com/archimedes-backend:latest` and,
+# if ECR-authenticated, silently ran the last image CI pushed to prod instead
+# of their own build. Unset, these now resolve to `archimedes-backend:local`,
+# which no registry can serve, so only a local `--build` satisfies them and the
+# documented `--build` usage above is unaffected.
+#
+# THIS FILE IS CURRENTLY UNUSED — nothing in the pipeline references it (see
+# Dan's 2026-07-07 comment on #1044); the ASG tier it was written for was
+# superseded by the ECS Fargate cutover. It is left in place rather than
+# deleted because docs link to it and the adopt-or-delete call is the owner's.
+# Guarded by backend/tests/test_compose_no_prod_image_default.py.
 
 services:
   # ---------- Reverse proxy + Frontend ----------
@@ -38,7 +48,7 @@ services:
   # terminates TLS and forwards plain HTTP to the instance on port 80 → 8080.
   # nginx does NOT terminate TLS in this tier (the ALB does).
   nginx:
-    image: ${ECR_REGISTRY:-037613907429.dkr.ecr.us-east-1.amazonaws.com}/archimedes-nginx:${IMAGE_TAG:-latest}
+    image: ${ECR_REGISTRY:+${ECR_REGISTRY}/}archimedes-nginx:${IMAGE_TAG:-local}
     build:
       context: .
       dockerfile: nginx/Dockerfile
@@ -66,7 +76,7 @@ services:
 
   # ---------- Better Auth ----------
   auth:
-    image: ${ECR_REGISTRY:-037613907429.dkr.ecr.us-east-1.amazonaws.com}/archimedes-auth:${IMAGE_TAG:-latest}
+    image: ${ECR_REGISTRY:+${ECR_REGISTRY}/}archimedes-auth:${IMAGE_TAG:-local}
     build:
       context: ./auth
     restart: unless-stopped
@@ -90,7 +100,7 @@ services:
 
   # ---------- Backend API ----------
   backend:
-    image: ${ECR_REGISTRY:-037613907429.dkr.ecr.us-east-1.amazonaws.com}/archimedes-backend:${IMAGE_TAG:-latest}
+    image: ${ECR_REGISTRY:+${ECR_REGISTRY}/}archimedes-backend:${IMAGE_TAG:-local}
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -109,7 +119,6 @@ services:
       ARC_ASSET_REGISTRY_ADDRESS: ${ARC_ASSET_REGISTRY_ADDRESS:-0x2d44550711137916df6175587d17886281a0fbc7}
       ARCHIMEDES_STRATEGIES_DIR: /app/analytics-engine/strategies
       ARCHIMEDES_CORPUS_MANIFEST: /app/data/corpus/manifest.jsonl
-      ARCHIMEDES_FUSION_ENABLED: ${ARCHIMEDES_FUSION_ENABLED:-true}
       KB_ARTIFACT_DIR: /app/data/corpus-artifact
       PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:-https://archimedes-arc.com}
       BETTER_AUTH_INTERNAL_URL: http://auth:3000
@@ -126,6 +135,13 @@ services:
       - archimedes-corpus-artifact:/app/data/corpus-artifact
     # Health gate so nginx (and the ALB behind it) only routes to a ready
     # backend. Mirrors the ALB health check path GET /health.
+    #
+    # Deliberately NOT /health/ready (#1818 P3), unlike backend/Dockerfile's
+    # HEALTHCHECK and infra/ecs.tf's mirror of it. Readiness exists so a
+    # SCHEDULER replaces a wedged task; this tier has none — compose evaluates
+    # `depends_on: service_healthy` at startup only and never re-routes, so a
+    # 503 here would take the replica out with no replacement behind it. That is
+    # the fleet-wide shape P3 is avoiding, not the one it wants.
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)\""]
       interval: 15s

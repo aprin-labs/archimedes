@@ -28,7 +28,6 @@ _SPEC = {
     "exit": {"lt": ["close", "sma_200"]},
     "position_sizing": {"type": "full_invested_when_in_market"},
     "source_arxiv_ids": ["0706.1497", "1704.03022"],
-    "look_ahead_safe": True,
     "indicators": ["sma_200"],
 }
 
@@ -79,7 +78,6 @@ def _papers(n: int = 3) -> list:
 def _propose_with(monkeypatch, backend: _StubBackend, brief=None) -> sf.FusionProposal:
     """Run the REAL propose() with corpus/backend/prompt seams stubbed."""
     fusion = sf.StrategyFusion()
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
     papers = _papers()
     monkeypatch.setattr(sf.StrategyFusion, "_resolve_corpus", lambda self: papers)
     monkeypatch.setattr(sf, "select_candidates", lambda brief, corpus: papers)
@@ -148,10 +146,16 @@ def test_partially_repaired_spec_degrades_to_text_only(monkeypatch):
 
 
 def test_invalid_model_spec_degrades_to_text_only(monkeypatch):
-    """A model-emitted spec that fails DSL validation (look_ahead_safe=false is
-    rejected by the interpreter) degrades to text-only instead of returning a
-    spec the rigor/backtest path would refuse."""
-    spec = dict(_SPEC, source_arxiv_ids=["0700.1497", "0701.1497"], look_ahead_safe=False)
+    """A model-emitted spec that fails DSL validation degrades to text-only
+    instead of returning a spec the rigor/backtest path would refuse.
+
+    The invalidity here is a closed-enum violation the model plausibly emits
+    (``quarterly`` is not a supported cadence). It used to be
+    ``look_ahead_safe: false`` — no longer a validation failure, because that
+    field is gone from the schema entirely: a spec no longer gets to grade its
+    own look-ahead safety in either direction.
+    """
+    spec = dict(_SPEC, source_arxiv_ids=["0700.1497", "0701.1497"], rebalance_frequency="quarterly")
     backend = _StubBackend([_ok_response(spec=spec)])
     proposal = _propose_with(monkeypatch, backend)
     assert proposal.status == "ok"

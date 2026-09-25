@@ -1,6 +1,6 @@
 """Agent-tick commit-reveal wiring + claim-integrity tests (#714 / T0.3).
 
-Hermetic: the chain client, executor, trace_publisher, IPFS pin, provider, and state
+Hermetic: the chain client, executor, trace_publisher, provider, and state
 store are all mocked at the boundary (mirrors ``test_agent_runner.py``'s runner fixture).
 
 Covers:
@@ -46,7 +46,6 @@ def runner_env():
         patch("archimedes.chain.agent_runner.trace_publisher") as mock_tp,
         patch("archimedes.chain.agent_runner.default_provider"),
         patch("archimedes.chain.agent_runner.AgentStateStore"),
-        patch("archimedes.chain.agent_runner.pin_public_provenance", new=AsyncMock(return_value=(None, None))),
         patch("archimedes.chain.agent_runner.DRY_RUN", False),
     ):
         from archimedes.chain.agent_runner import StrategyRunner
@@ -82,6 +81,10 @@ class TestRevealWiring:
 
         mock_tp.reveal.assert_called_once()
         mock_tp.publish.assert_not_called()  # the live path is commit-reveal, never publishTrace
+        # #1526: hash-only storagePointer — we do not pin.
+        assert mock_tp.reveal.await_args.kwargs["storage_pointer"] == ""
+        saved = _saved(runner)
+        assert saved["ipfs_cid"] is None
 
     def test_reveal_without_trace_id_anchors_nothing(self, runner_env):
         """#714: no commitment => no anchor at all, never a v1 publishTrace stand-in.
@@ -541,3 +544,28 @@ class TestLegacyPublishCallSitesStayGone:
             "agent_runner.py must anchor via commit()/reveal() only (#714); "
             f"found legacy publishTrace call site(s): {offenders}"
         )
+
+
+class TestPinPathStaysGone:
+    """#1526: reveal is hash-only. A future edit that reimports the pin client
+    or calls a pin function on the tick path fails here instead of silently
+    shipping a dead pin we would then claim.
+    """
+
+    def test_agent_runner_does_not_import_or_call_a_pin_client(self):
+        from pathlib import Path
+
+        source = Path(__file__).resolve().parents[1] / "archimedes" / "chain" / "agent_runner.py"
+        text = source.read_text(encoding="utf-8")
+        needles = (
+            "provenance_publisher",
+            "pinata_client",
+            "pin_public_provenance",
+            "pin_json",
+        )
+        offenders = [
+            f"{n}: {line.strip()}"
+            for n, line in enumerate(text.splitlines(), start=1)
+            if any(needle in line for needle in needles)
+        ]
+        assert offenders == [], f"agent_runner.py must reveal hash-only (#1526); found pin-path residue: {offenders}"

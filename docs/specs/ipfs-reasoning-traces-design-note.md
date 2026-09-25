@@ -1,6 +1,17 @@
 # IPFS-Pinned Reasoning Traces — Design Note
 
-> **Status:** Design note, not a spec. Written 2026-05-20 after observing
+> **status:** archived (design note, never a spec)
+> **owner:** Dan Browne
+> **updated:** 2026-09-01
+> **superseded-by:** [`../adr/ipfs-pinning-not-live.md`](../adr/ipfs-pinning-not-live.md)
+>
+> **ARCHIVED 2026-09-01.** This note proposed pinning traces to IPFS via Pinata.
+> The pin client shipped later as code, but `PINATA_JWT` was never injected into
+> prod ECS secrets, so pinning never ran. #1526 removed the dead path. The
+> live reveal is hash-only (empty `storagePointer`). Kept so the alternatives
+> table and pricing notes remain readable; do not implement from this page.
+>
+> **Status (original):** Design note, not a spec. Written 2026-05-20 after observing
 > Rosetta-Alpha's hash → IPFS → on-chain pattern. Not implemented yet; this
 > note exists to make the call before we build.
 >

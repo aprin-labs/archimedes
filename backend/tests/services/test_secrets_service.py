@@ -214,9 +214,10 @@ class TestListSsmParameters:
     """Tests for the diagnostic list_ssm_parameters helper."""
 
     @patch("boto3.client")
-    def test_returns_param_names(self, mock_boto3):
+    def test_returns_param_names(self, mock_boto3, monkeypatch):
         from archimedes.services.secrets_service import list_ssm_parameters
 
+        monkeypatch.setenv("AWS_SSM_PATH_PREFIX", "/archimedes/prod/")
         mock_client = MagicMock()
         mock_client.get_parameters_by_path.return_value = {
             "Parameters": [
@@ -230,10 +231,11 @@ class TestListSsmParameters:
         assert names == ["/archimedes/prod/SECRET_A", "/archimedes/prod/SECRET_B"]
 
     @patch("boto3.client")
-    def test_returns_empty_on_error(self, mock_boto3):
+    def test_returns_empty_on_error(self, mock_boto3, monkeypatch):
         from archimedes.services.secrets_service import list_ssm_parameters
         from botocore.exceptions import ClientError
 
+        monkeypatch.setenv("AWS_SSM_PATH_PREFIX", "/archimedes/prod/")
         mock_boto3.return_value.get_parameters_by_path.side_effect = ClientError(
             {"Error": {"Code": "InternalError", "Message": "oops"}},
             "GetParametersByPath",
@@ -241,3 +243,21 @@ class TestListSsmParameters:
 
         names = list_ssm_parameters()
         assert names == []
+
+    @patch("boto3.client")
+    def test_blank_prefix_does_not_fall_back_to_the_production_path(self, mock_boto3):
+        """#1044, diagnostic path. This helper used to default to
+        ``_DEFAULT_PREFIX = "/archimedes/prod/"`` when AWS_SSM_PATH_PREFIX was
+        unset, so a bare ``list_ssm_parameters()`` from a developer shell with
+        ambient AWS credentials enumerated the real production parameter store
+        — the same ambient-credential promotion the load path closed, left open
+        one function below it. Both tests above passed *because* of that
+        fallback, which is what made it invisible.
+
+        Asserted on the boto3 client, not just the return value: an
+        implementation that built the client and then discarded the result
+        would still have talked to production."""
+        from archimedes.services.secrets_service import list_ssm_parameters
+
+        assert list_ssm_parameters() == []
+        mock_boto3.assert_not_called()

@@ -203,10 +203,14 @@ class TestPoolCorrelationDSR:
         # A materially correlated pool should show a REAL relaxation somewhere, not a no-op.
         assert any(p > b for b, p in zip(baseline_p, patched_p, strict=True))
 
-    def test_correlated_pool_uses_n_eff_below_nominal_count(self):
-        """Acceptance criterion #1: the society DSR uses N_eff < N + library_size for a
-        correlated pool. Cross-check via compute_dsr directly at N_eff vs. the nominal
-        count, on the same series the patch would have used."""
+    def test_correlated_pool_deflates_less_than_the_nominal_count(self):
+        """Acceptance criterion #1 (#822): a correlated pool must deflate LESS than the
+        same pool treated as independent. Cross-check via compute_dsr directly at the
+        measured ρ̄ vs. ρ̄=0, on the same series the patch would have used.
+
+        Asserts the direction only, which is what #822 asked for and what holds under
+        the ``√(1−ρ̄)`` shrinkage #1559 installed. Named for an ``N_eff`` mechanism
+        until 2026-08-31; that form never was the correlated ``E[max]`` (see #1558)."""
         from archimedes.services.rigor_evaluator import compute_average_pairwise_correlation, compute_dsr
 
         series_list = self._correlated_pool(n=5, rho_target=0.75)
@@ -242,7 +246,7 @@ class TestPoolCorrelationDSR:
     def test_independent_pool_is_a_near_noop(self):
         """A genuinely independent pool (ρ̄ ≈ 0) should leave the DSR verdict close to the
         approach-A baseline — the correction only bites when candidates are actually
-        correlated, consistent with N_eff → N as ρ̄ → 0."""
+        correlated, consistent with ``√(1−ρ̄) → 1`` as ρ̄ → 0."""
         series_list = self._independent_pool(n=5)
         candidates = [_candidate(f"cand_{i}", s, self._NUM_TRIALS) for i, s in enumerate(series_list)]
         baseline_p = [c.rigor_verdict["dsr_p_value"] for c in candidates]

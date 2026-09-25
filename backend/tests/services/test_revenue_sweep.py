@@ -27,6 +27,18 @@ RECIPIENT = "0xffa7abba5f17cb8471ebf150bf808bd6fb8856c1"
 WALLET_ID = "af3e1cf6-76a3-55db-911a-b356860058e4"
 
 
+@pytest.fixture(autouse=True)
+def _not_halted(monkeypatch):
+    """Every test in this module runs un-halted unless it says otherwise.
+
+    Hermetic requirement, not tidiness: PAYMENTS_HALT (#1240) now short-circuits
+    sweep_revenue before any Circle call, so a developer whose shell or .env
+    carries PAYMENTS_HALT=true would see every sweep assertion here fail for a
+    reason that has nothing to do with what it is testing.
+    """
+    monkeypatch.delenv("PAYMENTS_HALT", raising=False)
+
+
 def _balances(available_units: int):
     b = MagicMock()
     b.available = available_units
@@ -148,6 +160,118 @@ class TestSweep:
             out = await rs.check_revenue()
         assert out["available_usdc"] == "12.500000"
         client.withdraw.assert_not_awaited()
+
+
+class TestPaymentsHalt:
+    """#1240 kill switch on the platform revenue sweep.
+
+    This module documents itself as deliberately independent of
+    PAYMENTS_DRY_RUN — that switch asks "may we charge a user?", and the sweep
+    moves the platform's own already-settled funds. PAYMENTS_HALT asks the
+    different question "may a Circle call move USDC right now?", and
+    ``GatewayClient.withdraw`` (burn intent -> on-chain gatewayMint) plainly
+    does. So the independence stops here.
+
+    Both entry points are covered by gating the callee: the unattended
+    ``revenue_sweep_loop`` tick and the operator CLI both reach
+    ``sweep_revenue``. ``check_revenue`` deliberately keeps working — an
+    operator mid-incident needs to read the balance.
+    """
+
+    async def test_halt_true_refuses_before_any_circle_call(self, monkeypatch, caplog):
+        monkeypatch.setenv("GENERATION_PAYMENT_RECIPIENT", RECIPIENT)
+        monkeypatch.setenv("REVENUE_WALLET_ID", WALLET_ID)
+        monkeypatch.setenv("PAYMENTS_HALT", "true")
+        client = FakeGatewayClient(12_500_000)  # $12.50 — well over threshold
+        with (
+            patch.object(rs, "_client", return_value=client) as make_client,
+            caplog.at_level("WARNING"),
+        ):
+            out = await rs.sweep_revenue()
+
+        assert out["swept"] is False
+        assert out["halted"] is True
+        assert "PAYMENTS_HALT" in out["reason"]
+        assert "PAYMENTS_HALT" in caplog.text
+        # BEFORE any Circle call: the client is never even constructed, so
+        # neither the balance read nor the withdraw can have happened.
+        make_client.assert_not_called()
+        assert client.withdraw_calls == []
+
+    async def test_halt_false_sweeps_the_same_balance(self, monkeypatch):
+        """Adversarial companion to the test above. Identical configuration and
+        identical balance, with PAYMENTS_HALT unset, DOES withdraw — so the
+        refusal above is proven to come from the switch and not from the
+        threshold, the reserve, or some unrelated always-off path."""
+        monkeypatch.setenv("GENERATION_PAYMENT_RECIPIENT", RECIPIENT)
+        monkeypatch.setenv("REVENUE_WALLET_ID", WALLET_ID)
+        monkeypatch.delenv("PAYMENTS_HALT", raising=False)
+        monkeypatch.delenv("GATEWAY_WITHDRAW_FEE_RESERVE_USDC", raising=False)
+        client = FakeGatewayClient(12_500_000)
+        with patch.object(rs, "_client", return_value=client):
+            out = await rs.sweep_revenue()
+
+        assert out["swept"] is True
+        assert client.last_withdraw["amount"] == "12.450000"
+
+    async def test_only_the_truthy_spellings_halt(self, monkeypatch):
+        """A money switch must not halt on a typo, and must not fail OPEN on
+        one either. "false"/"off"/"" leave the sweep live; the three documented
+        truthy spellings stop it."""
+        monkeypatch.setenv("GENERATION_PAYMENT_RECIPIENT", RECIPIENT)
+        monkeypatch.setenv("REVENUE_WALLET_ID", WALLET_ID)
+        for value, halts in (
+            ("true", True),
+            ("TRUE", True),
+            (" yes \n", True),
+            ("1", True),
+            ("false", False),
+            ("off", False),
+            ("", False),
+        ):
+            monkeypatch.setenv("PAYMENTS_HALT", value)
+            client = FakeGatewayClient(12_500_000)
+            with patch.object(rs, "_client", return_value=client):
+                out = await rs.sweep_revenue()
+            assert out["swept"] is not halts, f"PAYMENTS_HALT={value!r}"
+
+    async def test_check_revenue_still_reads_while_halted(self, monkeypatch):
+        """Reading a balance moves nothing. Halting it would blind the operator
+        at exactly the moment they flipped the switch."""
+        monkeypatch.setenv("GENERATION_PAYMENT_RECIPIENT", RECIPIENT)
+        monkeypatch.setenv("REVENUE_WALLET_ID", WALLET_ID)
+        monkeypatch.setenv("PAYMENTS_HALT", "true")
+        client = _mock_client(12_500_000)
+        with patch.object(rs, "_client", return_value=client):
+            out = await rs.check_revenue()
+        assert out["available_usdc"] == "12.500000"
+        client.withdraw.assert_not_awaited()
+
+    async def test_the_scheduler_loop_reaches_the_gate(self, monkeypatch):
+        """The loop calls sweep_revenue, so gating the callee covers the
+        unattended hourly path too — pinned rather than assumed, because a loop
+        that grew its own withdraw call would silently escape the switch."""
+        monkeypatch.setenv("PAYMENTS_HALT", "true")
+        seen = {}
+
+        async def _fake_sleep(_seconds):
+            raise StopAsyncIteration  # break out after exactly one tick
+
+        real_sweep = rs.sweep_revenue
+
+        async def _recording_sweep(*args, **kwargs):
+            seen["outcome"] = await real_sweep(*args, **kwargs)
+            return seen["outcome"]
+
+        with (
+            patch.object(rs, "sweep_revenue", _recording_sweep),
+            patch.object(rs.asyncio, "sleep", _fake_sleep),
+            patch.object(rs, "_client", side_effect=AssertionError("no Circle client while halted")),
+            pytest.raises(StopAsyncIteration),
+        ):
+            await rs.revenue_sweep_loop()
+
+        assert seen["outcome"]["halted"] is True
 
 
 def test_threshold_parse_defensive(monkeypatch):

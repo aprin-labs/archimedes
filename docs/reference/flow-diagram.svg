@@ -241,7 +241,7 @@
   <text x="802" y="706" class="b t2">commit(hash, intent) pre-trade</text>
   <text x="802" y="720" class="b t2">reveal(content) re-hashed on-chain</text>
   <text x="802" y="734" class="b t1">commit &lt; trade &lt; reveal</text>
-  <text x="802" y="752" class="c t3">full traces stored off-chain (IPFS)</text>
+  <text x="802" y="752" class="c t3">full traces stored off-chain (db)</text>
 
   <rect x="1020" y="668" width="152" height="46" rx="8" class="box"/>
   <text x="1030" y="686" class="blue" font-size="10.5" font-weight="600">StrategyRegistry</text>

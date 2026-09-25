@@ -7,7 +7,7 @@
 
 One row per router `backend/archimedes/main.py` actually mounts via
 `app.include_router(...)`, derived directly from that block (currently lines
-493-528 — read the live file, this doc is not the source of truth for line
+520-555 — read the live file, this doc is not the source of truth for line
 numbers). This is a **census**, not a tutorial: it exists so a router can
 never be registered without a corresponding row, enforced by
 [`backend/tests/test_api_surface_status.py`](../backend/tests/test_api_surface_status.py),
@@ -16,7 +16,7 @@ suite the moment they diverge — add a router here, or the build breaks.
 
 For the *detailed* per-route contract (request/response shapes, every error
 code, `curl` examples) see [`docs/api/README.md`](api/README.md), which
-covers 15 of the 30 rows below. This doc's job is completeness across the
+covers 14 of the 30 rows below. This doc's job is completeness across the
 full surface, not depth on any one router — where a detailed doc exists, the
 "Documented in" column links to it; where it says `—`, that router has no
 per-surface reference doc yet (a real gap, not an oversight to paper over).
@@ -56,7 +56,6 @@ per-surface reference doc yet (a real gap, not an oversight to paper over).
 | `/api/swap` | `archimedes.api.swap_routes.swap_router` | public | live | [`api/vaults-and-chain.md`](api/vaults-and-chain.md) |
 | `/api/config` | `archimedes.api.config_routes.config_router` | public | live | [`api/vaults-and-chain.md`](api/vaults-and-chain.md) |
 | `/api/agent` | `archimedes.api.agent_routes.agent_router` | mixed (public / internal) | live | — |
-| `/api/vaults` | `archimedes.api.chat_routes.chat_router` | mixed (public / session / internal) | live | [`api/chat.md`](api/chat.md) |
 | `/api/corpus` | `archimedes.api.corpus_routes.corpus_router` | public | degraded-capable | — |
 | `/api/paper` | `archimedes.api.paper_routes.paper_router` | session | live | [`api/paper-trading.md`](api/paper-trading.md) |
 | `/api/explore` | `archimedes.api.explore_routes.explore_router` | public | live | — |
@@ -68,6 +67,7 @@ per-surface reference doc yet (a real gap, not an oversight to paper over).
 | `/api/selection-bias` | `archimedes.api.selection_bias_routes.selection_bias_router` | public | live | [`api/strategies-and-rigor.md`](api/strategies-and-rigor.md) |
 | `/api/rigor` | `archimedes.api.rigor_verify_routes.rigor_verify_router` | session | live | — |
 | `/api/account` | `archimedes.api.account_usage_routes.account_usage_router` | session | live | — |
+| `/api/account/keys` | `archimedes.api.api_key_routes.api_key_router` | session | live | [`api/api-keys.md`](api/api-keys.md) |
 | `/api/payments` | `archimedes.api.payment_routes.payment_router` | session | live | [`api/generation.md`](api/generation.md) |
 | `/api/papers` | `archimedes.api.papers_routes.papers_router` | public | live | — |
 | `/api/user` | `archimedes.api.user_routes.user_router` | session | live | — |
@@ -79,10 +79,10 @@ per-surface reference doc yet (a real gap, not an oversight to paper over).
 | `/api/metrics/private` | `archimedes.api.metrics_private_routes.metrics_private_router` | private-admin | degraded-capable | [`api/admin-private.md`](api/admin-private.md) |
 | `/api/leaderboard` | `archimedes.api.leaderboard_routes.leaderboard_router` | public | degraded-capable | [`api/leaderboard-and-metrics.md`](api/leaderboard-and-metrics.md) |
 
-30 rows, one per `include_router` call in `main.py` (two calls each mount
+31 rows, one per `include_router` call in `main.py` (two calls each mount
 `generate_routes.py`'s pair of routers and `auth_siwe.py`'s legacy router
-under a shared prefix with a sibling — see notes). 15/30 have a detailed doc
-in `docs/api/`; the other 15 are real documentation debt, not an oversight —
+under a shared prefix with a sibling — see notes). 15/31 have a detailed doc
+in `docs/api/`; the other 16 are real documentation debt, not an oversight —
 tracked here rather than silently absent.
 
 ## Notes — mixed auth, degraded paths, and name collisions
@@ -93,13 +93,23 @@ tracked here rather than silently absent.
   (session + a verified linked wallet) — each spends backend-signer gas or
   writes state.
 - **`strategies_router`** — curated/generated reads are public, with optional
-  personalization via `get_current_user` (never mandatory). `GET /generated`,
-  `PATCH /{strategy_id}`, `POST /generate`, and `GET /generate/{job_id}`
-  require `require_current_user`. `POST /generate` is the second live,
-  LLM-spending generation endpoint flagged in
-  [`docs/sprint/cluster-7-ui-surface.md`](sprint/cluster-7-ui-surface.md) — no
-  UI consumer as of this writing; cluster-4 routes it through the meter
-  rather than deleting it.
+  personalization via `get_current_user` (never mandatory). `GET /generated`
+  and `PATCH /{strategy_id}` require `require_current_user`. **This router
+  hosts no generation endpoint.** `POST /generate` and `GET
+  /generate/{job_id}` — the second live, LLM-spending generation path flagged in
+  [`docs/sprint/cluster-7-ui-surface.md`](sprint/cluster-7-ui-surface.md) — were
+  deleted on 2026-08-31; generation is `POST /api/generate/start` only, guarded
+  by `backend/tests/test_sole_generation_route_guard.py`. Historic context: it
+  never had a UI consumer, and cluster-4 chose to route it through the
+  generation quota meter rather than delete it; deletion is the resolution.
+- **`api_key_router`** — `session`, and **stricter than every other `session`
+  row here.** Since #1653 D3 an `Authorization: Bearer archim_…` API key
+  satisfies `require_current_user` everywhere else in this table; these three
+  routes require the Better Auth *cookie* specifically
+  (`require_session_credential`) and answer `403` to a key. A key that could
+  mint keys would issue itself successors, and revoking the token an operator
+  knows about would not end the compromise. Shares the `/api/account` prefix
+  with `account_usage_router`; the two never collide (`/usage` vs `/keys`).
 - **`traces_router`** — reads are public. `POST /publish` requires
   `X-Internal-Agent-Key` (`require_internal_agent_key`) — the agent runner
   only, never the browser.
@@ -109,12 +119,6 @@ tracked here rather than silently absent.
   `agent_manifest_router` on purpose — same URL space, two different
   "agent" concepts (the on-chain trading agent vs. an external AI agent
   consuming the product); see `agent_manifest_routes.py`'s module docstring.
-- **`chat_router`** — reads are public. `POST /{address}/chat` requires a
-  linked wallet (session). `POST /{address}/chat/rebalance` and `POST
-  /{address}/chat/regime-change` require `X-Internal-Agent-Key` — system
-  events posted by the agent runner, not a user action. Mounts at
-  `/api/vaults`, the same prefix as `vaults_router` (nested under a vault
-  address) — the two are separate routers, not a duplicate registration.
 - **`corpus_router`** — `GET /graph` and the `/kg/*` routes return `503`
   ("pipeline not yet run" / "KG store unavailable") when the knowledge-graph
   pipeline hasn't built, which is the current production state (see

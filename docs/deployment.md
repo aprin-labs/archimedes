@@ -1,11 +1,29 @@
 # Deployment — local vs production (one compose file, two topologies)
 
+> **status:** reference
+> **owner:** Dan Browne
+> **updated:** 2026-08-31
+> **superseded-by:** [`local-vs-prod.md`](local-vs-prod.md) (for the local-vs-production contract only)
+
 > Written 2026-06-28, alongside the Aurora/ElastiCache cutover. Resolves the
 > drift between "simple `docker compose up` locally" and "how it runs in prod."
 
+> **⚠️ Correction, 2026-08-31 (issue #1044).** Everything below describing the
+> **local** side, the `localdb` profile gate, and the nginx runtime-DNS fix is still
+> accurate. Everything describing the **production** side is the retired EC2 era:
+> production no longer runs `docker compose` at all. `deploy.yml` registers an ECS
+> task definition and calls `ecs update-service`; `deploy-runners.yml` does
+> `docker pull` + `systemctl restart` over SSM for the oracle/agent runners. The
+> "Production deploy flow" and "One-time step on the live box" sections below are
+> kept for their incident history, not as instructions — do not execute them. See
+> [`adr/ec2-to-ecs-fargate-cutover.md`](adr/ec2-to-ecs-fargate-cutover.md) for the
+> decision and [`local-vs-prod.md`](local-vs-prod.md) for the current contract.
+
 ## The two topologies
 
-| | Local dev | Production (single EC2) |
+*(The right-hand column is the pre-Fargate topology — see the correction above.)*
+
+| | Local dev | Production (single EC2 — **retired**) |
 |---|---|---|
 | Command | `docker compose up -d` | `docker compose up -d --force-recreate --remove-orphans` (via `deploy.yml`) |
 | Data stores | **in-stack** `postgres` + `redis` containers | **managed** Aurora Serverless v2 + ElastiCache |

@@ -77,8 +77,10 @@ env:
   # Matches infra/runner_ec2.tf's `aws_instance.runner` tag (Name =
   # "${var.project_name}-runner" = "archimedes-runner" with the default
   # project_name). Resolved to an instance id at runtime, not hardcoded —
-  # unlike deploy.yml's EC2_INSTANCE_ID literal, this box doesn't exist yet
-  # at the time this workflow is authored, so there is no id to hardcode.
+  # this box didn't exist yet when the workflow was authored, so there was no
+  # id to hardcode. That turned out to be the durable choice: deploy.yml's
+  # hardcoded EC2_INSTANCE_ID outlived its instance and was deleted as dead
+  # env naming a decommissioned box (2026-08-31).
   RUNNER_INSTANCE_NAME_TAG: archimedes-runner
 
 jobs:

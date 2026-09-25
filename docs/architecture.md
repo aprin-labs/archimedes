@@ -1,6 +1,18 @@
 # Archimedes — System Architecture Map
 
+> **status:** current
+> **owner:** Dan Browne
+> **updated:** 2026-09-01
+> **superseded-by:** —
+
 > Identity and deploy topology amended for Better Auth account ownership (2026-08). (2026-07-14)
+
+> **Amended 2026-08-31** for the 2026-08-30/31 merge train — the deltas are marked
+> **(2026-08-31)** inline: the leaderboard's research/live-paper split (#1563), the
+> ratified `num_trials` self-containment convention (#1560), the four-state `paper_rag`
+> signal and what prod actually reports, and `deploy.yml`'s explicit rollout verdict
+> (#1532/#1544). §9's disagreement list is re-scored in the same pass. Not re-audited this
+> round: §§3–4 flows and the §1.7 contract census.
 
 > Commissioned for the Architecture-page redesign. Every claim below is grounded in a file
 > path in this repository. All paths are relative to the repository root unless noted. Facts from the 2026-07-14 merge train are marked **(PR #n, merged 2026-07-14)**; the only still-open PR is noted as such. Facts were
@@ -34,7 +46,7 @@
                      └──────────────────────────────────────────────────────────────┘
 ```
 
-Product spine (canonical, [`docs/user-stories.md`](user-stories.md)): **generate → rigor-gate → execute → monitor → explore**.
+Product spine (canonical, [`docs/user-stories.md`](user-stories.md)): **generate → rigor-gate → (roadmap: execute → monitor) → explore**. Generate, rigor-gate, and explore are shipped. Vault execute/monitor is roadmap.
 
 ---
 
@@ -49,11 +61,11 @@ canvas `#09090B`).
 | Component | Path | Role |
 |---|---|---|
 | Router / page shell | [`ui/src/App.jsx`](../ui/src/App.jsx) | Path-based routes: landing, explore, leaderboard, corpus, architecture, generate, library, `strategy/:id`, portfolio, reasoning, learnings, marketplace, publish, subscriptions, insights, vault-detail |
-| Sidebar nav | [`ui/src/components/Layout.jsx`](../ui/src/components/Layout.jsx) | Groups: Discover (Explore/Leaderboard/Corpus/Architecture), Build (Generate/Library), My Desk (Portfolio/Reasoning/Learnings), Marketplace (Marketplace/Publish/Subscriptions), Insights |
+| Sidebar nav | [`ui/src/navConfig.js`](../ui/src/navConfig.js) (data), [`ui/src/components/Layout.jsx`](../ui/src/components/Layout.jsx) (render) | **(2026-08-31, #1641)** Groups: Strategy (Explore/Corpus/Generate/Library), Position (Paper Trading/Reasoning/Leaderboard, plus flag-hidden Portfolio/Quant Lab/Learnings), Market (Marketplace/Publish/Subscriptions — flag-hidden), Ops (Insights/Account). Every entry is labelled — there is no ungrouped item. Architecture is **not** here: it is public-only (`/architecture`, #1370/#1400) |
 | Generate surface | [`ui/src/components/Generate.jsx`](../ui/src/components/Generate.jsx), `GenerationStream.jsx`, `FusionResult.jsx`, `RejectedCandidates.jsx`, `RigorStrictnessControl.jsx`, `ModelCostPanel.jsx` | Brief input → SSE stream of debate progress → K=1 winner + considered-rejects + rigor verdict + model cost picker |
 | Strategy passport | [`ui/src/components/StrategyPassport.jsx`](../ui/src/components/StrategyPassport.jsx) | Paper anchors, rigor verdict cards, backtest vs paper-claim deltas, trace verify |
 | Vault deploy | [`ui/src/components/CreateVaultModal.jsx`](../ui/src/components/CreateVaultModal.jsx) (lines 155–195, 386–388), `DepositFlow.jsx` | **Client-side, user signs everything**: `createVault()` → `setAgent()` (2 sigs), then the 3-step approve → deposit → allocate flow |
-| Portfolio / vaults | [`ui/src/components/Portfolio.jsx`](../ui/src/components/Portfolio.jsx), `VaultDetail.jsx`, `VaultChat.jsx` | On-chain reads via viem against `NEW_CONTRACTS.vaultFactory` |
+| Portfolio / vaults | [`ui/src/components/Portfolio.jsx`](../ui/src/components/Portfolio.jsx), `VaultDetail.jsx` | On-chain reads via viem against `NEW_CONTRACTS.vaultFactory` |
 | Trace viewer / verify | [`ui/src/components/Reasoning.jsx`](../ui/src/components/Reasoning.jsx) | Recompute keccak hash, check against `traceRegistry` on-chain |
 | Marketplace | [`ui/src/components/MarketplacePage.jsx`](../ui/src/components/MarketplacePage.jsx), `PublishPage.jsx`, `SubscriptionsPage.jsx`, `StrategyDetailPage.jsx` | Publish / subscribe / earnings withdraw surfaces |
 | Corpus | [`ui/src/components/CorpusExplorer.jsx`](../ui/src/components/CorpusExplorer.jsx), `CorpusGraph.jsx`, `CorpusKG.jsx` | Renders real KB artifacts; explicit empty state on 503 (pipeline not yet run) |
@@ -74,7 +86,8 @@ canvas `#09090B`).
 | Corpus | [`api/corpus_routes.py`](../backend/archimedes/api/corpus_routes.py) | Honest 503 ("pipeline not yet run") until real KB artifacts exist — no metadata-synthesized graphs |
 | Config | [`api/config_routes.py`](../backend/archimedes/api/config_routes.py) | `GET /api/config/contracts` — serves the contract addresses from the ECS task env ([`infra/ecs.tf`](../infra/ecs.tf)) |
 | Agent manifest | [`api/agent_manifest_routes.py`](../backend/archimedes/api/agent_manifest_routes.py) | Agent-discoverability surface (`/api/agent/manifest`) per [`docs/agent-api.md`](agent-api.md) |
-| Others | `explore_routes.py` (281-synth universe), `leaderboard_routes.py`, `portfolio_routes.py`, `traces_routes.py`, `regime_routes.py`, `proposals_routes.py` (owner-scoped), `user_routes.py`, `metrics_routes.py`, `risk_routes.py`, `swap_routes.py`, `papers_routes.py`, `chat_routes.py` | Product surfaces for the spine |
+| Leaderboard | [`api/leaderboard_routes.py`](../backend/archimedes/api/leaderboard_routes.py) | **(2026-08-31, #1563)** Two boards, never mixed: `GET /api/leaderboard` is 100% backtest-era and stamps every row `performance_basis="backtest_research"`; `GET /api/leaderboard/live-paper` returns rows only for real deployments, and the "is this ledger real" test lives in exactly one place, `build_live_paper_leaderboard` |
+| Others | `explore_routes.py` (281-synth universe), `portfolio_routes.py`, `traces_routes.py`, `regime_routes.py`, `proposals_routes.py` (owner-scoped), `user_routes.py`, `metrics_routes.py`, `risk_routes.py`, `swap_routes.py`, `papers_routes.py` | Product surfaces for the spine |
 | Middleware | [`api/telemetry_middleware.py`](../backend/archimedes/api/telemetry_middleware.py), [`api/funnel_middleware.py`](../backend/archimedes/api/funnel_middleware.py), [`api/limiter.py`](../backend/archimedes/api/limiter.py), [`api/auth_guard.py`](../backend/archimedes/api/auth_guard.py) | Telemetry, visitor funnel, rate limits, auth |
 
 `/health` + `/api/health` (`main.py:495-706`) expose honesty flags including `corpus_kg_built`
@@ -92,7 +105,7 @@ the machine-readable claim-integrity surface the new page should read from.
 | Component | Path | Role |
 |---|---|---|
 | Orchestrator | [`agents/generation_pipeline.py`](../backend/archimedes/agents/generation_pipeline.py) | SSE lifecycle: `job_queued → brief_validated → pipeline_selected("debate") → candidates_selected → candidate_drafted/evaluated → best_selected → trace_hashed → persisted → done`. Debate is the **sole** live pipeline (Phase 3, issue #834); no LLM or empty corpus → explicit `GENERATION_UNAVAILABLE`, never a silent fallback |
-| Debate engine | [`agents/debate_engine.py`](../backend/archimedes/agents/debate_engine.py) | Proposer pool (fusion proposals across regime-biased evidence sets) → adversarial bull/bear round (never gates) → **C-rigor**: deterministic backtest of every survivor (`evaluate_fusion_spec`, 0 tokens) with `num_trials` counting pool + library → **C-null**: must beat buy-and-hold net of cost or first-class **ABSTAIN** → K=1 winner + considered-rejects |
+| Debate engine | [`agents/debate_engine.py`](../backend/archimedes/agents/debate_engine.py) | Proposer pool (fusion proposals across regime-biased evidence sets) → adversarial bull/bear round (never gates) → **C-rigor**: deterministic backtest of every survivor (`evaluate_fusion_spec`, 0 tokens) with `num_trials = _society_num_trials(pool_size)` — **(2026-08-31)** the strategy's *own* pool, not pool + library (decouple #2, ratified [ADR](adr/num-trials-self-containment.md), #1560) → **C-null**: must beat buy-and-hold net of cost or first-class **ABSTAIN** → K=1 winner + considered-rejects |
 | Fusion proposer | [`agents/strategy_fusion.py`](../backend/archimedes/agents/strategy_fusion.py) | Multi-paper synthesis; `select_candidates` = the keyword/asset-class retrieval stage |
 | Strategy Architect | `agents/strategy_architect.py` | **Removed (PR #1074, merged 2026-07-14)**; debate society is the sole generation path |
 | num_trials self-containment | — | DSR multiple-testing count is self-contained per strategy (PR #1075, merged 2026-07-14; convention `self_contained_v2`) |
@@ -103,17 +116,17 @@ the machine-readable claim-integrity surface the new page should read from.
 | Concern | Path | Role |
 |---|---|---|
 | LLM seam | [`services/llm_backend.py`](../backend/archimedes/services/llm_backend.py) | Multi-provider **Converse** backend: AWS Bedrock **Amazon Nova Micro** default; BYOK; local-Ollama single-user path. `response.model` is provenance-of-record |
-| Corpus retrieval | [`services/paper_rag.py`](../backend/archimedes/services/paper_rag.py) | Stage-2 **query-time** rerank over the keyword-filtered candidates — nothing is read from a stored embedding index (none exists). `all-MiniLM-L6-v2` when the model loads in-process (`paper_rag: live`), lexical TF-IDF cosine otherwise (`paper_rag: degraded` — the prod state, #778). 150-candidate cap, bounded embedding cache, `torch.set_num_threads(1)` (the #885 outage guardrails) |
-| Corpus ingest | [`services/corpus_service.py`](../backend/archimedes/services/corpus_service.py), [`services/arxiv_corpus.py`](../backend/archimedes/services/arxiv_corpus.py), [`services/arxiv_pipeline.py`](../backend/archimedes/services/arxiv_pipeline.py) | 10,000-paper JSONL manifest seed into Postgres |
+| Corpus retrieval | [`services/paper_rag.py`](../backend/archimedes/services/paper_rag.py) | Stage-2 **query-time** rerank over the keyword-filtered candidates — nothing is read from a stored embedding index (none exists). `all-MiniLM-L6-v2` when the model loads in-process, lexical TF-IDF cosine otherwise. **(2026-08-31)** `paper_rag` has four states — `live` (a model object is loaded in *this* process) · `ready` (weights on disk, nothing has retrieved yet — deliberately **not** live, since presence on disk is not proof) · `degraded` (load attempted and failed) · `disabled`. Prod currently reports `ready`, and the two claims are published separately so neither can stand in for the other: `paper_rerank_model_live` is the process fact, `corpus_embedded_at_rest` the corpus one (false, derived from the schema — #1488, #778). 150-candidate cap, bounded embedding cache, `torch.set_num_threads(1)` (the #885 outage guardrails) |
+| Corpus ingest | [`services/corpus_service.py`](../backend/archimedes/services/corpus_service.py), [`services/arxiv_corpus.py`](../backend/archimedes/services/arxiv_corpus.py), [`services/arxiv_pipeline.py`](../backend/archimedes/services/arxiv_pipeline.py) | JSONL manifest seed into Postgres (live count: `GET /health` `corpus_papers` / `corpus_db_count`) |
 | KB pipeline | [`services/kb_runner.py`](../backend/archimedes/services/kb_runner.py), [`services/kb_artifacts.py`](../backend/archimedes/services/kb_artifacts.py) | Scheduled runner triggering SPECTER2 embeddings / HDBSCAN clusters / REBEL+SciSpacy KG builds (the "KB pipeline"); artifacts served by `corpus_routes` |
 | Rigor gate | [`services/live_rigor_gate.py`](../backend/archimedes/services/live_rigor_gate.py) | **Single source of truth** for `passes_rigor_gate`: four-state pass/fail/pending/**degenerate**, computed live from persisted real returns — never a cached boolean (issue #821, the #1 rule) |
-| Rigor math | [`services/rigor_evaluator.py`](../backend/archimedes/services/rigor_evaluator.py), [`services/_rigor_helpers.py`](../backend/archimedes/services/_rigor_helpers.py), [`services/sharpe_statistics.py`](../backend/archimedes/services/sharpe_statistics.py), [`services/rigor_profiles.py`](../backend/archimedes/services/rigor_profiles.py), [`services/rigor_cache.py`](../backend/archimedes/services/rigor_cache.py) | DSR, PBO, walk-forward OOS, look-ahead audit; strictness profiles |
+| Rigor math | [`services/rigor_evaluator.py`](../backend/archimedes/services/rigor_evaluator.py), [`services/_rigor_helpers.py`](../backend/archimedes/services/_rigor_helpers.py), [`services/rigor_profiles.py`](../backend/archimedes/services/rigor_profiles.py), [`services/rigor_cache.py`](../backend/archimedes/services/rigor_cache.py) | DSR, PBO, walk-forward OOS, look-ahead audit; strictness profiles |
 | Strategy DSL | [`services/strategy_dsl.py`](../backend/archimedes/services/strategy_dsl.py), [`services/dsl_to_backtrader.py`](../backend/archimedes/services/dsl_to_backtrader.py), [`services/strategy_signal_evaluator.py`](../backend/archimedes/services/strategy_signal_evaluator.py) | The persisted, executable strategy spec; DSL → backtrader for evaluation; live signal evaluation for the rebalancer |
 | Portfolio math | [`services/portfolio_constructor.py`](../backend/archimedes/services/portfolio_constructor.py), [`services/portfolio_optimizer.py`](../backend/archimedes/services/portfolio_optimizer.py), [`services/strategy_sizer.py`](../backend/archimedes/services/strategy_sizer.py) (Kelly), [`services/stress_engine.py`](../backend/archimedes/services/stress_engine.py) | Allocation, sizing, six-scenario stress |
-| Regime | [`services/gmm_regime_detector.py`](../backend/archimedes/services/gmm_regime_detector.py) (+ `gmm_model.pkl`), [`services/vix_regime_detector.py`](../backend/archimedes/services/vix_regime_detector.py), [`services/regime_weight_schedule.py`](../backend/archimedes/services/regime_weight_schedule.py) | Market-context input to generation and rebalancing |
+| Regime | [`services/gmm_regime_detector.py`](../backend/archimedes/services/gmm_regime_detector.py) (+ `gmm_model.pkl`), [`services/vix_regime_detector.py`](../backend/archimedes/services/vix_regime_detector.py) | Market-context input to generation and rebalancing |
 | Xia protocols | [`services/embargo_filter.py`](../backend/archimedes/services/embargo_filter.py) (Outcome Embargo), [`services/time_aware_retrieval.py`](../backend/archimedes/services/time_aware_retrieval.py), [`services/source_tracker.py`](../backend/archimedes/services/source_tracker.py), [`chain/v_check.py`](../backend/archimedes/chain/v_check.py) (V_check) | Enforced mechanisms, not guidelines ([`docs/specs/xia-2026-protocols.md`](specs/xia-2026-protocols.md)) |
 | Exactly-once | [`services/runner_lease.py`](../backend/archimedes/services/runner_lease.py) | Redis lease guard — funds-adjacent runners are singletons |
-| Monitoring | [`services/vault_monitor.py`](../backend/archimedes/services/vault_monitor.py), [`services/backtest_scheduler.py`](../backend/archimedes/services/backtest_scheduler.py), [`services/telemetry_store.py`](../backend/archimedes/services/telemetry_store.py) | Vault polling, backtest refresh, telemetry |
+| Monitoring | [`services/vault_monitor.py`](../backend/archimedes/services/vault_monitor.py), [`services/telemetry_store.py`](../backend/archimedes/services/telemetry_store.py) | Vault polling, telemetry. **No backtest refresh** — backtests are frozen evidence, produced once ([ADR](adr/backtests-are-frozen-evidence.md), #1760) |
 | Secrets | [`services/secrets_service.py`](../backend/archimedes/services/secrets_service.py) | Pull-model: SSM Parameter Store SecureStrings at runtime |
 
 ### 1.5 Chain layer — [`backend/archimedes/chain/`](../backend/archimedes/chain)
@@ -123,11 +136,10 @@ the machine-readable claim-integrity surface the new page should read from.
 | RPC client | [`chain/client.py`](../backend/archimedes/chain/client.py) | web3 async client for Arc |
 | Contract loader | [`chain/contracts.py`](../backend/archimedes/chain/contracts.py) | ABIs from [`contracts/abis/`](../contracts/abis) |
 | Executor | [`chain/executor.py`](../backend/archimedes/chain/executor.py) | Reads portfolio state, executes rebalance trades, creates vaults. Signer: **Circle DCW preferred** ([`chain/circle_signer.py`](../backend/archimedes/chain/circle_signer.py)), raw `ARC_AGENT_PRIVATE_KEY` fallback |
-| Trace publisher | [`chain/trace_publisher.py`](../backend/archimedes/chain/trace_publisher.py) | v1 `publishTrace` (legacy/SKIP path) + v1.5 **commit/reveal** temporal binding |
+| Trace publisher | [`chain/trace_publisher.py`](../backend/archimedes/chain/trace_publisher.py) | v1 `publishTrace` (legacy/SKIP path) + v1.5 **commit/reveal** temporal binding. Reveal is hash-only: empty `storagePointer`, no IPFS pin ([ADR](adr/ipfs-pinning-not-live.md)) |
 | Agent runner | [`chain/agent_runner.py`](../backend/archimedes/chain/agent_runner.py) | The rebalance tick loop (default `AGENT_INTERVAL_SECONDS=300`); lease-gated exactly-once; per-vault strategy scoping; V_check gate (arithmetic weights-sum + max-concentration checks — [`chain/v_check.py`](../backend/archimedes/chain/v_check.py)); **commit → trade → reveal** ordering with a commit-guard (the `Phase 1: COMMIT` block onward). Generated-strategy vaults execute their persisted DSL spec (PR #1076, merged 2026-07-14) |
 | Oracle runner | [`chain/oracle_runner.py`](../backend/archimedes/chain/oracle_runner.py), [`chain/oracle_updater.py`](../backend/archimedes/chain/oracle_updater.py) | Periodic price pushes to the per-synth `PriceOracle`s; lease-gated, fails closed |
 | Marketplace publisher | [`chain/strategy_publisher.py`](../backend/archimedes/chain/strategy_publisher.py) | On-chain strategy registration (StrategyRegistry) |
-| IPFS provenance | [`chain/provenance_publisher.py`](../backend/archimedes/chain/provenance_publisher.py), [`chain/pinata_client.py`](../backend/archimedes/chain/pinata_client.py) | Off-chain trace storage pointer for reveal |
 
 ### 1.6 Analytics engine — [`analytics-engine/`](../analytics-engine)
 
@@ -172,7 +184,7 @@ Addresses: [`infra/ecs.tf`](../infra/ecs.tf) env + [`ui/src/config.js`](../ui/sr
 |---|---|---|---|
 | Postgres | **Aurora PostgreSQL 18.3** ([`infra/aurora.tf`](../infra/aurora.tf)) | `postgres:18-alpine` ([`docker-compose.yml`](../docker-compose.yml), `localdb` profile) | Strategies + proposals ([`models/strategy_store.py`](../backend/archimedes/models/strategy_store.py), [`models/strategy_proposal.py`](../backend/archimedes/models/strategy_proposal.py)), backtests + daily returns ([`models/backtest_store.py`](../backend/archimedes/models/backtest_store.py), [`models/daily_returns_store.py`](../backend/archimedes/models/daily_returns_store.py)), traces ([`models/trace.py`](../backend/archimedes/models/trace.py)), corpus ([`models/corpus_store.py`](../backend/archimedes/models/corpus_store.py), [`models/kg.py`](../backend/archimedes/models/kg.py)), vaults, users/identity, marketplace |
 | Redis | **ElastiCache** (TLS-required, [`infra/elasticache.tf`](../infra/elasticache.tf)) | `redis` service | SSE job event logs ([`services/redis_state.py`](../backend/archimedes/services/redis_state.py)), regime state, **runner leases** ([`services/runner_lease.py`](../backend/archimedes/services/runner_lease.py)), marketplace event log ([`marketplace/state.py`](../backend/archimedes/marketplace/state.py)) |
-| S3 | artifact store ([`services/s3_artifact_store.py`](../backend/archimedes/services/s3_artifact_store.py)) | — | Backtest/KB artifacts |
+| S3 | KB artifacts ([`services/kb_artifacts.py`](../backend/archimedes/services/kb_artifacts.py)); backtest-results archive ([`scripts/archive_backtest_results.py`](../backend/archimedes/scripts/archive_backtest_results.py)) | — | Backtest/KB artifacts |
 | KB artifact volume | named volume `archimedes-corpus-artifact`; **EFS (IaC merged, PR #1071; terraform apply pending — #1065)** | same volume | SPECTER2/HDBSCAN/REBEL artifacts |
 | SSM Parameter Store | `/archimedes/prod/*` SecureStrings ([`infra/scripts/setup-ssm-secrets.sh`](../infra/scripts/setup-ssm-secrets.sh)) | `.env` | LLM keys, Circle creds, DB/Redis URLs — pull-model, nothing injected by CI |
 
@@ -187,8 +199,12 @@ See §7 for topology. Terraform: `vpc.tf`, `alb.tf`, `waf.tf`, `cloudfront.tf`, 
 `elasticache.tf`, `ecr.tf`, `ecs.tf` (Fargate task: nginx :8080 + backend :8000 on one ENI),
 `ecs_migrate.tf` (pre-rollout Alembic), `cloudwatch.tf`, legacy `asg.tf`/`ec2_iam.tf`.
 CI: `deploy.yml` (build-in-CI → ECR → migrate → Fargate force-redeploy; OIDC, no long-lived
-keys), `quality-gate.yml`, `contracts-test.yml` (forge), `complexity-gate.yml`,
-`import-guard.yml`, `main-format-guard.yml`, `release-tag.yml`.
+keys — **(2026-08-31, #1532/#1544)** it now polls the service's own `rolloutState` to an
+explicit verdict against a named budget so "slow" and "broken" stop producing the same red,
+probes live `/api/health` through CloudFront to assert the app *answers*, and keys the
+CloudFront invalidation to that verdict), `deploy-runners.yml` (SSM → the runner EC2 +
+kb-runner task-def), `docs-gate.yml`, `quality-gate.yml`, `contracts-test.yml` (forge),
+`complexity-gate.yml`, `import-guard.yml`, `main-format-guard.yml`, `release-tag.yml`.
 Runbook: [`infra/runbooks/ecs-fargate-cutover.md`](../infra/runbooks/ecs-fargate-cutover.md).
 
 ---
@@ -214,7 +230,7 @@ Runbook: [`infra/runbooks/ecs-fargate-cutover.md`](../infra/runbooks/ecs-fargate
 3. **V_check** ([`chain/v_check.py`](../backend/archimedes/chain/v_check.py)) — deterministic arithmetic checks on the target weights dict (sum to 10000 BPS, max single-position concentration, and — only when a caller supplies `cost_benefit_bps`, which none do today — a minimum cost-benefit floor); any failing check aborts the rebalance.
 4. Build the canonical trace and **commit** its keccak hash + trade-intent digest to `ReasoningTraceRegistry` ([`chain/trace_publisher.py`](../backend/archimedes/chain/trace_publisher.py)); the trade arrays used for the commit are reused verbatim for execution.
 5. `Vault.rebalance(trades)` — **the contract itself reverts if no matching commitment exists** (#589, `contracts/src/Vault.sol:422`); swaps route through `AMMRouter` over per-synth pools with the oracle price floor bounding slippage.
-6. **Reveal**: upload canonical trace JSON (IPFS via [`chain/pinata_client.py`](../backend/archimedes/chain/pinata_client.py)), call `reveal(traceId, storagePointer, content)` — the contract recomputes and verifies the hash. Commit block < trade block < reveal block is user-verifiable ([`ui/src/components/Reasoning.jsx`](../ui/src/components/Reasoning.jsx)).
+6. **Reveal**: persist the canonical trace JSON off-chain and call `reveal(traceId, storagePointer="", content)` — the contract recomputes and verifies the hash. `storagePointer` is empty: we do not pin traces to IPFS ([ADR](adr/ipfs-pinning-not-live.md)). Commit block < trade block < reveal block is user-verifiable ([`ui/src/components/Reasoning.jsx`](../ui/src/components/Reasoning.jsx)).
 7. Honest "hold" decisions are also traced. Runner liveness (whether the loop above is actually ticking on the deployed runner, not just defined in code) is surfaced live, not asserted in this doc — see [`/api/agent/status`](../backend/archimedes/api/agent_routes.py) (`alive`, from the Redis heartbeat) and § 7's deploy topology for where the runner lives today.
 
 ## 4. Flow — Marketplace (x402 nanopayments)
@@ -227,11 +243,11 @@ Runbook: [`infra/runbooks/ecs-fargate-cutover.md`](../infra/runbooks/ecs-fargate
 
 ## 5. Flow — Corpus (papers → retrievable knowledge)
 
-1. **Seed**: 10,000-paper JSONL manifest → Postgres (`services/corpus_service.py::seed_from_manifest`, boot-time in `main.py:139`).
+1. **Seed**: committed JSONL manifest → Postgres (`services/corpus_service.py::seed_from_manifest`, boot-time in `main.py:139`). Live counts: `GET /health` `corpus_papers` / `corpus_db_count` — do not freeze a number here; the corpus probe can timeout.
 2. **Seed writes text, and stops there**: metadata + abstracts land in Postgres; the `papers` schema carries no vector column, so there is nothing stored for a query to look up. Ranking is computed per request instead (§2.3). The ingest-time vectorisation described in [`docs/corpus-architecture.md`](corpus-architecture.md) is the target design, not the deployed one.
 3. **KB pipeline** ([`services/kb_runner.py`](../backend/archimedes/services/kb_runner.py), own compose service / scheduled-Fargate target (PR #1071, merged; apply pending)): SPECTER2 embeddings, HDBSCAN clusters, REBEL+SciSpacy knowledge graph → artifacts → [`api/corpus_routes.py`](../backend/archimedes/api/corpus_routes.py). With no artifact, `/graph` raises **503 `kb_artifact_not_found`** and `/kg/*` returns **empty entity/relation sets** — neither synthesises from arXiv metadata (#201). `corpus_kg_built` flag in `/health`; both behaviours pinned by `backend/tests/test_corpus_claim_integrity.py`.
 4. **Retrieval at generate time**: keyword filter → query-time rerank (§2.3).
-5. **Honest state** (verified against prod 2026-08-19): all 10,000 rows are present with title + abstract, but there are **no embeddings** (no embedding column anywhere in the schema), `corpus_meta` = 0 rows, and `kg_entities`/`kg_relations` = 0/0 — so retrieval is **lexical**, and the KG/graph endpoints 503. What is missing is the artifact layer, not the papers (issue #778). Build decision: **HYBRID** — custom KB spine (Postgres + MiniLM) + optional Bedrock-KB retrieval bridge; Neptune ruled out; a MiniLM-only no-AWS local option exists.
+5. **Honest state**: the `papers` table holds metadata + abstracts (live row count is `GET /health` `corpus_db_count`, not a number frozen in this file). There are **no embeddings** (no embedding column anywhere in the schema), `corpus_meta` = 0 rows, and `kg_entities`/`kg_relations` = 0/0 — so retrieval is **lexical**, and the KG/graph endpoints 503. What is missing is the artifact layer, not the papers (issue #778). Build decision: **HYBRID** — custom KB spine (Postgres + MiniLM) + optional Bedrock-KB retrieval bridge; Neptune ruled out; a MiniLM-only no-AWS local option exists.
 
 ## 6. Flow — Identity / accounts + linked wallets
 
@@ -288,13 +304,15 @@ RunCommand pulls the fresh image + restarts the EC2 pair's systemd units; regist
 1. **[`CLAUDE.md`](../CLAUDE.md) § Tech Stack / Deployment** — ~~said the EC2/docker-compose stack "remains the accurate live picture"~~ **fixed 2026-07-14** (same branch as this map): Fargate/ALB/Aurora/ElastiCache is the live picture; the web-tier EC2 box itself was stopped, snapshotted, and its terraform removed 2026-08-19 (Phase-8 decommission complete, §7 above) — "11 contracts deployed" corrected to 12 sources / 570 live instances (T3.2 census above).
 2. **[`docs/architectural-principles.md`](architectural-principles.md)** — "three top-level agents" mermaid + `services/portfolio_agent.py` path. Generation is debate-only now ([`agents/generation_pipeline.py`](../backend/archimedes/agents/generation_pipeline.py)); the file actually lives at [`agents/portfolio_agent.py`](../backend/archimedes/agents/portfolio_agent.py). The three-agent framing survived only as UI copy on the pre-#1192 Architecture page, and went away when that page was rebuilt (PR #1192, 2026-07-28).
 3. **[`docs/specs/commit-reveal-trace-spec.md`](specs/commit-reveal-trace-spec.md)** — cites `backend/archimedes/services/trace_publisher.py`; actual: [`backend/archimedes/chain/trace_publisher.py`](../backend/archimedes/chain/trace_publisher.py). Spec status says "proposal / v1.5 hop"; commit-reveal is implemented and contract-enforced (`Vault.sol:422`).
-4. **[`docs/user-stories.md`](user-stories.md)** — "GLM-backed" MVP framing; live LLM is Bedrock/Nova Micro via the Converse seam. Also predates marketplace/leaderboard surfaces.
+4. **[`docs/user-stories.md`](user-stories.md)** — ~~"GLM-backed" MVP framing; live LLM is Bedrock/Nova Micro via the Converse seam~~ **fixed 2026-08-31** (same branch as this amendment), along with the stale "3-input fusion preview" surface, the "5 reference strategies (2 Tier-1)" count, and the on-the-fly graph/KG demo claim. Each correction is an inline dated note rather than a silent rewrite. Still true: the doc predates the marketplace/leaderboard surfaces, and it narrates vault execution in the present tense — flagged in its own front matter and in `CLAUDE.md` § Project as roadmap (#1469).
 5. **`docs/design.md` §6** — vectorbt; superseded by backtrader (noted in [`CLAUDE.md`](../CLAUDE.md) itself, kept for history).
 6. **[`docs/specs/ecosystem-design-spec.md`](specs/ecosystem-design-spec.md)** — `StrategyRegistry → AssetRegistry` replacement; in code both coexist intentionally (noted in `CLAUDE.md:404-406`).
 7. **`.env.example`** — `LLM_PROVIDER=anthropic_compatible` default vs live `bedrock_converse` (tracked as roadmap T3.10).
 8. **[`agents/strategy_fusion.py`](../backend/archimedes/agents/strategy_fusion.py) module docstring** — still describes fusion as "feature-flagged beside strategy_architect, default OFF" and GLM-backed; fusion proposals are now the heart of the sole (debate) pipeline and the architect was deleted (PR #1074, merged 2026-07-14). Docstring predates the pivot.
 9. **[`docs/corpus-architecture.md`](corpus-architecture.md)** — Day-9 fusion-path framing, and it describes embeddings/clusters/KG as if built; retrieval reality is keyword → query-time rerank ([`services/paper_rag.py`](../backend/archimedes/services/paper_rag.py), lexical in prod) with the KB pipeline as an artifact layer that has not yet run (#778).
 10. **[`ui/src/components/Architecture.jsx`](../ui/src/components/Architecture.jsx)** — the page being replaced; full staleness list in §10 and [`docs/handovers/2026-07-14-architecture-review.md`](handovers/2026-07-14-architecture-review.md).
+11. **[`CLAUDE.md`](../CLAUDE.md) § Project** — ~~"executes and monitors them in non-custodial vaults on Arc with USDC settlement", present tense~~ **fixed 2026-08-31** (same branch): the contracts are deployed, but the deploy-a-vault journey is gated off every public surface by `ROADMAP_SURFACES_ENABLED` (off by default, #1266/#1354) and the blurb now says roadmap. The remaining public-copy scrub is #1469; the ADR carries a dated amendment saying the same thing ([`adr/non-custodial-vault-owner-agent.md`](adr/non-custodial-vault-owner-agent.md)).
+12. **`.github/workflows/deploy.yml`** — ~~a top-level `EC2_INSTANCE_ID: i-01803d3abc271d39b` naming the single-box host decommissioned 2026-08-19~~ **fixed 2026-08-31** (same branch): no job had read it since the #1039 fast-follow retired the SSM `deploy` job, so it was dead env pointing at a dead box. The runners that *do* live on EC2 resolve their instance by name tag at runtime (`deploy-runners.yml`, [`infra/runner_ec2.tf`](../infra/runner_ec2.tf)) and never hardcode an id.
 
 ## 10. What the pre-#1192 Architecture page got wrong (headline items)
 

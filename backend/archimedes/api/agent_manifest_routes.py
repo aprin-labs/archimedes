@@ -14,24 +14,23 @@ neither docstring has to disambiguate the other's meaning inline.
 
 Honesty note (mirrors docs/agent-api.md): READ — including the rigor readback
 ``GET /api/strategies/{strategy_id}``, which is a PUBLIC read like its siblings — plus
-AUTH, WALLETLINK, GENERATE, ACCOUNT, RIGOR, PAPER (simulated deployments, no chain,
-no funds), DEPLOY, and the marketplace PUBLISH/SUBSCRIBE + MONITOR endpoints are all
-live today. The T3.2 contract redeploy (issue #588, closed 2026-07-14) landed 289
-contracts on Arc testnet on 2026-07-09: DEPLOY calls the real, deployed VaultFactory
-(``chain_executor.create_vault``), MONITOR reads a real vault's on-chain health, and
-marketplace PUBLISH/SUBSCRIBE provision real vaults + Circle wallets against those same
-contracts — the same "session + linked wallet" gating as every other live group here,
-with no remaining code-level gate that singles them out as not-yet-wired. This manifest
-makes no claim about marketplace payment/billing settlement (that is tracked
-separately and out of scope for this file — see the ``auth`` block below, which
-advertises no payment scheme).
+AUTH, WALLETLINK, GENERATE, ACCOUNT, RIGOR, and PAPER (simulated deployments, no chain,
+no funds) are live today. DEPLOY, marketplace PUBLISH/SUBSCRIBE, and MONITOR exist as
+routes but are **not a public surface**: vault execute/monitor is roadmap (no user vault
+has ever been created; the UI journey is gated off every shipped build), and marketplace
+is not a product a visitor can use. This manifest makes no claim about marketplace
+payment/billing settlement.
 
 The ``erc8004`` block (#1527) is the on-chain identity leg and is deliberately the
 weakest claim in this document: the spec-typed registration file is published, and
-that is ALL it says. ``agentId``/``tokenURI`` are null and ``status`` is
+that is ALL it says today. ``agentId``/``tokenURI`` are null and ``status`` is
 ``registration_pending`` until an owner-signed ``register()`` lands on Arc — an agent
 reading this must not treat Archimedes as an ERC-8004-registered, reputed, or
-validated counterparty.
+validated counterparty. That status is not a constant in this file: it is re-derived
+per request from a live ``ownerOf()`` read against the registry
+(``chain/erc8004_identity.py``), and the sibling ``erc8004_verification`` block names
+the reading it came from — including when the registry gave no ownership answer, which
+keeps the claim at pending rather than letting an RPC outage read as a settled state.
 
 ``auth_required`` is a per-GROUP flag, so a route belongs to the group whose gating it
 actually shares — the three ``/api/wallets/*`` routes all sit behind
@@ -55,6 +54,7 @@ import os
 
 from fastapi import APIRouter
 
+from archimedes.api.rigor_verify_routes import _MIN_RETURN_ROWS as _MIN_VERIFY_WINDOW_BARS
 from archimedes.api.wallet_routes import WALLET_PROVIDERS
 
 agent_manifest_router = APIRouter(prefix="/api/agent", tags=["agent"])
@@ -72,56 +72,67 @@ _CHAIN_ID = int(os.getenv("ARC_CHAIN_ID", "5042002"))
 # that EXISTS today — the spec-typed registration file and the registry we would
 # register against — and asserts nothing beyond it.
 #
-# Registration is an owner-signed on-chain transaction (``register(string agentURI)``,
-# planned by ``scripts/register_erc8004_identity.py``). Until the owner sends it there
-# is no agentId and no tokenURI, so both are ``None`` here rather than guessed,
-# defaulted to 0, or read from an env var a deploy could set with no receipt behind
-# it. ``status`` is derived from ``_ERC8004_AGENT_ID`` rather than written separately,
-# so "registered" cannot be claimed while the id is absent.
-_ERC8004_IDENTITY_REGISTRY = os.getenv("ERC8004_IDENTITY_REGISTRY", "0x8004A818BFB912233c491871b3d84c89A494BD9e")
+# HOW "registered" GETS SAID. #1552 shipped this block driven by a module constant
+# (``_ERC8004_AGENT_ID = None``), which was the honest value and the wrong mechanism:
+# editing that constant to a number would have made every surface claim a registration
+# with nothing behind it but a diff. The constants are gone. ``status``, ``agentId`` and
+# ``tokenURI`` now come from ``chain.erc8004_identity.verify_identity()``, which returns
+# "registered" only after a live ``ownerOf(agentId)`` on the Arc IdentityRegistry returns
+# the configured platform wallet. ``ERC8004_AGENT_ID`` is a POINTER at the token to check,
+# never the claim itself — set it to the wrong id and the read simply keeps saying pending.
+#
+# Cost when nothing is configured (the state on main today): zero RPC calls. The verifier
+# short-circuits to "unconfigured" before touching the network.
 
 # The URL an ``agentURI`` would point at — the ERC-8004 registration file served from
 # ui/public/.well-known/. It is NOT a tokenURI: nothing on-chain references it yet.
 _ERC8004_REGISTRATION_URI = "https://archimedes-arc.com/.well-known/agent-registration.json"
 
-# Both stay None until a real ``Registered(agentId, agentURI, owner)`` event exists.
-# Filling them is a reviewed code change carrying the transaction hash, never a
-# config flip — see test_erc8004_identity.py, which fails if either is set without
-# the registration file's ``registrations`` list agreeing.
-_ERC8004_AGENT_ID: int | None = None
-_ERC8004_TOKEN_URI: str | None = None
-
 _ERC8004_PENDING_NOTE = (
-    "Not registered on-chain: no register() transaction has been sent, so agentId and "
-    "tokenURI are null and NO ERC-8004 identity, reputation, or validation claim is made. "
-    "Publishing a spec-typed registration file at registrationUri is not the same as "
-    "being registered. Plan the call with scripts/register_erc8004_identity.py --plan."
+    "Not registered on-chain: no register() transaction has been confirmed for this "
+    "deployment's wallet, so agentId and tokenURI are null and NO ERC-8004 identity, "
+    "reputation, or validation claim is made. Publishing a spec-typed registration file at "
+    "registrationUri is not the same as being registered. This status is re-derived from a "
+    "live registry read on every request; the sibling erc8004_verification block says which "
+    "reading produced it. Plan the call with scripts/register_erc8004_identity.py --plan."
 )
 
 
-def erc8004_identity() -> dict:
-    """The ERC-8004 identity block, shared by every discovery surface.
+async def erc8004_identity() -> tuple[dict, dict]:
+    """The ERC-8004 identity block plus the verification record behind it.
 
-    One builder so the served manifest, the static agent card, and the two
-    registration files cannot disagree about whether we are registered — the
-    exact failure mode #1448 caught between the first two surfaces.
+    Returns ``(block, verification)``:
+
+    - ``block`` is the seven-key document every discovery surface publishes — the served
+      manifest, ``ui/public/.well-known/agent.json``, and the two registration files. One
+      builder so they cannot disagree about whether we are registered, which is the exact
+      failure mode #1448 caught between the first two surfaces.
+    - ``verification`` is manifest-only, because it is inherently a *reading* and a
+      committed JSON file cannot hold one. It records how the claim above was established
+      (``onchain`` / ``unconfigured`` / ``unavailable``) so a consumer — or an operator —
+      can tell "the chain says no identity" apart from "the RPC was dark", which are the
+      same claim and very different facts.
     """
-    registered = _ERC8004_AGENT_ID is not None
-    return {
+    from archimedes.chain.erc8004_identity import registry_address, verify_identity
+
+    registry = registry_address()
+    result = await verify_identity()
+    block = {
         "chain": f"eip155:{_CHAIN_ID}",
-        "identityRegistry": _ERC8004_IDENTITY_REGISTRY,
-        "agentId": _ERC8004_AGENT_ID,
-        "tokenURI": _ERC8004_TOKEN_URI,
-        "status": "registered" if registered else "registration_pending",
+        "identityRegistry": registry,
+        "agentId": result.agent_id,
+        "tokenURI": result.token_uri,
+        "status": result.status,
         "registrationUri": _ERC8004_REGISTRATION_URI,
         "note": (
-            f"Registered as agent {_ERC8004_AGENT_ID} on {_ERC8004_IDENTITY_REGISTRY}. "
-            "Registration is an identity record only — it asserts nothing about reputation "
-            "or validation, neither of which this agent claims."
-            if registered
+            f"Registered as agent {result.agent_id} on {registry}, confirmed by a live "
+            "ownerOf() read at request time. Registration is an identity record only — it "
+            "asserts nothing about reputation or validation, neither of which this agent claims."
+            if result.registered
             else _ERC8004_PENDING_NOTE
         ),
     }
+    return block, result.as_dict()
 
 
 @agent_manifest_router.get("/manifest")
@@ -131,22 +142,37 @@ async def get_agent_manifest():
     Unauthenticated, rate-limited like sibling public GETs (no decorator -> the
     limiter's default_limits apply, matching e.g. /api/config/contracts).
     """
+    erc8004_block, erc8004_verification = await erc8004_identity()
     return {
         "name": "Archimedes",
+        # Byte-identical to .well-known/agent.json's `description` — the two are
+        # the same sentence served two ways, and #1650 was filed because an agent
+        # reading either one was told strategies execute on-chain today. Pinned by
+        # tests/test_agent_manifest_static_consistency.py so the pair cannot drift
+        # again, in either direction.
         "blurb": (
-            "Agentic trading, grounded in research — settled on Arc. Turns a "
-            "natural-language investment intent into a research-grounded, "
-            "rigor-gated portfolio strategy, executed in a non-custodial USDC "
-            "vault on the Arc testnet (chain ID 5042002)."
+            "Turns a natural-language investment intent into a research-grounded, "
+            "rigor-gated portfolio strategy on Arc public testnet "
+            "(chain ID 5042002). Generation is not anchored on-chain. Simulated "
+            "paper deployments are live: paper_daily_returns is the "
+            "graded track record the rigor gate sees. paper_agent_trades "
+            "(PR #1704, not on main) is not a live path. Neither is on-chain "
+            "execution proof. Executing strategies in non-custodial USDC "
+            "vaults on Arc is roadmap, not shipped."
         ),
         "docs": {
             "llms_txt": "/llms.txt",
-            "agent_api": "https://github.com/a-apin/archimedes/blob/main/docs/agent-api.md",
-            "quickstart": "https://github.com/a-apin/archimedes/blob/main/docs/agent-quickstart.md",
+            "agent_api": "https://github.com/aprin-labs/archimedes/blob/main/docs/agent-api.md",
+            "quickstart": "https://github.com/aprin-labs/archimedes/blob/main/docs/agent-quickstart.md",
             "agent_card": "/.well-known/agent.json",
         },
         # On-chain identity leg — pending, and says so. See erc8004_identity().
-        "erc8004": erc8004_identity(),
+        "erc8004": erc8004_block,
+        # HOW the block above was established. Manifest-only: a live reading has no
+        # business being frozen into a committed .well-known file. `source: "unavailable"`
+        # means the registry produced no ownership answer — the pending status beside it is
+        # then a refusal to claim, NOT a finding that we are unregistered.
+        "erc8004_verification": erc8004_verification,
         "auth": {
             "scheme": "Better Auth session",
             "methods": ["emailPassword", "google", "github"],
@@ -233,6 +259,11 @@ async def get_agent_manifest():
             # look-ahead audit report `not_evaluable`, never a silent pass.
             # #1481: `passes` is a quorum over the two RUNNABLE legs, so an agent
             # reading the scalar alone cannot mistake it for the passport gate.
+            # #1803: the minimum evaluation window is stated here as well as in
+            # ui/public/.well-known/agent.json. An agent that discovers us through
+            # the served manifest builds its body from THIS note; leaving the window
+            # to the static file only would make the answer depend on which surface
+            # it happened to read, which is the #1448 drift all over again.
             "rigor": {
                 "status": "live",
                 "auth_required": True,
@@ -241,17 +272,19 @@ async def get_agent_manifest():
                     "and passed. PBO and look-ahead can never run on a bare returns series, so "
                     "the verdict is capped: it is NOT equivalent to the strategy passport gate. "
                     "The response carries legs_evaluated / legs_runnable / legs_total / "
-                    "verdict_capped so the scalar is qualifiable without re-deriving leg statuses."
+                    "verdict_capped so the scalar is qualifiable without re-deriving leg statuses. "
+                    f"Minimum evaluation window is {_MIN_VERIFY_WINDOW_BARS} daily bars (one "
+                    "trading year): under it the route answers 422 with reason window_too_short "
+                    "and bars_received/bars_required, never a verdict."
                 ),
                 "routes": {
                     "verify": "POST /api/rigor/verify",
                 },
             },
-            # Paper trading is simulated (no chain, no funds) and was the first
-            # deployment path to go live. `deploy` below is now ALSO live
-            # (post-T3.2, #588 closed) for a real, non-custodial on-chain vault —
-            # an agent choosing between the two trades simulation-only for
-            # real capital at risk, not "works" vs "doesn't work".
+            # Simulated paper deployments (POST /api/paper/deployments) are live.
+            # The graded book is paper_daily_returns. paper_agent_trades is an
+            # executor ledger from PR #1704 and is not on main — status "live"
+            # below does not advertise that table. `deploy` is roadmap.
             "paper": {
                 "status": "live",
                 "auth_required": True,
@@ -262,36 +295,31 @@ async def get_agent_manifest():
                     "stop": "POST /api/paper/deployments/{deployment_id}/stop",
                 },
             },
-            # Live post-T3.2 (#588 closed 2026-07-14; 289 contracts landed on Arc
-            # testnet 2026-07-09). create_vault calls the real, deployed
-            # VaultFactory and transfers Ownable ownership to the caller's linked
-            # wallet (non-custodial) — same gating (session + linked wallet) as
-            # every other authenticated group above, no remaining feature gate.
+            # Roadmap, not a public surface. create_vault calls the deployed
+            # VaultFactory, but the journey is gated off every shipped UI and
+            # no user vault has ever been created.
             "deploy": {
-                "status": "live",
+                "status": "roadmap",
                 "auth_required": True,
                 "routes": {
                     "create_vault": "POST /api/vaults/create",
                 },
             },
-            # Live post-T3.2, same as `deploy` above: publish/subscribe are wired
-            # to the redeployed contracts (real vault creation, real Circle
-            # dev-controlled subscriber wallets, on-chain fee-cap enforcement).
-            # This status is about the ROUTES, not about billing: whether a
-            # subscription's recurring USDC charge settles for real is a
-            # separate, still-open concern (PAYMENTS_DRY_RUN) tracked outside
-            # this file — this manifest advertises no payment scheme either way.
+            # Marketplace is not a public surface. Route strings exist; do not
+            # present publish/subscribe as a shipped journey. Billing settlement
+            # rides PAYMENTS_DRY_RUN and is not claimed here.
             "marketplace": {
-                "status": "live",
+                "status": "roadmap",
                 "auth_required": True,
                 "routes": {
                     "publish": "POST /api/marketplace/publish",
                     "subscribe": "POST /api/marketplace/subscribe",
                 },
             },
-            # Live post-T3.2: reads a real vault's on-chain health once one exists.
+            # Roadmap: the health route resolves, but with no user vault there
+            # is no live position of a user's to read.
             "monitor": {
-                "status": "live",
+                "status": "roadmap",
                 "auth_required": False,
                 "routes": {
                     "vault_health": "GET /api/vaults/{address}/health",
@@ -300,6 +328,6 @@ async def get_agent_manifest():
         },
         "faucet": {
             "url": "https://faucet.circle.com/",
-            "description": "Free Arc testnet USDC (also used as gas on Arc). No real funds at risk.",
+            "description": "Free Arc testnet USDC (also used as gas on Arc). No mainnet money; generation still settles real testnet USDC — read GET /api/generate/quote.",
         },
     }

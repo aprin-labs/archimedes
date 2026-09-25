@@ -16,6 +16,23 @@ from archimedes.models.trace import ReasoningTrace
 logger = logging.getLogger(__name__)
 
 
+def _normalize_tx_hash(value: object) -> str | None:
+    """Lower-cased, 0x-stripped hex for tx-hash comparison, or None.
+
+    Tx hashes reach us as ``HexBytes``, ``bytes``, or ``str`` (with or without
+    the ``0x`` prefix, in either case) depending on whether they came from a
+    receipt, a log entry, or the Circle signer. Comparing the raw values would
+    make an equality check fail on representation alone — which, on the #1604
+    lookup, would silently degrade an exact match into "no match".
+    """
+    if value is None:
+        return None
+    if isinstance(value, (bytes, bytearray)):
+        return value.hex().lower()
+    text = str(value).strip().lower()
+    return text.removeprefix("0x") or None
+
+
 class TracePublisher:
     """Publishes reasoning trace hashes to on-chain ReasoningTraceRegistry.
 
@@ -197,7 +214,9 @@ class TracePublisher:
                     abi_params=[vault_addr, content_hash_hex, str(claimed_execution_time), trade_id_hex, intent_hex],
                 )
                 logger.info(f"Trace committed via Circle: {tx_hash[:16]}...")
-                return await self._finalize_commit(trace, tx_hash, vault_addr)
+                return await self._finalize_commit(
+                    trace, tx_hash, vault_addr, trade_id=trade_id, content_hash=content_hash_bytes
+                )
             except Exception as e:
                 logger.error(f"Circle commit failed, falling back: {e}")
 
@@ -225,18 +244,33 @@ class TracePublisher:
             tx_hash_bytes = await chain_client.w3.eth.send_raw_transaction(signed.raw_transaction)
             tx_hash = tx_hash_bytes.hex()
             logger.info(f"Trace committed on-chain: {tx_hash[:16]}...")
-            return await self._finalize_commit(trace, tx_hash, vault_addr)
+            return await self._finalize_commit(
+                trace, tx_hash, vault_addr, trade_id=trade_id, content_hash=content_hash_bytes
+            )
         except Exception as e:
             logger.error(f"Failed to commit trace on-chain: {e}")
             return None, None, None, False
 
     async def _finalize_commit(
-        self, trace: ReasoningTrace, tx_hash: str, vault_addr: str
+        self,
+        trace: ReasoningTrace,
+        tx_hash: str,
+        vault_addr: str,
+        trade_id: bytes | None = None,
+        content_hash: bytes | None = None,
     ) -> tuple[int | None, str | None, int | None, bool]:
         """Resolve the on-chain trace_id + block from a commit tx receipt.
 
-        Decodes the TraceCommitted event to read the auto-incremented trace_id; falls
-        back to getTracesByVault()[-1] if the event can't be decoded.
+        Decodes the TraceCommitted event in THIS tx's own receipt to read the
+        auto-incremented trace_id. Every fallback below is likewise keyed to this
+        specific commit — see ``_resolve_commit_trace_id``. **There is deliberately
+        no recency fallback.** Until #1604 an undecodable event fell back to
+        ``getTracesByVault(vault)[-1]``, "the newest trace id for the vault": with
+        two commits for the same vault in flight, that binds decision A's trace to
+        commit B's id — a silent provenance mis-attribution that reads as a
+        perfectly plausible id downstream. Per
+        ``docs/architectural-principles.md`` § fail-soft, a loud ``None`` beats a
+        plausible substitute on a surface whose whole product claim is provenance.
 
         The 4th return value, ``reverted``, is True only on a CONFIRMED revert
         (receipt.status == 0) — callers that gate further on-chain action (e.g.
@@ -291,15 +325,115 @@ class TracePublisher:
             logger.warning(f"Cannot read commit receipt: {e}")
 
         if trace_id is None:
-            # Fallback: newest trace id for the vault.
-            try:
-                ids = await registry.functions.getTracesByVault(vault_addr).call()
-                trace_id = int(ids[-1]) if ids else None
-            except Exception:
-                trace_id = None
+            trace_id = await self._resolve_commit_trace_id(tx_hash, vault_addr, block_num, trade_id, content_hash)
+
+        if trace_id is None:
+            logger.error(
+                f"Commit tx {tx_hash} left no resolvable trace id "
+                f"(vault={vault_addr}, block={block_num}): the TraceCommitted event was "
+                "undecodable and neither the single-block log re-read nor "
+                "pendingTradeCommitment() could bind this commit. Returning None — "
+                "guessing the vault's newest id would mis-attribute a concurrent "
+                "commit's trace (#1604). Reveal is skipped; reconcile from the "
+                "on-chain commitment."
+            )
 
         trace.commit_block_number = block_num
         return trace_id, tx_hash, block_num, reverted
+
+    async def _resolve_commit_trace_id(
+        self,
+        tx_hash: str,
+        vault_addr: str,
+        block_num: int | None,
+        trade_id: bytes | None,
+        content_hash: bytes | None,
+    ) -> int | None:
+        """Recover this commit's trace id when its receipt event won't decode.
+
+        Both routes are keyed to the specific commit, never to "whatever is
+        newest for this vault" (#1604):
+
+        1. **Single-block ``TraceCommitted`` re-read matched on our own tx hash.**
+           The commit block is already known from the receipt, so the log range is
+           one block — no provider rejects that for size (same bound as
+           ``find_reveal_tx``). The tx hash then picks OUR log out of the block even
+           when a sibling commit for the same vault landed in it.
+        2. **``pendingTradeCommitment(vault, tradeId)``.** The registry keys its
+           outstanding commitment by the caller's own ``tradeId`` and refuses a
+           second live commitment for the same key (``"Pending commitment exists"``,
+           #589), so this mapping read is exact — and it survives the case where
+           route 1 can't run at all (no block number, or an RPC with no log
+           filtering). The candidate is verified against ``getCommitment``'s stored
+           content hash before it is trusted, so a stale pointer can't slip through.
+
+        Returns None when neither route can bind the commit; the caller turns that
+        into a loud ERROR.
+        """
+        trace_id = await self._trace_id_from_commit_log(tx_hash, block_num, content_hash)
+        if trace_id is not None:
+            return trace_id
+        return await self._trace_id_from_pending_trade(vault_addr, trade_id, content_hash)
+
+    async def _trace_id_from_commit_log(
+        self, tx_hash: str, block_num: int | None, content_hash: bytes | None
+    ) -> int | None:
+        """Route 1: re-read TraceCommitted in the commit block, match on tx hash."""
+        want = _normalize_tx_hash(tx_hash)
+        if block_num is None or want is None:
+            return None
+
+        registry = self.loader.trace_registry
+        kwargs: dict = {"from_block": int(block_num), "to_block": int(block_num)}
+        if content_hash:
+            # contentHash is an indexed topic — narrows the block scan server-side.
+            kwargs["argument_filters"] = {"contentHash": content_hash}
+        try:
+            logs = await registry.events.TraceCommitted().get_logs(**kwargs)
+            for entry in logs or []:
+                entry_tx = (
+                    entry.get("transactionHash") if isinstance(entry, dict) else getattr(entry, "transactionHash", None)
+                )
+                if _normalize_tx_hash(entry_tx) != want:
+                    continue  # a sibling commit sharing this block — not ours
+                args = entry.get("args") if isinstance(entry, dict) else getattr(entry, "args", None)
+                raw_id = args.get("traceId") if isinstance(args, dict) else getattr(args, "traceId", None)
+                if raw_id is None:
+                    continue
+                return int(raw_id)
+        except Exception as e:
+            logger.warning(f"TraceCommitted re-read for {tx_hash} @ block {block_num} failed: {e}")
+        return None
+
+    async def _trace_id_from_pending_trade(
+        self, vault_addr: str, trade_id: bytes | None, content_hash: bytes | None
+    ) -> int | None:
+        """Route 2: the registry's own (vault, tradeId) -> traceId mapping."""
+        if not trade_id:
+            return None
+
+        registry = self.loader.trace_registry
+        try:
+            candidate = int(await registry.functions.pendingTradeCommitment(vault_addr, trade_id).call())
+        except Exception as e:
+            logger.warning(f"pendingTradeCommitment({vault_addr}, {trade_id.hex()}) unreadable: {e}")
+            return None
+        if not candidate:
+            return None
+
+        if content_hash:
+            commitment = await self.get_commitment(candidate)
+            if commitment is None:
+                logger.warning(f"Cannot verify pending trace id {candidate} — commitment unreadable")
+                return None
+            stored = commitment.get("content_hash")
+            if not isinstance(stored, (bytes, bytearray)) or bytes(stored) != content_hash:
+                logger.error(
+                    f"pendingTradeCommitment returned trace id {candidate} whose stored content "
+                    "hash is not this commit's — refusing to bind (stale or foreign commitment)"
+                )
+                return None
+        return candidate
 
     async def reveal(
         self,
@@ -312,8 +446,10 @@ class TracePublisher:
         Calls ``ReasoningTraceRegistry.reveal(traceId, storagePointer, fullTraceContent)``.
         ``fullTraceContent`` MUST be the exact canonical bytes whose keccak256 equals the
         committed hash; we derive them from ``trace.canonical_json()`` (the same source the
-        commit hash was computed from). ``storage_pointer`` is the IPFS CID (or any URL) so
-        verifiers can fetch the off-chain public provenance.
+        commit hash was computed from). ``storage_pointer`` is an optional off-chain
+        locator recorded for convenience; the hash verification is what binds the
+        reveal. Live reveals pass the empty string — we do not pin traces
+        (``docs/adr/ipfs-pinning-not-live.md``).
 
         Returns (reveal_tx_hash, reveal_block) — None on failure or pre-v1.5 registry.
         """

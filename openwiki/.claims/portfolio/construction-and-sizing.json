@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:778ec7590fac670d1c7554d3a460dd075c55f4fa46652ee5c13c20c3a3204ed8",
+  "claims": [
+    {
+      "id": "claim_80e7fade5f2e49539ba21d98be9fcaa9",
+      "statement": "The optimizer maps each vault risk profile to an objective: CONSERVATIVE to global minimum variance, MODERATE and AGGRESSIVE to max-Sharpe tangency, and HYPER_RISKY to a max-expected-return linear program.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L374-L401",
+          "version": "repo-lines-v1:sha256:e59fac0fe36a743c3bba650e489097f634871c0ad5e201311c1b968493f039c3:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUzOTIzNDM4NzAxMjdjNWQ0ZTIxMjI5Y2VkODhhYWQyODdiMDkxNGI4MTgyMGRiNmQ0MGIzNDcyMDI5Yjk3ODciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFiYjM0N2Q1MWRhMzgzOWI1ZDY3YTI1YmJkNjY0ZDVhNWFhNDc5ODQzZTA1YWZhMmNhMjE2OTdkMTk3ZmU5ZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImEwMGRkN2E5Mjg0YjJjNzM1ZTg5NzdmYTc5ZTkyYWY2ODlmMjlhNmVkNzkxOTBjMWZiNmNjNmQ3OWM3ODkzMDgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_960da5145ea24f4c8bd641f4ba3c9d3d",
+      "statement": "Every mean-variance objective is solved on the long-only unit simplex with a per-asset weight cap of 0.40 (0.60 for the hyper-risky profile) to prevent degenerate corner solutions, and falls back to equal weight when SLSQP fails or history is shorter than 20 bars.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L382-L401",
+          "version": "repo-lines-v1:sha256:416b04872ce79c2de97bc50631893873861a24d4f4f58f39475fcb282c2e4fde:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdiNzgwZDEzNmNkNzM1NWI0MTI5N2VlODcwOWU3ZjhjMzc4YjlmMTRhMDE4Yjk0OThkOGNkODBkZWE2Yzk2MDkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFiYjM0N2Q1MWRhMzgzOWI1ZDY3YTI1YmJkNjY0ZDVhNWFhNDc5ODQzZTA1YWZhMmNhMjE2OTdkMTk3ZmU5ZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdjZmViODA3YzVlZWYxMzkzYzI4ODY3MzY5NThhMmRjYTIwODI3ODVmNDVlYzlkY2FlM2Y5Mzk5ZTMyMjljNzMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImEwMGRkN2E5Mjg0YjJjNzM1ZTg5NzdmYTc5ZTkyYWY2ODlmMjlhNmVkNzkxOTBjMWZiNmNjNmQ3OWM3ODkzMDgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1fff758cbe864b9ebc0e7f089f4d19a6",
+      "statement": "Global minimum variance serves the conservative profile specifically because it depends only on the covariance matrix and never on the noisy expected-return vector, making it the most estimation-robust objective available.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L403-L417",
+          "version": "repo-lines-v1:sha256:d682340cbdd78cd196570f0dc6a448ac94cd5e40b9c4d284a827e8a8722a732d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJlNzg4MmJlMWZhZjc4M2NkMzM3YjIwZGZkYjUxODNlMWQxZTc0YmZjMmRlZTg3NGRiYzc4M2M4OTVmYjM0MzIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNkZGM5NWQwMTY1ZWM4Zjc4Nzc0ZDRkODliOTUzMWZlNjk4YTY2MGViMGMxYzdkZmMzNWUyNDI4YmNmMzhiNjAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU3MWJjMzcxN2VlNzU4MGQ5M2VjMmM4OTA5NTg4NThlZThkZWY2ZjlkNWE1NjMxMDNjYTIzZTYyZDlhNjAzZGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMwMmFhNWE3NWY0NDVkNTBlMjc5OGZiODZkYTYxYWI4ZjgwODdmMmIyZmFmOWRlNzU1NDk4ZTY3NDNmMjlmMDgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_81c20146e66b4ab9a155cf1c2ea1ae8b",
+      "statement": "Half-Kelly is the default sizing fraction and full Kelly is treated as an academic reference only, because full Kelly is acutely sensitive to estimation error in mu; Kelly is defined on excess returns, its output is clipped to [0,1] with no leverage, and a non-positive excess return returns zero.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L419-L443",
+          "version": "repo-lines-v1:sha256:33fd3316162fde88be08b43012cbe335de307e0fc880e9276e68b8cba89e10fa:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE5Mjg5N2E4MzFiNmUzYmYwZDRmZTNhNGZkNGMyYTMwMmY1MjJiNmE0ZWNlYjFlOTc2MjZlZGY0MGU0NmFkYzgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJkMzM5YzU2YjUxMTFhY2U0YjRjNzk3Y2E3NGQ1NzRiMjhkYjlhODExMGU2OGJlYjk3MmI0YTk1YzI5OGRkMjQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI3NzIwNjFjNDAxOWVlMTMzMDQ3ODI0NmIyMjEyYWFjNzJmOWNhNTg4NTE5MDc3YWNjMDZiODc0OGZiYmY2NjIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE1MTFhNzQ2MzEwNDBjOGQ1M2ZlMWVmOGIzYzM2ZjE5YTBhM2UwYThhNDAxMDQ5MDJjZDBlMTQ1OWYwZjU5MmMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3519d0fb6f01475a85207897b60a9a0c",
+      "statement": "In the multi-asset path Kelly is expressed as a risk-aversion-parameterised mean-variance objective where gamma=2 reproduces half-Kelly, gamma approaching 0 approaches full Kelly, and gamma approaching infinity collapses to minimum variance; baseline gammas run from 12.0 for fixed_income down to 1.5 for hyper_risky.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L445-L467",
+          "version": "repo-lines-v1:sha256:8131b5ba1b991c70ff62deaf8ee108c9448da48ba3a3a466281513d037536637:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNiYzVmMjVhOTJhZGIyNWE1MDhiMmJhYjk4NzA3N2FhYTQ4ZDQ1YWI4YWI0ODBkMjE2ZDMyYzFlMzI5ZjU5N2UiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE1YjMwYmI5NGYzYjZkNDNkMTNjN2FlZjI4Y2FhMGVmMGY4ZDZjODI5YzYwODFkNWQyZjcwN2NiY2E1N2E3NTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZlYmE0MmQwNDQwY2NiNmVmYzlkYjY1YTc5NWQ3MDQ0NzE0OGJmY2FhYzU2ZTU3OTcxZjhjNjVhNjQ0ZjQ0NzIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6d5aef67562e4806bb887cb881df892a",
+      "statement": "The regime-conditional multiplier scales effective risk aversion by 1.0x in risk_on and transition, 2.0x in risk_off, and 4.0x in crisis, so a moderate investor in a crisis regime operates at gamma=12.0 — fixed_income-equivalent — without changing their declared profile.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L468-L482",
+          "version": "repo-lines-v1:sha256:aa4509ab1752792f833ad34baa4327601594a40203017785815f19bf0221ac8e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJmMzA4N2MzZjI2Y2Y2NjM5YmUyNTlhNTBiNWIyMTUxMjU1MDZjOWI0Mzc4ODMxMTJkMzliMjVlNjVhY2E1NjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM4YTQ5N2ZhZTVjOGIxMjgwZGY2NDA4ZWQ5OTU3NzFkYjNhNWU0YjljNGQ4OGJjZWYzODAzYzUxODRiMWY1MDMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM4ZTMzZjA2MjkyZTZlOWIzY2ZiYjcyM2M1NmVmYWIyMjk4OGU5N2Q0OGEzMDY2NGVmY2IzM2JmMjYxYjlhYTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRhNzZhMTdmNmQwYTY0MjViMDU1OTRjNzY4ZjkzMzYwYzY2ZWM4YTU0ZDNiMjNhZDJhNDU4MjgzZDViODk4ZTAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0a01118904444586a83d4a9831183e05",
+      "statement": "The regime gamma multipliers are documented as a deliberately conservative engineering judgment rather than a claim of optimality, chosen below the 6-10x that research papers sometimes use in tail regimes in order to avoid whipsawing allocations on every regime flip.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L468-L482",
+          "version": "repo-lines-v1:sha256:aa4509ab1752792f833ad34baa4327601594a40203017785815f19bf0221ac8e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJmMzA4N2MzZjI2Y2Y2NjM5YmUyNTlhNTBiNWIyMTUxMjU1MDZjOWI0Mzc4ODMxMTJkMzliMjVlNjVhY2E1NjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM4YTQ5N2ZhZTVjOGIxMjgwZGY2NDA4ZWQ5OTU3NzFkYjNhNWU0YjljNGQ4OGJjZWYzODAzYzUxODRiMWY1MDMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM4ZTMzZjA2MjkyZTZlOWIzY2ZiYjcyM2M1NmVmYWIyMjk4OGU5N2Q0OGEzMDY2NGVmY2IzM2JmMjYxYjlhYTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRhNzZhMTdmNmQwYTY0MjViMDU1OTRjNzY4ZjkzMzYwYzY2ZWM4YTU0ZDNiMjNhZDJhNDU4MjgzZDViODk4ZTAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3f8af1091b3f47f38a94d3472722a3e2",
+      "statement": "Ledoit-Wolf shrinkage is the production covariance estimator and its shrinkage intensity is derived analytically from the data rather than hand-tuned, with a fixed-intensity diagonal fallback at alpha=0.10 used only when the analytic estimator cannot run.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L527-L548",
+          "version": "repo-lines-v1:sha256:30ba283a6b8026bfb94588a6271ab8c50dcb94b4789395fd7d9f4d5018395474:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRmYzRiZWE2MTFkNGIzOTI0MTczMWM2NTI0MTcxYzMwZDAzYmE3ZWNhZTUxMjI1ZmU1MmRhYjg2ZDRiYWUxMDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk2YmU5YWVhNjUwZDMyNjIyZmE2N2FmNzIxZjUyNDYzYzBiODJmOWFiY2E3Njg4NmZiY2I1ZWMzMTY2MzM1MjAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJjNDA0ZDgzOWM2NzU5ODI0MDNiN2M3NGEwOTkyMDkwZjIwNGQ1ZWI2OTQxMzlkYTBjOGRhMGFmOTRmOTdkNWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJjMzkxYjVlMjcxMjBhN2FhNDA3YzdmMGIwZGVhNzRjMDc3MDJkZWU5NGJjNzEyODZhYzk0NjNkMjNlOTUzNTQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_259d7e2cef7d43e29fb92184e5293d59",
+      "statement": "Hierarchical Risk Parity is documented as the principled diversification objective and the intended path for many-asset high-correlation baskets, but it is explicitly not what the production optimizer routes today — the five profiles go through GMV, max-Sharpe, and max-return with Ledoit-Wolf shrinkage.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L484-L505",
+          "version": "repo-lines-v1:sha256:1fc0b1d910895ee3d8a60b91b071ee874c6a96663a61be19c9b87a12141cc2c8:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEzZjIzODVjZjYzMDM0YzBiZWYyNDgxYTM1MTdlMjc4YzI3ZGQxZGRiZDgxZTNkM2YyYjU0NTFhYWYzZTQxNzgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJlYTU3Njk2YzFlMjAwZjExMmE1MDU5Y2ZkZjc3MGUxZDRlZmUyMDI0YWI3OTQ0ZjQzYjk4ZDRmMzEzZjYxOWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZiZTA3MmRjYzU5NmFhMzdhYzZiMmUwNzViMzEyYmEzNTVkMzAyZWI5Y2I3NzIzOTBhNDI3YjA4NzE3MzEwZGIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA2M2RhOGYxZmQ1MzYxM2JlNTgzYzM4YWFjNGVlOTI5OTRkN2NjNmIzNjZhZTYxZDZhODJkZmY2YjlmYmE3NDAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b5e804581180406299bf8fb22d9484a3",
+      "statement": "Black-Litterman is mapped onto the existing mu_override plus mu_shrinkage blending, which shrinks paper-extrapolated expected returns toward each asset's own sample mean at a default 0.5 blend so a single strategy's claimed CAGR is not promised across every asset it voted for.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L507-L525",
+          "version": "repo-lines-v1:sha256:82dd2e924f59ec2c7bd6b8210529213d46086aad6a886434f582d1ad1d229f53:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ3YzliMWJlNWU5NzUzOGNiNjVhNDFlMjE2NWI0NmUzNTEyNmYzYWQ1N2Y0Mzg3N2U4ZDk4OWE5MmNmMzUzNzIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU0MDNhZmMyNWE4YjI3Yzk5OTFiODU0Y2MzYTY5M2ZlYmM5MTc2NzhlM2ExY2NlMWU5NDZiMzc1OGMwMjcxMjQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVmMTExMGYyZTVjZGEwZTQyMmY4OWIwMWViMzZhZDlkNWVhOTNkZmZhMTI3NjllNWYyMzhiYjA0OGQxODNhMDQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImIzMmUyOTJjODJlZTJmM2MyODYwNjFiZGQ0NGU4YzE1NjExY2E4YzVjNmY0OTYzZDE5MjY0MDRjM2E3MzlhODYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f03cdeb9de804cbcbe0d4beae60cbcec",
+      "statement": "Two reporting primitives make the optimizer legible: a per-asset marginal contribution to portfolio variance via the Euler decomposition that sums to 1, and closed-form one-year expected maximum drawdown (Magdon-Ismail & Atiya 2004) and parametric normal 95% VaR figures.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L550-L562",
+          "version": "repo-lines-v1:sha256:49032e9917c801d5541f37e6e00a419bd7a2510e117c04c2fbf57f2298164724:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFlYmJiZTdiMzkyYzRhMjk2ZjRlN2ZiYzljMTNkMDIwMmI3MTI1NWVlMzRkOGZmZDA3YjllOWZjZDQ3MWMwMWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlNjc0NDZkYWFlMmZlZDRjMjExODJkOWZjOTJmOTdlNDY0NjNhNTQ4MzdkZTE5NDlkZmVhNTBjMThiMDhhMmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJmZGE0ZTIyZGIyNDJkMmE2OTZkNzM0NWQ4ODZiMDMyNWQyMDkxNjNhZjFhZDg3NTk4NDhlOGMzNzk1OTgzNmYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3daaaa1222994776bee199eb5b1319b5",
+      "statement": "The flat 5% risk-free constant is now only a fallback for the rigor statistics, which can instead be graded against the historical three-month T-bill series with the choice disclosed per result — but Kelly and the portfolio optimizer still take only the flat constant, so the claim that every excess-return figure is computed on the same basis is no longer accurate.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/methodology.md#L586-L598",
+          "version": "repo-lines-v1:sha256:2e15ce68c7c8ec274866c39dca9f491343d91f4c06e7bd985a6e168ff0b0ac2e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFkZDQzMWQwNzRkYWQxYjlkZWI2ZDE4YWViYTc4YTA5OTZkYWE5ZjQ4YWIwYzljMWM3MmQ2NzQwMmI0YzgzZDQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAxYmNhYTZhZWU3ZDdkYThiZDM1M2RkMjA5MWRmNjA2OTI0MjU5MDczN2YwYmY1YmE2NjFmOTE1NWFkODZmMjMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwMWYyZWMxNzU5M2MxMDU0ZWI0NjM2N2Q4NDUzZWYyNGExNzNjZTk2YjcxMTdkOTFmOWE2OGQ0NGZlZjhiMDEifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.4.3",
+    "at": "2026-08-31T05:55:43.566Z"
+  }
+}

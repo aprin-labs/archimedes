@@ -44,7 +44,19 @@ test("every success path enters the started job's stream", () => {
 	// startJob path must all end in enterStartedJob — count the call sites.
 	const calls = generate.match(/enterStartedJob\(data\)/g) ?? [];
 	assert.ok(
-		calls.length >= 3,
-		`expected >=3 enterStartedJob(data) call sites (EOA, passkey, free path), found ${calls.length}`,
+		calls.length >= 4,
+		`expected >=4 enterStartedJob(data) call sites (EOA, passkey, free path, pay-panel refetch), found ${calls.length}`,
 	);
+});
+
+test("a pay-panel refetch that starts the job still enters the stream", () => {
+	// refreshPaymentRequirements's success path used to return null after
+	// submitStart without enterStartedJob — the user stayed on the form
+	// with the pay button re-armed, which reads as a failed start.
+	const fn = generate.match(
+		/const refreshPaymentRequirements = async \(\) => \{[\s\S]*?\n\t\};/,
+	);
+	assert.ok(fn, "refreshPaymentRequirements missing");
+	assert.match(fn[0], /enterStartedJob\(data\)/);
+	assert.match(fn[0], /const \{ data, receipt: settledReceipt \}/);
 });

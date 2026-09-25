@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { getStoredWalletName } from '../config'
+import { canStore } from '../storage-consent.js'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? ''
 const STORAGE_PREFIX = 'archimedes.welcomeProfileSeen.'
@@ -42,7 +43,11 @@ export default function WelcomeProfileModal({ walletAddr, onDone, mode = 'welcom
     // Edit mode never touches the gate — only the welcome flow sets it.
     if (isEdit) return
     if (walletAddr) {
-      localStorage.setItem(STORAGE_PREFIX + walletAddr.toLowerCase(), '1')
+      // Functional category (#1647): with functional storage rejected the
+      // "already asked this wallet" marker is not kept, so the skippable
+      // welcome prompt can appear again — the stated fallback.
+      const key = STORAGE_PREFIX + walletAddr.toLowerCase()
+      if (canStore(key)) localStorage.setItem(key, '1')
     }
   }
 
@@ -103,7 +108,7 @@ export default function WelcomeProfileModal({ walletAddr, onDone, mode = 'welcom
           boxShadow: '0 24px 60px rgba(0,0,0,0.55)',
         }}
       >
-        <div className="caption mb-3 uppercase tracking-wider text-[var(--text-4)]" style={{ fontSize: '0.78rem' }}>
+        <div className="caption mb-3 uppercase tracking-wider text-[var(--text-3)]" style={{ fontSize: '0.78rem' }}>
           {isEdit ? 'Your Profile' : 'Welcome to Archimedes'}
         </div>
         <h3 id="welcome-modal-title" className="font-serif mb-2" style={{ fontSize: '1.85rem', lineHeight: 1.2, letterSpacing: '-0.02em' }}>
@@ -132,7 +137,7 @@ export default function WelcomeProfileModal({ walletAddr, onDone, mode = 'welcom
 
           <label className="block">
             <span className="block mb-1.5" style={{ fontSize: '0.9rem', color: 'var(--text-2)', fontWeight: 500 }}>
-              Email <span style={{ color: 'var(--text-4)', fontWeight: 400 }}>(optional)</span>
+              Email <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(optional)</span>
             </span>
             <input
               type="email"
@@ -166,7 +171,7 @@ export default function WelcomeProfileModal({ walletAddr, onDone, mode = 'welcom
 
           <label className="block">
             <span className="block mb-1.5" style={{ fontSize: '0.9rem', color: 'var(--text-2)', fontWeight: 500 }}>
-              Attribution <span style={{ color: 'var(--text-4)', fontWeight: 400 }}>(optional)</span>
+              Attribution <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(optional)</span>
             </span>
             <input
               type="text"

@@ -11,7 +11,7 @@ Purpose: one card per session instead of a 45k-token plan re-read.
 
 ## State — 2026-08-21
 
-Cards are committed (`16324bd`, PR #1238) and indexed in [`docs/README.md`](../README.md).
+Cards are committed (`16324bd`, PR #1238) and indexed in [`docs/doc-index.md`](../doc-index.md).
 The Aug-16 State section this replaces claimed *"zero sprint work has landed"* and listed four
 PRs as still open. **Both were accurate when written** — the card was authored 2026-08-16
 00:18 +0300, and the four sprint commits (`5327dbf` 00:27, `5c601fb` 00:39, `d7073f1` 00:46,
@@ -20,7 +20,7 @@ PRs as still open. **Both were accurate when written** — the card was authored
 (`1f3788d`), #1226 (`0d22af7`), #1201 (`ddd21fc`) and #1095 (`8abf1cd`) are all merged, and the
 2026-08-20 frontend series landed on top.
 
-> **Scope of this section vs [#1442](https://github.com/a-apin/archimedes/pull/1442).** Dan's
+> **Scope of this section vs [#1442](https://github.com/aprin-labs/archimedes/pull/1442).** Dan's
 > #1442 is the **dispatch state**: which work packages are out, which PRs close which partials
 > (#1379, #1401, #1439, #1441), and which cards are retired outright. This section is the
 > **verification layer**: what a `grep` finds in the tree today, and where a card's own text is
@@ -58,8 +58,8 @@ PRs as still open. **Both were accurate when written** — the card was authored
    `passes` was `all(...)` over *evaluable* legs only while PBO and look-ahead were hard-coded
    `not_evaluable` always, so a short series could pass on one leg of four — and `archimedes
    verify` exited `OK` on that boolean. Filed as
-   [#1481](https://github.com/a-apin/archimedes/issues/1481), fixed by
-   [#1484](https://github.com/a-apin/archimedes/pull/1484) (`e8a0644`, 2026-08-29): the verdict
+   [#1481](https://github.com/aprin-labs/archimedes/issues/1481), fixed by
+   [#1484](https://github.com/aprin-labs/archimedes/pull/1484) (`e8a0644`, 2026-08-29): the verdict
    is now a quorum over *runnable* legs — `passes = legs_evaluated == len(_RUNNABLE_LEGS) and
    all(...)` — so a leg that could not run makes the verdict `false` rather than invisible.
    Kept here rather than deleted because cluster-8's row still points at it.
@@ -98,11 +98,11 @@ a row.
 | 1 | [cluster-0](cluster-0-unblock.md) | **code done, asks unmet** (23/37) | **Ask 1 did not just go unsent — it was overtaken.** #1129 and #1200 both changed `contracts/src/Vault.sol` (fee caps; NAV decimals + performance-fee share mint) and merged 2026-08-19/20 with **zero human reviews** — every review on #1129 is `copilot-pull-request-reviewer[bot]`, state `COMMENTED`, none `APPROVED`. `CLAUDE.md` makes Dan the sole required approver for contract changes. Raise this before any further contract merge. Also: PyPI `archimedes-cli` unreserved · `PAYMENTS_DRY_RUN` pinned in `ecs.tf` only, still unset in all three compose files and `infra/scripts/setup-ssm-secrets.sh`. A6 is **no longer blocked** — diagnosed 2026-08-18, do not re-run it |
 | 2 | [cluster-1](cluster-1-cost-ssot.md) | **done** | Code edits landed in `5c601fb`; `4f60971` closed the Engine C leg and the test gap. "Identical floor everywhere" is now true. Audited at 12/21 before that commit — re-read the row above, not the fraction |
 | 2 | [cluster-3](cluster-3-backtest-models.md) | **done at the DB, open at the surface** | A7 shipped in full — the sprint's cleanest win. `4f60971` closed the `cost_model_id`-NULL and fabricated-`0.0`-correlation gaps (both now `None`, with `portfolio_backtester.py:447` no longer defaulting `correlation_to_spy` to `0.0`). What remains is surfacing: provenance fields are declared on `StrategyResponse` but never assigned, and absent from `leaderboard_schemas.py` and all UI |
-| 3 | [cluster-2](cluster-2-fusion-engine.md) | **done** | `4f60971` landed A1c; [#1485](https://github.com/a-apin/archimedes/pull/1485) (`2f1517e`, "Make the DSL row describe the run that happened") closed A4 and A8 together — the fabricated `date(2004, 1, 2)` is gone and the sleeve label now reaches the row, so an N-asset generated strategy no longer reads as one portfolio backtest without saying otherwise |
-| 4 | [cluster-4](cluster-4-strategies-route.md) | **A3 done, §3/§4 open** | Both A3 items landed 2026-08-20 (`757341a`, `14db21d`). `metrics_source` — absent when this was written — arrived in [#1491](https://github.com/a-apin/archimedes/pull/1491) (`b49609a`), which went further than the card asked and also names the display-metric chain's `stub_placeholder` link. Still open: §3's TODO markers and §4's unmetered generate endpoint |
+| 3 | [cluster-2](cluster-2-fusion-engine.md) | **done** | `4f60971` landed A1c; [#1485](https://github.com/aprin-labs/archimedes/pull/1485) (`2f1517e`, "Make the DSL row describe the run that happened") closed A4 and A8 together — the fabricated `date(2004, 1, 2)` is gone and the sleeve label now reaches the row, so an N-asset generated strategy no longer reads as one portfolio backtest without saying otherwise |
+| 4 | [cluster-4](cluster-4-strategies-route.md) | **A3 done, §3/§4 open** | Both A3 items landed 2026-08-20 (`757341a`, `14db21d`). `metrics_source` — absent when this was written — arrived in [#1491](https://github.com/aprin-labs/archimedes/pull/1491) (`b49609a`), which went further than the card asked and also names the display-metric chain's `stub_placeholder` link. Still open: §3's TODO markers and §4's unmetered generate endpoint |
 | 5 | [a6-rerun](a6-rerun.md) | **executed, prerequisites skipped** (12/26) | The A4 read-path fix was not taken and its stated window ("the one moment in the year") has closed; the A5 fetch memo was never threaded (`run_backtests.py` passes no `fetcher`); **the before/after table — the card's named deliverable — does not exist**; rejection-rate copy never written |
 | 6–8 | [cluster-5](cluster-5-meter.md) | **retired, with one live tail** (9/48) | #1442 retires this card (#1194 + #1296/#1300 rebuilt the space; refund/release is now #1441) and that reading is right about the metering design. **One item it does not cover: B5's silent model downgrade is still live** at `generate_routes.py:335` — an entitled premium request is still downgraded to the env default, and #1441 is about refund/release, not this. Either fix it or track it before the card is closed |
-| 6–8 | [cluster-6](cluster-6-boot-paywall.md) | **barely started** (7/31) | An x402 generation paywall **shipped** 2026-08-19 (`ab712a1`), flag-off in prod — so the card's premise that no route emits a satisfiable 402 is false. **Neither boot assertion exists**, and `GATEWAY_CHAIN` still silently falls back to `arcTestnet` in three places — plus a fourth, `revenue_sweep.py:88`, which passes the default as a bare kwarg and never reads the env var at all, so the sweep stays on testnet after cutover ([#1495](https://github.com/a-apin/archimedes/issues/1495)). A live paywall with no mainnet-chain guard is the dangerous half of this card. No `/api/v1/`, no manifest-honesty edits |
+| 6–8 | [cluster-6](cluster-6-boot-paywall.md) | **barely started** (7/31) | An x402 generation paywall **shipped** 2026-08-19 (`ab712a1`), flag-off in prod — so the card's premise that no route emits a satisfiable 402 is false. **Neither boot assertion exists**, and `GATEWAY_CHAIN` still silently falls back to `arcTestnet` in three places — plus a fourth, `revenue_sweep.py:88`, which passes the default as a bare kwarg and never reads the env var at all, so the sweep stays on testnet after cutover ([#1495](https://github.com/aprin-labs/archimedes/issues/1495)). A live paywall with no mainnet-chain guard is the dangerous half of this card. No `/api/v1/`, no manifest-honesty edits |
 | 9 | [cluster-8](cluster-8-returns-csv.md) | **barely started** (11/53) | None of the specified deliverable: no `returns_import.py`, no `/api/v1/rigor/verdict`, no CSV transport, none of the eight validations, no test file. Of the two prohibitions #1305's overlapping endpoint breached, the `passes` scalar is now fixed (#1481 → #1484); **A1 is not** — gate compute still runs on the event loop rather than `asyncio.to_thread`. Rescope this card against what #1305 and #1484 shipped rather than writing beside it |
 | 10 | [cluster-7](cluster-7-ui-surface.md) | **barely started** (14/38) | `sitemap.xml` is the one clean win. A9/A10 are **product reversals**: the card says keep /portfolio and /marketplace live with a banner; #1266 hid them instead. All five orphan deletions untouched — `FusionResult.jsx` (198L) is being *actively maintained while orphaned*, `PortfolioAdvisor.jsx` (477L) leaves `/api/strategies/advisor` with no consumer. No `WorkInProgress.jsx`, so A4/A8/A10 have no banner to render. All three check scripts missing |
 
@@ -123,7 +123,7 @@ a row.
 3. **One cluster per session.** Do not drift into an adjacent item because it is nearby.
 4. **Test narrow:** `pytest backend/tests/test_<module>.py -q`. Full suite once, pre-merge.
 5. ~~**No subagents, no workflows.**~~ **Superseded** by the owner's execution-style call
-   (Dan, 2026-08-20, recorded in [#1442](https://github.com/a-apin/archimedes/pull/1442)):
+   (Dan, 2026-08-20, recorded in [#1442](https://github.com/aprin-labs/archimedes/pull/1442)):
    rules 5 and 7 were written for a solo token-constrained session and do not bind sessions
    running the repo's parallel-agent pipeline (CLAUDE.md § parallel agent fan-out). Rule 6's
    anti-goals stay in force.

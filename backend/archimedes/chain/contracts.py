@@ -72,6 +72,20 @@ class ContractLoader:
     def asset_registry(self) -> AsyncContract:
         return self._contract(self.settings.asset_registry_address, "AssetRegistry")
 
+    # ─── Third-party registries ──────────────────────────────────
+
+    def erc8004_identity_registry(self, address: str) -> AsyncContract:
+        """The ERC-8004 IdentityRegistry (#1527) — NOT one of ours.
+
+        Takes the address as an argument rather than reading ``ChainSettings``: this
+        contract is deployed and owned by the Arc ecosystem, not by
+        ``deploy_contracts.py``, so it has no ``ARC_*`` deploy variable. Its address is
+        resolved by ``chain.erc8004_identity.registry_address()``
+        (``ERC8004_IDENTITY_REGISTRY``, defaulting to the Arc-testnet deployment). The
+        pinned ABI is ``contracts/abis/ERC8004IdentityRegistry.json``.
+        """
+        return self._contract(address, "ERC8004IdentityRegistry")
+
     # ─── Per-Asset Oracle Contracts ──────────────────────────────
 
     def oracle_for(self, symbol: str) -> AsyncContract:

@@ -79,6 +79,27 @@ test("anti-goal: email verification ENFORCEMENT must stay off", () => {
 });
 
 test("the mailer failure catches stay fail-soft (no throw) and stay loud (console.error)", () => {
-	assert.match(authJs, /sendVerificationEmail:\s*async[\s\S]{0,450}catch \(error\)[\s\S]{0,300}console\.error/);
+	// The shape this pins changed with finding EV-3 (2026-08-31 pre-flip
+	// audit). It used to be `try { await mailer.send(...) } catch { console.error }`.
+	// The await was the defect: /api/auth/send-verification-email — the
+	// endpoint this very button calls — is reachable with NO session, and
+	// Better Auth defends it with a 500ms constant-time floor so that
+	// "unknown or already-verified" and "known and unverified" look alike.
+	// An awaited SES round trip walks straight through that floor (measured
+	// 504ms vs 922ms against a 900ms mailer), turning the resend button into
+	// an account-existence oracle for anonymous callers. It is now
+	// fire-and-forget with its own `.catch`, exactly like sendResetPassword.
+	//
+	// So: same two properties as before — the failure is caught, and it is
+	// logged, not swallowed — plus the third one that made it correct. The
+	// behavioural guard for the timing property lives in
+	// auth/test/email-flows.test.js ("the anonymous resend path does not leak
+	// account existence through response time"); this is the cheap
+	// source-level pin that sits next to the button's own tests.
+	assert.match(
+		authJs,
+		/sendVerificationEmail:\s*async[\s\S]{0,120}mailer\.send\(\{[\s\S]{0,450}\}\)\.catch\([\s\S]{0,200}console\.error/,
+	);
+	assert.doesNotMatch(authJs, /sendVerificationEmail:\s*async[\s\S]{0,200}await mailer\.send/);
 	assert.doesNotMatch(authJs, /catch \(error\)[\s\S]{0,50}throw error/);
 });

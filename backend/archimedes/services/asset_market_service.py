@@ -2,10 +2,11 @@
 
 Primary price source: on-chain ``PriceOracle.getPrice(token)`` via ``chain_client``.
 Fall back to yfinance histories for change windows / vol and as a price
-fallback when the oracle is stale or unavailable.  30-second TTL cache
-(per the Phase 3a spec — page must load <1s without synchronous on-chain
-reads on cache hit). The plain-English explanations live in this module so
-the route handler stays a thin facade.
+fallback when the oracle is stale or unavailable.  Cached under
+``_CACHE_TTL_SECONDS`` (per the Phase 3a spec — page must load <1s without
+synchronous on-chain reads on cache hit); that TTL is required to exceed the
+rebuild budget, see the constant. The plain-English explanations live in this
+module so the route handler stays a thin facade.
 
 Universe (aligned 2026-07 — #759 follow-up to PR #842): the listing iterates
 the **deploy-eligible SSOT universe** (``archimedes.universe.ON_CHAIN_SYNTHS``,
@@ -22,8 +23,9 @@ follow-up requests converge to full coverage.
 
 Staleness semantics (rebuilt 2026-05-25 — see Explore page rebuild):
 The on-chain ``PriceOracle`` is only actively pushed for a small subset of
-synths (those in ``OracleUpdater.YFINANCE_MAP`` / ``CRYPTO_MAP`` — currently
-~9 symbols). The rest of the universe has an
+synths (those in ``OracleUpdater.YFINANCE_MAP`` / ``CRYPTO_MAP``, derived by
+``oracle_health._push_set_symbols`` — 2 of the 281 as of 2026-08, never
+hard-coded here). The rest of the universe has an
 oracle slot allocated but no one calls ``setPrice()`` for it. Flagging those
 assets as "STALE" when in fact the displayed price comes from yfinance is
 misleading — the *displayed* price isn't stale; an unused oracle slot is. So
@@ -50,15 +52,26 @@ from archimedes.api.explore_schemas import (
 logger = logging.getLogger(__name__)
 
 
-_CACHE_TTL_SECONDS = 30
+# Cache TTL for the composed Explore payload. It MUST stay strictly greater
+# than the worst-case rebuild cost (_ORACLE_TOTAL_BUDGET_SECONDS +
+# _HISTORY_FETCH_BUDGET_SECONDS, both below) — otherwise a cache entry is
+# already expired by the time the rebuild that produced it returns, every
+# subsequent request re-kicks a background refresh, and the refresher runs
+# essentially continuously on every task. That is what 30s-against-a-57s-budget
+# was doing in prod (#1664; the docstring below records 12.7-42.9s measured
+# rebuilds). The *invariant* is the thing under guard, not this literal — see
+# ``test_cache_ttl_exceeds_rebuild_budget``, which re-derives it from the two
+# budget constants so a future budget edit cannot silently re-open the hole.
+_CACHE_TTL_SECONDS = 120
 _HISTORY_LOOKBACK = "3mo"  # enough for 30d realized vol + change windows
 _STALE_WINDOW_SECONDS = 5 * 60  # >5 min since oracle push → "stale" (per issue #168)
 _YF_STALE_WINDOW_SECONDS = 4 * 24 * 60 * 60  # yfinance daily-close → stale if >4 days old
 _ORACLE_READ_TIMEOUT = 5  # seconds per individual chain read
-# Total budget across ALL sequential oracle reads. With the ~280-synth SSOT
-# universe, an unresponsive RPC at 5s/read would otherwise stall the request
-# for minutes; symbols past the deadline are skipped (their card falls back
-# to yfinance / "none").
+# Aggregate budget across ALL oracle reads for one rebuild. Since #1664 the
+# reads are narrowed to the pushed set and run concurrently, so this is a
+# backstop rather than the expected cost — it bounds the whole fan-out to one
+# round-trip window even if the candidate set grows. Symbols not read by the
+# deadline are skipped (their card falls back to yfinance / "none").
 _ORACLE_TOTAL_BUDGET_SECONDS = 12.0
 # yfinance history fetch: chunked batch calls under one total budget. Chunks
 # keep each yf.download() call bounded so a slow upstream loses at most one
@@ -449,6 +462,10 @@ def _fetch_yfinance_series(symbol: str, period: str, interval: str) -> list[Expl
     the market-data provider seam (#1218 — default provider yfinance,
     unchanged behavior; vendor-swappable via ``MARKET_DATA_PROVIDER``).
 
+    Seam: ``intraday`` (#1798). This is the arbitrary-``interval`` shape, which
+    the daily-bar vendor does not serve, so the Explore history modal stays on
+    the intraday vendor even after the daily bars flip.
+
     Returns an empty list when the symbol is unknown, the provider is
     unavailable, or the upstream feed returned no data. The caller (route
     handler) turns an empty list into a 404 so the frontend can render an
@@ -470,7 +487,7 @@ def _fetch_yfinance_series(symbol: str, period: str, interval: str) -> list[Expl
     try:
         from archimedes.services.market_data_provider import get_provider
 
-        close = get_provider().get_series(yf_ticker, period, interval)
+        close = get_provider(seam="intraday").get_series(yf_ticker, period, interval)
     except Exception as exc:
         logger.warning("explore: market-data history fetch failed for %s (%s/%s): %s", symbol, period, interval, exc)
         return []
@@ -542,7 +559,10 @@ def _ssot_display_name(synth: str, fallback: str) -> str:
 
 
 class AssetMarketService:
-    """Composes per-synth market stats from on-chain oracle + histories. 30s TTL cache."""
+    """Composes per-synth market stats from on-chain oracle + histories.
+
+    Cached for ``_CACHE_TTL_SECONDS``, stale-while-revalidate.
+    """
 
     def __init__(self) -> None:
         self._cache: ExploreAssetsResponse | None = None
@@ -561,21 +581,50 @@ class AssetMarketService:
         self,
         synth_symbols: list[str],
     ) -> dict[str, dict[str, Any]]:
-        """Read current prices from on-chain PriceOracle for each synth.
+        """Read current prices from on-chain PriceOracle for the *pushed* synths.
 
         Returns ``{symbol: {price: float, updated_at: int, stale: bool}}``.
         Symbols missing from oracle config or failing chain reads are omitted.
-        Reads run sequentially under ``_ORACLE_TOTAL_BUDGET_SECONDS``; symbols
-        past the deadline are skipped (yfinance covers their card instead).
+
+        Fan-out (#1664). This used to walk the whole ~281-symbol SSOT universe
+        serially, issuing a ``getPrice`` per symbol into Arc RPC on every
+        rebuild — for a slot that nobody calls ``setPrice()`` on, so the read
+        returns nothing usable and the card falls through to yfinance anyway
+        (see the module docstring's staleness note). At a rebuild running
+        essentially continuously that is the single largest RPC consumer in the
+        app and a candidate source of the observed ``rpc.testnet.arc.network``
+        429 wave, which in turn stalls ``oracle_health`` and gets healthy tasks
+        killed by the /health check.
+
+        So the candidate set is narrowed BEFORE any read: a symbol must be in
+        the requested universe **and** have both an oracle and a synth address
+        configured **and** be in the updater's actually-pushed set. Today that
+        resolves to ``{"sSPY", "sBTC"}`` — 2 reads, not 281. The push set is
+        *derived* on every call from ``oracle_updater``'s maps rather than
+        hard-coded, so adding a pushed symbol lands here with no edit; this
+        mirrors ``services/oracle_health.py``'s probe, which is the precedent
+        for "probe the push set, not the universe."
+
+        The survivors then run CONCURRENTLY under one aggregate deadline
+        (``_ORACLE_TOTAL_BUDGET_SECONDS``), each read still capped by
+        ``_ORACLE_READ_TIMEOUT``, so the worst case is one bounded round-trip
+        window instead of reads x timeout. Partial results are kept and served
+        honestly if the aggregate deadline does fire; unread symbols fall
+        through to yfinance exactly as before, so ``price_source`` semantics
+        are unchanged.
         """
         try:
             import json
             from pathlib import Path
 
             from archimedes.chain.client import chain_client
+            from archimedes.services.oracle_health import _push_set_symbols
 
             oracle_addrs = chain_client.settings.oracle_addresses or {}
             synth_addrs = chain_client.settings.synth_addresses or {}
+            # Read-only reuse of oracle_health's derivation so the two surfaces
+            # cannot drift to different ideas of "which oracles are live".
+            pushed = set(_push_set_symbols())
 
             # Resolve ABI path — try multiple locations (repo root, relative)
             abi_candidates = [
@@ -595,55 +644,76 @@ class AssetMarketService:
             logger.warning("explore: IPriceOracle ABI not found")
             return {}
 
+        # Narrow BEFORE reading: universe ∩ configured-addresses ∩ pushed set.
+        # getPrice takes the synth token address, called on the oracle contract,
+        # so both addresses have to resolve for a read to be possible at all.
+        candidates = [
+            symbol
+            for symbol in synth_symbols
+            if symbol in pushed and oracle_addrs.get(symbol) and synth_addrs.get(symbol)
+        ]
+        logger.debug(
+            "explore: oracle read fan-out %d/%d symbols (pushed ∩ configured)",
+            len(candidates),
+            len(synth_symbols),
+        )
+        if not candidates:
+            return {}
+
         results: dict[str, dict[str, Any]] = {}
         now_ts = time.time()
-        deadline = time.monotonic() + _ORACLE_TOTAL_BUDGET_SECONDS
 
-        for i, symbol in enumerate(synth_symbols):
-            oracle_addr = oracle_addrs.get(symbol)
-            synth_addr = synth_addrs.get(symbol)
-            # getPrice takes the synth token address, called on the oracle contract
-            if not oracle_addr or not synth_addr:
-                continue
-            if time.monotonic() > deadline:
-                logger.warning(
-                    "explore: oracle read budget exhausted after %d/%d symbols (%d priced)",
-                    i,
-                    len(synth_symbols),
-                    len(results),
-                )
-                break
+        async def _read_one(symbol: str) -> None:
+            """Read one oracle, recording into ``results`` on success.
+
+            Writes as a side effect (rather than returning) so that partial
+            coverage survives an aggregate-deadline cancellation: whatever
+            landed before the timeout is still served.
+            """
+            oracle_addr = oracle_addrs[symbol]
+            synth_addr = synth_addrs[symbol]
             try:
                 contract = chain_client.w3.eth.contract(
                     address=chain_client.to_checksum(oracle_addr),
                     abi=oracle_abi,
                 )
-                # Bound each read by BOTH the per-read cap and the remaining
-                # total budget — otherwise a read started near the deadline can
-                # overshoot the endpoint budget by up to _ORACLE_READ_TIMEOUT.
-                remaining = deadline - time.monotonic()
                 price_raw, updated_at = await asyncio.wait_for(
                     contract.functions.getPrice(chain_client.to_checksum(synth_addr)).call(),
-                    timeout=max(0.1, min(_ORACLE_READ_TIMEOUT, remaining)),
+                    timeout=_ORACLE_READ_TIMEOUT,
                 )
-                price_usd = float(price_raw) / 1e6  # 6 decimals per PriceOracle.sol
-                # A future updated_at (block time ahead of the host clock) is
-                # anomalous: normal block timestamps are ≤ wall clock, and a
-                # timestamp in the future would leave the age permanently
-                # negative — masking genuine staleness forever. Treat any
-                # future timestamp as stale rather than "fresh" (#934).
-                age = now_ts - updated_at
-                stale = age < 0 or age > _STALE_WINDOW_SECONDS
-                results[symbol] = {
-                    "price": price_usd,
-                    "updated_at": updated_at,
-                    "stale": stale,
-                    "oracle_address": oracle_addr,
-                }
             except TimeoutError:
                 logger.debug("explore: oracle read timeout for %s", symbol)
+                return
             except Exception as exc:
                 logger.debug("explore: oracle read failed for %s: %s", symbol, exc)
+                return
+            price_usd = float(price_raw) / 1e6  # 6 decimals per PriceOracle.sol
+            # A future updated_at (block time ahead of the host clock) is
+            # anomalous: normal block timestamps are ≤ wall clock, and a
+            # timestamp in the future would leave the age permanently
+            # negative — masking genuine staleness forever. Treat any
+            # future timestamp as stale rather than "fresh" (#934).
+            age = now_ts - updated_at
+            stale = age < 0 or age > _STALE_WINDOW_SECONDS
+            results[symbol] = {
+                "price": price_usd,
+                "updated_at": updated_at,
+                "stale": stale,
+                "oracle_address": oracle_addr,
+            }
+
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*(_read_one(symbol) for symbol in candidates)),
+                timeout=_ORACLE_TOTAL_BUDGET_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "explore: oracle read budget (%.1fs) exhausted — %d/%d symbols priced",
+                _ORACLE_TOTAL_BUDGET_SECONDS,
+                len(results),
+                len(candidates),
+            )
 
         return results
 
@@ -704,16 +774,18 @@ class AssetMarketService:
         """Serve the asset list, stale-while-revalidate (#explore-latency).
 
         The old shape awaited the full oracle+yfinance rebuild inline on
-        every cache miss: whichever request landed just after the 30s TTL
+        every cache miss: whichever request landed just after the TTL
         expired paid that cost synchronously. Measured in prod (2026-08-02):
         12.7s-42.9s per rebuild. The oracle read alone accounts for up to
         ``_ORACLE_TOTAL_BUDGET_SECONDS`` of that, and it is spent whether or
-        not any price comes back: ``_read_oracle_prices`` runs its reads
-        sequentially under that budget and simply OMITS symbols that fail or
-        run past the deadline, so a fully unresponsive oracle costs the entire
-        budget and returns nothing.
+        not any price comes back: ``_read_oracle_prices`` simply OMITS symbols
+        that fail or run past the deadline, so a fully unresponsive oracle
+        costs the entire budget and returns nothing.
         That is the whole "Explore takes a long time to load" symptom for
-        an unlucky visitor.
+        an unlucky visitor. (#1664 attacked the other half of the same
+        problem: the TTL was shorter than that rebuild, so the background
+        refresher never got to rest, and the read fanned out across the whole
+        universe instead of the ~2 pushed oracles.)
 
         Fix: once a cache exists at all, NEVER block a request behind a
         rebuild. A stale cache is served immediately and a rebuild is

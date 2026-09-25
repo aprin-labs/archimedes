@@ -33,7 +33,7 @@ from tests.test_agent_discovery import _EXTERNALLY_SERVED_PREFIXES, _openapi_ind
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 QUICKSTART = REPO_ROOT / "docs" / "agent-quickstart.md"
-DOCS_INDEX = REPO_ROOT / "docs" / "README.md"
+DOCS_INDEX = REPO_ROOT / "docs" / "doc-index.md"
 
 # "GET /api/thing" inside a backtick span — the step table's cells and the prose both use
 # that form, so one pattern covers the whole page.
@@ -172,5 +172,41 @@ def test_every_curl_target_also_resolves_against_the_live_openapi():
 def test_the_quickstart_is_listed_in_the_docs_index():
     """CLAUDE.md's rule, asserted: "a doc not listed there does not exist"."""
     assert "agent-quickstart.md" in DOCS_INDEX.read_text(encoding="utf-8"), (
-        "docs/agent-quickstart.md has no row in docs/README.md — add one in the same commit."
+        "docs/agent-quickstart.md has no row in docs/doc-index.md — add one in the same commit."
+    )
+
+
+# ── the rigor verdict this page teaches (#1746 PR-B) ─────────────────────────
+#
+# The page's own paragraph says "every route serves that stored verdict", and
+# the four-state table eight lines above it said the opposite — `pass` meant
+# "the live gate passed" and `pending` meant "no real persisted returns yet".
+# The second is the one with teeth: between a deploy of #1746 PR-B and the
+# `grade_curated` run (docs/runbooks/curated-backtests.md § "Grading on its
+# own"), every curated strategy reads `pending` WITH real persisted returns, so
+# an agent following that row concludes the backtest does not exist.
+
+
+def test_the_page_does_not_promise_a_gate_run_on_read():
+    """MUTATION: put "step 9 is the live gate the server enforces" back."""
+    text = _text().lower()
+    for phrase in ("live gate", "live verdict"):
+        assert phrase not in text, (
+            f"docs/agent-quickstart.md still says {phrase!r}. Every strategy route serves the "
+            "STORED verdict of record and runs no gate — docs/adr/rigor-verdict-of-record.md."
+        )
+
+
+def test_the_pending_row_names_the_ungraded_case():
+    """``pending`` is "nobody graded this", not "there is no backtest".
+
+    MUTATION: restore "No real persisted returns yet; the gate could not run".
+    """
+    rows = [line for line in _text().splitlines() if line.startswith("| `pending`")]
+    assert len(rows) == 1, f"expected exactly one `pending` row in the four-state table, found {len(rows)}"
+    row = rows[0].lower()
+    assert "grading job" in row, (
+        f"the `pending` row does not name the ungraded case: {rows[0]!r}. A curated strategy with "
+        "real persisted returns reads `pending` until the grading job has run over them, and an "
+        "agent told `pending` means 'no returns yet' will read that as a broken backtest (#1184)."
     )

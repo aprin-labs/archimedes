@@ -545,6 +545,11 @@ class TestGeneratedWriterSitesReachTheRow:
 
         assert row is not None, "no backtest_results row — _persist_real_returns did not run to completion"
         assert row.cost_model_id == DEFAULT_COST_MODEL_ID
-        assert row.look_ahead_audit_source == "self_attested"
+        # Never "self_attested" again — that value named the LLM's own removed
+        # look_ahead_safe declaration as the provenance of the audit bool. This
+        # verdict blob carries no look_ahead_status, so the honest provenance is
+        # "the audit did not run", not "the spec said so".
+        assert row.look_ahead_audit_source == "dsl_audit_not_run"
+        assert row.look_ahead_audit_source != "self_attested"
         assert row.correlation_to_spy is None
         assert row.correlation_to_btc is None

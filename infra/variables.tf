@@ -37,7 +37,7 @@ variable "project_name" {
 variable "repo_url" {
   description = "GitHub repo HTTPS URL for cloning on the instance"
   type        = string
-  default     = "https://github.com/a-apin/archimedes.git"
+  default     = "https://github.com/aprin-labs/archimedes.git"
 }
 
 # AMI for the backend auto-scaling group (issue #155, OPTIONAL virality tier).
@@ -74,9 +74,13 @@ variable "ecs_service_desired_count" {
 }
 
 variable "ecs_service_min_count" {
+  # 2, not 1 (owner decision 2026-08-31): a one-task fleet turns every deploy
+  # into a brief 502 window (rollout gap) and every backend crash into a
+  # user-facing outage — both bitten twice on 2026-08-31 (#1594, #1632).
+  # At 2, rollouts overlap and a single crash is invisible. ~$15-18/mo.
   description = "Application Auto Scaling floor for the archimedes-backend service."
   type        = number
-  default     = 1
+  default     = 2
 }
 
 variable "ecs_service_max_count" {
@@ -109,6 +113,49 @@ variable "github_oauth_enabled" {
   default     = false
 }
 
+# ── Admission-control knobs (issue #1668) ──────────────────────────────────
+# The three levers that bound how much concurrent work one Fargate task takes
+# on. All three are read from the process environment by code that already
+# ships, and all three were absent from infra/ecs.tf — so production ran on the
+# code's os.getenv() fallbacks by accident rather than by decision. That is the
+# exact config-drift class the generation-cap comment in ecs.tf already calls
+# out in prose, and the one docs/adr/lambda-generation-offload.md recorded
+# under § Consequences instead of patching.
+#
+# `type = string`, not `number`: ECS `environment` entries are string/string
+# pairs and jsonencode would emit a bare JSON number, which the
+# RegisterTaskDefinition API rejects (KeyValuePair.value is typed String). Same
+# reason ecs_backend_cpu / ecs_backend_memory are strings.
+#
+# Defaults here are byte-identical to the os.getenv() fallbacks in the code, so
+# this is pure plumbing: applying it changes no behaviour, it only makes the
+# values visible and tunable without a code deploy. Retuning them is a separate
+# change with separate review (issue #1668 anti-goal). The pairing is pinned by
+# backend/tests/test_admission_knobs_drift.py, which reads both sides — the
+# reader-facing source of each default is that test, not these comments.
+#
+# Each description names the READING FUNCTION rather than a line number: the
+# line moves whenever anything above it is edited, and a stale citation is
+# worse than none.
+
+variable "generation_max_concurrent" {
+  description = "GENERATION_MAX_CONCURRENT — how many strategy-generation pipelines may run at once inside ONE backend task. A generation averages ~65% of the task's vCPU for ~48s (measured 2026-08-20), so unbounded parallelism starves auth/SSE/the ALB health check and the task gets killed with every in-flight job. Floored at 1 by the code. Must match the os.getenv default in `_max_concurrent_generations()`, backend/archimedes/api/generate_routes.py."
+  type        = string
+  default     = "1"
+}
+
+variable "generation_max_queue" {
+  description = "GENERATION_MAX_QUEUE — how many further generations may WAIT for a slot (the job stays `queued` and its SSE stream gets a job_queued event plus heartbeats). Beyond this /start refuses 429 BEFORE the payment gate, so nobody is charged for a slot that does not exist. 0 disables queueing. Must match the os.getenv default in `_max_queued_generations()`, backend/archimedes/api/generate_routes.py."
+  type        = string
+  default     = "10"
+}
+
+variable "debate_pool_max" {
+  description = "DEBATE_POOL_MAX — how many of the regime×mechanism `_STEERS` (3 regimes × 6 mechanisms = 18 today) fan out as parallel proposer LLM calls in the multi-agent debate; the code clamps to [2, len(_STEERS)]. This is the debate's cost lever (docs/specs/multi-agent-debate-spec.md § 8): the deterministic critics and the backtests cost zero tokens, the proposer fan-out is the N× spend. Must match the os.getenv default in `_pool_max()`, backend/archimedes/agents/debate_engine.py."
+  type        = string
+  default     = "10"
+}
+
 # ── Config consolidation (issue #1039 P5) ──────────────────────────────────
 # Public wallet addresses (not secrets — no private key material), but
 # operator-specific and NOT baked into the image or a box `.env` file. Set at
@@ -121,7 +168,13 @@ variable "github_oauth_enabled" {
 # ARCHIMEDES_TREASURY_WALLET default in `.env.example`.
 
 variable "platform_admin_wallets" {
-  description = "Space/comma-separated wallet addresses allowed to publish `is_example` strategies to the marketplace (backend/archimedes/models/strategy_generators.py:wallet_can_publish; issue #1037). Public addresses, not secrets."
+  description = "Space/comma-separated wallet addresses allowed to publish `is_example` strategies to the marketplace (backend/archimedes/models/strategy_generators.py:wallet_can_publish; issue #1037). Also EVIDENCE for the admin dashboard gate since #1648: an account is admin when any of its OWN linked wallets is listed. Public addresses, not secrets."
+  type        = string
+  default     = ""
+}
+
+variable "platform_admin_accounts" {
+  description = "Space/comma-separated canonical account identifiers (Better Auth `auth_users.id` values and/or emails) granted the admin cost/ops dashboard (backend/archimedes/services/platform_admin.py; issue #1648). The account-keyed allowlist: unlike `platform_admin_wallets` it survives a wallet unlink and needs no database read, so it is the break-glass during a datastore incident. Derive the value with backend/scripts/derive_platform_admin_accounts.py. Not secrets, but account-identifying — same `TF_VAR_` drift gotcha as the wallet list: re-pass it on every apply or it silently empties."
   type        = string
   default     = ""
 }
@@ -201,13 +254,98 @@ variable "dmarc_rua_address" {
   description = <<-EOT
     Mailbox for DMARC aggregate reports (the rua= tag).
 
-    Reports only ARRIVE once inbound mail for this address is actually handled
-    — the zone's MX already points at SES inbound, but the receipt rule that
-    delivers it is #1460's scope. Until then the DMARC record still publishes
-    the policy signal Gmail/Yahoo bulk-sender rules look for; the reports are
-    simply not collected yet, and a reporter that cannot deliver drops them
-    silently rather than bouncing at us.
+    Read by TWO resources and they must agree: aws_route53_record.dmarc below
+    publishes it to the world, and aws_ses_receipt_rule.dmarc_reports
+    (dmarc_reports.tf, #1504) is what makes mail to it actually land somewhere.
+    Changing this in one place only means reporters send to an address with no
+    rule behind it. Nothing is stored, and no failure surfaces on our side —
+    any delivery error is the reporting receiver's to handle, where we never
+    see it. The symptom is an empty bucket, which is indistinguishable from
+    "nobody is spoofing us".
+
+    Procedure and interpretation: docs/runbooks/dmarc-reports.md.
   EOT
   type        = string
   default     = "dmarc-reports@archimedes-arc.com"
+}
+
+variable "public_trace_vaults" {
+  description = "Comma-separated house/demo vault addresses whose ownerless reasoning traces form the public proof surface (backend/archimedes/services/trace_visibility.py, #1556). Public on-chain addresses, not secrets. The default is the five house vaults observed in the live trace store on 2026-08-31; ownerless traces from any other vault go private once this is applied."
+  type        = string
+  default     = "0x88F284e6667947d66949528dB209b2a50bf2f612,0x99120A79f54F83f6729E1E1e2B1f536952BF3574,0x9d4530e874D712d3F0f65c49F9355403bf232e66,0xA3b077e16C208cD794581db46b559FDC9619ada7,0xcdd47c6D16a206f2C69B6D533Ac98b56Db3CeF52"
+}
+
+# ── SES bounce/complaint drain (#1804, infra/ses_events.tf) ─────────────────
+
+variable "ses_events_drain_cpu" {
+  description = "Fargate task-level vCPU units for the scheduled ses-events-drain task (infra/ses_events.tf). 256 = 0.25 vCPU, the Fargate minimum — the job reads a small SQS batch and writes one UPDATE per bounce, so this is sized for the boto3 + SQLAlchemy import cost, not for the work."
+  type        = string
+  default     = "256"
+}
+
+variable "ses_events_drain_memory" {
+  description = "Fargate task-level memory (MiB) for the scheduled ses-events-drain task. Must pair validly with ses_events_drain_cpu (256 cpu allows 512, 1024 or 2048) — see https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-cpu-memory-error.html."
+  type        = string
+  default     = "1024"
+}
+
+variable "ses_events_drain_schedule_expression" {
+  description = "EventBridge Scheduler rate/cron expression for the SES bounce/complaint drain (infra/ses_events.tf's aws_scheduler_schedule.ses_events_drain). Every 15 minutes is the latency a person retrying a signup would notice; the queue's 14-day retention means a looser interval loses nothing, it only makes the refusal later. Set to a longer rate to cut cost, not to `null` — there is no 'off' here short of setting the schedule's state, and a drain that never runs is the defect #1804 opened against."
+  type        = string
+  default     = "rate(15 minutes)"
+}
+
+# ── Outage paging (issue #1818 P5) ──────────────────────────────────────────
+
+variable "owner_alert_email" {
+  description = <<-EOT
+    The address the owner will ACTUALLY SEE a CloudWatch alarm at. Subscribed
+    to the `archimedes-alerts` SNS topic (infra/cloudwatch.tf) alongside — and
+    required to differ from — `alarm_email`.
+
+    WHY A SECOND ADDRESS, MEASURED. Issue #1818 P5 reads "there was no alarm".
+    The account says otherwise: on 2026-09-03, during a 94-minute outage,
+    `archimedes-alb-unhealthy-hosts` went to ALARM at 13:38:46Z,
+    `archimedes-alb-5xx-rate-high` at 13:39:16Z, and this topic delivered SIX
+    notifications with zero failures (AWS/SNS NumberOfNotificationsDelivered /
+    NumberOfNotificationsFailed). The owner still found out by loading the
+    site. The gap is not a missing alarm and not a missing subscription — it
+    is that a delivered email did not reach anyone's attention. Terraform
+    cannot fix that; the only thing it can do is force the question to be
+    answered, by making the destination a required input and refusing to let
+    it be a duplicate of the mailbox that already failed.
+
+    NO DEFAULT — DELIBERATE. Apart from `aurora_master_password` this is the
+    only defaultless variable in the file. A default would let an apply
+    succeed without anyone deciding where a page goes, which is the class of
+    silence #1818 is about. Pick a channel you will see: a mailbox you
+    actually watch, an SMS gateway, a PagerDuty/Opsgenie intake address.
+
+    MUST DIFFER FROM `alarm_email`, enforced by a `precondition` on
+    `aws_sns_topic_subscription.owner_alerts_email`. SNS keys a subscription
+    by (topic, protocol, endpoint), so the same address in both variables
+    would give two Terraform resources one SubscriptionArn — and an apply that
+    dropped either would unsubscribe the other, leaving the topic with no
+    subscriber while state claimed otherwise.
+
+    NOT a personal address in this repo: the repository is public. Set it in
+    infra/terraform.tfvars (gitignored) — see infra/README.md § "Operational
+    variables" and infra/terraform.tfvars.example.
+
+    AWS emails a confirmation link on the first apply; the subscription pages
+    nobody until it is clicked, and an unconfirmed subscription is
+    indistinguishable from a confirmed one on Terraform's side. Confirm it,
+    then run the alarm drill in infra/runbooks/disaster-recovery.md § Drills —
+    "the mail arrives AND I notice it" is the only assertion that matters here
+    and it is the one 2026-09-03 falsified.
+  EOT
+  type        = string
+
+  validation {
+    # Rejects "" along with anything else not shaped like an address. A
+    # `count` gate would be the wrong tool: an empty value would apply cleanly
+    # and page nobody, which is the shape being designed out.
+    condition     = can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.owner_alert_email))
+    error_message = "owner_alert_email must be a real email address, and one you will actually see — issue #1818 P5's measured finding is that six alarm emails were delivered on 2026-09-03 and still did not reach the owner. Set it in infra/terraform.tfvars."
+  }
 }

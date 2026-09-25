@@ -47,7 +47,7 @@ from archimedes.api.generate_schemas import (
 )
 from archimedes.api.limiter import limiter
 from archimedes.api.wallet_routes import get_linked_wallet_address
-from archimedes.services import generation_credits, generation_payment
+from archimedes.services import free_generations, generation_credits, generation_payment
 from archimedes.services.generation_quota import enforce_generation_quota
 from archimedes.services.identity_events import emit_identity_event
 from archimedes.services.job_queue import EVENT_LOG_TTL, get_job_store
@@ -105,9 +105,11 @@ _STALLED_AFTER_SECONDS = 300
 # this bound.
 _DEFAULT_GENERATION_TIMEOUT_SECONDS = 600
 
-# Live registry of in-flight asyncio tasks per job. Lets cancel_job actually
-# stop the work — without this, /cancel only flips Redis status while the
-# agent keeps burning LLM tokens to completion.
+# Registry of the in-flight asyncio tasks THIS process is running, for local
+# liveness/diagnostics only. It is deliberately NOT the cancellation
+# mechanism (#1667): a process-local dict cannot see a job started by another
+# task, so cancel_job goes through the shared Redis flag
+# (`JobStore.request_cancel`) that the pipeline polls at its stage boundaries.
 _RUNNING_TASKS: dict[str, asyncio.Task] = {}
 
 
@@ -420,16 +422,16 @@ async def start_generation(
             },
         )
 
-    # Cheap, deterministic brief prelude (Lane 1.3c: "never charge for a
-    # brief we can cheaply reject"). Deliberately BEFORE the payment gate —
-    # a caller must never be charged for a brief that is obviously invalid
-    # (empty / gibberish). Shares its exact criteria with the real (LLM)
-    # validator's own prelude in generation_pipeline._validate_brief via
+    # Deterministic brief screen (Lane 1.3c: "never charge for a brief we can
+    # cheaply reject"). Deliberately BEFORE the payment gate — a caller must
+    # never be charged for a brief that is empty, gibberish, over-length, or
+    # carrying a prompt-injection payload. Shares its exact criteria with the
+    # LLM validator's own prelude in generation_pipeline._validate_brief via
     # `cheap_brief_reject` — see that function's docstring for why the two
-    # call sites can never drift apart. Anything this misses (off-topic but
-    # grammatical text, jailbreak attempts) still gets the expensive LLM
-    # check post-payment, exactly as before — that outcome legitimately
-    # consumes work, so it stays a credit spend, not a pre-payment refusal.
+    # call sites can never drift apart. What this still misses is SEMANTIC
+    # (off-topic but grammatical text): that gets the LLM check post-payment,
+    # exactly as before — that outcome legitimately consumes work, so it
+    # stays a credit spend, not a pre-payment refusal.
     cheap_reject = cheap_brief_reject(req.brief)
     if cheap_reject is not None:
         raise HTTPException(
@@ -439,6 +441,10 @@ async def start_generation(
                 "code": "BRIEF_INVALID",
                 "message": _invalid_brief_message(cheap_reject.get("reason")),
                 "hint": cheap_reject.get("hint") or "Mention an asset class, a goal, or a risk appetite.",
+                # Machine-readable code from services.brief_screen's versioned
+                # vocabulary (#1801). Additive — the four keys above are
+                # unchanged, so no existing client moves.
+                "reason_code": cheap_reject.get("code") or "",
             },
         )
 
@@ -454,66 +460,145 @@ async def start_generation(
     # job_id exists).
     payment = None
     credit_id = None
+    free_grant_id = None
     if generation_payment.payment_required():
-        if not linked_wallet:
-            # The wallet-connection precondition. 409 (not 402): the blocker is
-            # account state, not a missing payment. NOTE the faucet is the one
-            # human-only step (#1294) — an agent hitting this must have its
-            # wallet funded by a human before payment can succeed.
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "reason": "wallet_link_required",
-                    "message": (
-                        "Generation requires a linked, funded wallet. Link a wallet to your account "
+        # FREE PATH (#1643 — the owner's 2026-08-31 product review REVERSES the
+        # 2026-08-19 "no free path" directive). An account is still required for
+        # every generation, free or paid — `require_current_user` above is
+        # unconditional and there is deliberately no wallet-only path — but the
+        # first FREE_GENERATIONS_PER_ACCOUNT (default 3) runs on a VERIFIED
+        # account need no wallet and no payment. The slot is claimed BEFORE the
+        # gate it opens, so N concurrent first-generation calls cannot each be
+        # granted one (services/free_generations.py, and the unique constraint
+        # behind it). Everything from grant #4 onward is byte-for-byte the
+        # behaviour below, unchanged.
+        #
+        # `email_verified` is owner decision D1 (2026-08-31, recorded on #1653):
+        # the allowance unlocks on a verified email, not on account creation
+        # alone — accounts are free and unlimited, a working inbox is not, so
+        # verification is what prices disposable-account farming of free LLM
+        # runs. An unverified caller is NOT refused here; it simply falls
+        # through to the wallet gate + paywall it had before this path existed.
+        # The flag is threaded from CurrentUser (api/account_auth.py parses
+        # Better Auth's `emailVerified` in exactly one place) and is a required
+        # keyword argument, so a future call site cannot forget it.
+        #
+        # The claim lives INSIDE this flag branch on purpose: under flag-off
+        # nothing is gated and nothing is charged, so burning a lifetime
+        # allowance there would silently spend a user's free runs during a
+        # period when generation was free for everyone anyway.
+        free_grant_id = free_generations.claim(user.id, email_verified=user.email_verified)
+        if free_grant_id is None:
+            if not linked_wallet:
+                # The wallet-connection precondition. 409 (not 402): the blocker is
+                # account state, not a missing payment. NOTE the faucet is the one
+                # human-only step (#1294) — an agent hitting this must have its
+                # wallet funded by a human before payment can succeed.
+                # Funnel (#1643): this is the exhausted-the-free-tier boundary —
+                # the transition the conversion instrument most needs to see.
+                await record_funnel(request, "wallet_gate_shown")
+                # Two DIFFERENT dead ends share this status code, and telling a
+                # caller the wrong one wastes its next request: an account that
+                # spent its three free runs has only the wallet left, while an
+                # unverified account has two ways out and the cheaper one is the
+                # inbox it already owns. `reason` stays `wallet_link_required`
+                # (the machine contract every client already branches on);
+                # `free_generations_locked_reason` is the new, additive field
+                # that distinguishes them, and the message names BOTH unlocks
+                # when both are real.
+                locked = free_generations.locked_reason(email_verified=user.email_verified)
+                if locked == free_generations.LOCK_EMAIL_UNVERIFIED:
+                    message = (
+                        "Two ways to generate. (1) Verify your email to unlock "
+                        f"{free_generations.allowance()} free generations on this account — no wallet and no "
+                        "payment needed. We emailed a verification link when you signed up; "
+                        "POST /api/auth/send-verification-email re-sends it. "
+                        "(2) Or link a wallet now (POST /api/wallets/challenge → /api/wallets/verify), "
+                        "fund it with testnet USDC (the faucet currently requires a human), and pay per run. "
+                        "See GET /api/generate/quote for the price."
+                    )
+                else:
+                    message = (
+                        "Your free generations are used up. Generation now requires a linked, funded "
+                        "wallet. Link a wallet to your account "
                         "(POST /api/wallets/challenge → /api/wallets/verify), fund it with testnet USDC "
                         "(the faucet currently requires a human), then retry. "
                         "See GET /api/generate/quote for the price."
-                    ),
-                },
-            )
-        payment, credit_id = await _paywall_with_credit(request, linked_wallet, user.id)
-        if payment is not None:
-            # Surface the settlement receipt (PAYMENT-RESPONSE) to the payer.
-            for name, value in (payment.response_headers or {}).items():
-                response.headers[name] = value
+                    )
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "reason": "wallet_link_required",
+                        "free_generations_locked_reason": locked,
+                        "message": message,
+                    },
+                )
+            payment, credit_id = await _paywall_with_credit(request, linked_wallet, user.id)
+            if payment is not None:
+                # Surface the settlement receipt (PAYMENT-RESPONSE) to the payer.
+                for name, value in (payment.response_headers or {}).items():
+                    response.headers[name] = value
 
-    # Paid-tier gating (T1.8): a premium (Anthropic) model requires a
-    # wallet-connected entitlement. Enforced BEFORE the job is enqueued so a
-    # non-entitled premium request is rejected (HTTP 402) without burning any
-    # work — and is NOT silently downgraded to the free default model. Free
-    # models (and the unset/default case) always pass.
-    # Normal account use and free models need no wallet.
-    enforce_model_entitlement(req.model, linked_wallet)
+    # From here to the enqueue, a claimed free slot is at risk: the entitlement
+    # gate can raise 402 and the enqueue can error, and either would leave the
+    # allowance spent on a generation that never ran. Same shape, and the same
+    # reason, as _paywall_with_credit's `except BaseException: void; raise`.
+    # This covers only what THIS request can see fail. Everything that goes
+    # wrong after the enqueue — the corpus yielding too few papers to fuse, a
+    # pipeline crash, a cancel — is released by
+    # `release_entitlements_if_undelivered` in the run's own `finally`, keyed on
+    # the job id stamped below. That seam, not this helper's caller, is what
+    # makes the release reach BOTH run paths (#1793).
+    try:
+        # Paid-tier gating (T1.8): a premium (Anthropic) model requires a
+        # wallet-connected entitlement. Enforced BEFORE the job is enqueued so a
+        # non-entitled premium request is rejected (HTTP 402) without burning any
+        # work — and is NOT silently downgraded to the free default model. Free
+        # models (and the unset/default case) always pass.
+        # Normal account use and free models need no wallet. A free-tier caller
+        # is NOT exempt: the free allowance buys the default model, not premium.
+        enforce_model_entitlement(req.model, linked_wallet)
 
-    store = get_job_store()
-    # Free-tier selection (defense in depth — the UI also restricts this).
-    # Runs AFTER the entitlement gate above: a non-entitled premium request has
-    # already been rejected with 402, so this only ever sees an allowlisted free
-    # model, an entitled premium id, junk, or None. Only an allowlisted free-tier
-    # id is honored for the pipeline; everything else (incl. entitled premium,
-    # which cannot serve until Bedrock activation — roadmap T3.8) falls back to
-    # the env default, so behavior is UNCHANGED when no valid free model is picked.
-    selected_model = req.model if is_allowed_model(req.model) else None
-    if req.model and selected_model is None:
-        logger.info("generate: ignoring non-allowlisted model %r; using env default", sanitize_log_value(req.model))
-    # Canonical Better Auth ownership is server-derived and follows the job
-    # through persistence. Wallet provenance stays optional.
-    job_id = await store.enqueue(
-        job_type="generate",
-        payload={
-            "brief": req.brief.model_dump(),
-            "n_candidates": req.n_candidates,
-            "owner_user_id": user.id,
-            "owner_wallet": linked_wallet,
-            # The allowlist-filtered model the pipeline will actually use (None →
-            # env default). enforce_model_entitlement (above) has already rejected
-            # a non-entitled premium request with 402, so anything reaching here is
-            # either an allowlisted free model or None — auditable provenance for
-            # the tier the run was authorized for.
-            "model": selected_model,
-        },
-    )
+        store = get_job_store()
+        # Free-tier selection (defense in depth — the UI also restricts this).
+        # Runs AFTER the entitlement gate above: a non-entitled premium request has
+        # already been rejected with 402, so this only ever sees an allowlisted free
+        # model, an entitled premium id, junk, or None. Only an allowlisted free-tier
+        # id is honored for the pipeline; everything else (incl. entitled premium,
+        # which cannot serve until Bedrock activation — roadmap T3.8) falls back to
+        # the env default, so behavior is UNCHANGED when no valid free model is picked.
+        selected_model = req.model if is_allowed_model(req.model) else None
+        if req.model and selected_model is None:
+            logger.info("generate: ignoring non-allowlisted model %r; using env default", sanitize_log_value(req.model))
+        # Canonical Better Auth ownership is server-derived and follows the job
+        # through persistence. Wallet provenance stays optional.
+        job_id = await store.enqueue(
+            job_type="generate",
+            payload={
+                "brief": req.brief.model_dump(),
+                "n_candidates": req.n_candidates,
+                "owner_user_id": user.id,
+                "owner_wallet": linked_wallet,
+                # The allowlist-filtered model the pipeline will actually use (None →
+                # env default). enforce_model_entitlement (above) has already rejected
+                # a non-entitled premium request with 402, so anything reaching here is
+                # either an allowlisted free model or None — auditable provenance for
+                # the tier the run was authorized for.
+                "model": selected_model,
+            },
+        )
+    except BaseException:
+        if free_grant_id is not None:
+            free_generations.release(free_grant_id)
+        raise
+
+    # The free slot is bound to its generation only now, once the job is queued
+    # — the same "spend only what was delivered" point at which a paid credit is
+    # consumed below. The stamp is also what the terminal-failure release finds
+    # the row by, so an unstamped slot cannot be handed back later (see
+    # `free_generations.stamp_job`, which says so where it fails).
+    if free_grant_id is not None:
+        free_generations.stamp_job(free_grant_id, job_id=job_id)
 
     # Payment receipt (Dan's directive: "we must provide people with their
     # receipts"). Only when a real settled PaymentInfo exists — flag-off and
@@ -545,6 +630,12 @@ async def start_generation(
     # Conversion funnel (#787): a generation actually started for this visitor —
     # the key "tried the product" transition. Fail-safe; never blocks the response.
     await record_funnel(request, "generation_started")
+    # …and, when it was one of the account's free runs (#1643), which side of
+    # the new gate it fell on. Emitted here rather than at claim time so a
+    # released slot (the except above) is never counted as a free generation
+    # the visitor actually received.
+    if free_grant_id is not None:
+        await record_funnel(request, "free_generation_used")
     emit_identity_event(
         wallet=linked_wallet,
         event_type="generation_started",
@@ -632,6 +723,185 @@ async def _release_credit_if_undelivered(job_id: str, store) -> None:
             )
     except Exception:
         logger.exception("could not evaluate credit release for job %s", sanitize_log_value(job_id))
+
+
+async def _job_persisted_a_strategy(job_id: str, store) -> bool | None:
+    """Did this run put a strategy in the caller's library? ``None`` = cannot tell.
+
+    ``status == "done"`` is NOT the same question. A run can persist the
+    winning strategy (``generation_pipeline`` § "K=1 persistence") and only
+    then die — the backtest fan-out crashing, the user cancelling at the
+    ``backtest_persist`` stage boundary, the process rolling — which leaves a
+    terminal status of ``error``/``cancelled`` beside a strategy that is
+    genuinely in the library. Handing a free generation back for that run would
+    give the account the strategy AND the slot.
+
+    The oracle is the ``persisted`` event the pipeline pushes immediately after
+    ``_persist_candidate`` returns a real ``strategy_id``. Read-only: this is a
+    consumer of the event log, and nothing here writes to it.
+
+    Three-valued on purpose. The event log has a shorter TTL than the job
+    record, the read can fail, and a store double may not expose the surface at
+    all (the same "a store that predates this surface is skipped" allowance
+    ``_abort_if_cancel_requested`` makes). Collapsing any of those onto
+    ``False`` would report "nothing was delivered" on no evidence, and the
+    caller would hand back a slot that may have bought a library row.
+    ``None`` says only what is true — we could not look — and the caller keeps
+    the slot spent, which is recoverable: the ledger row is on disk with its
+    job id.
+    """
+    lister = getattr(store, "list_events", None)
+    if lister is None:
+        logger.debug("free-slot release: store exposes no event log for job %s", sanitize_log_value(job_id))
+        return None
+    try:
+        events = await lister(job_id)
+    except Exception:
+        logger.warning(
+            "free-slot release: could not read the event log for job %s",
+            sanitize_log_value(job_id),
+            exc_info=True,
+        )
+        return None
+    for ev in events:
+        if ev.get("event") != "persisted":
+            continue
+        data = ev.get("data")
+        if isinstance(data, dict) and data.get("strategy_id"):
+            return True
+    return False
+
+
+async def _release_free_slot_if_undelivered(job_id: str, store) -> None:
+    """Give a free generation back unless the job actually delivered (#1643).
+
+    The free-tier sibling of :func:`_release_credit_if_undelivered`, and the
+    fix for what the owner saw on 2026-09-01: a brief whose corpus yielded
+    fewer than two papers failed INSIDE the pipeline with "the society cannot
+    fuse", and the allowance still went 3 → 2. ``/start`` only ever released a
+    slot for failures it could see itself (the entitlement gate, the enqueue —
+    its ``except BaseException: release; raise``); every failure after the
+    enqueue kept the slot spent on a generation that produced nothing.
+
+    Two states keep the slot spent, and only two:
+
+    ``done``
+        The run delivered. Checked first and cheaply.
+    a persisted strategy
+        The run put a strategy in the library and died afterwards. Giving the
+        slot back here would hand out the strategy and the free generation.
+        Deliberately stricter than the paid path, which restores on every
+        non-``done`` status (see :func:`_release_credit_if_undelivered`) —
+        money erring toward the payer is the right direction for an accounting
+        bug on a paywall, but re-granting an allowance that DID buy a library
+        row is just an over-grant.
+
+    …and one more that keeps it spent without deciding anything: a job record
+    or event log this cannot read. Silence is not evidence of non-delivery.
+
+    Idempotent through ``release_grant_for_job``: only a ``used`` row with this
+    ``job_id`` moves, so a retried cleanup cannot mint a second free slot out of
+    one claim. A paid or flag-off run matches no row and this is a no-op.
+
+    Fail-safe: this runs in a background task's ``finally`` with nobody to
+    report to, so it logs and returns. A read failure leaves the slot spent —
+    the honest direction when we cannot tell whether the run delivered, and
+    recoverable, since the ledger row is still on disk with its job id.
+    """
+    try:
+        job = await store.get(job_id)
+        if job is None:
+            # Deliberately NOT the credit path's "reads as undelivered". This
+            # runs in the run's own `finally`, so a job record that is already
+            # gone means the store lost it, not that time passed — and with no
+            # record there is no event log either, so "no strategy persisted"
+            # would be an inference from missing data rather than a reading of
+            # it. The slot stays spent and says so; the ledger row keeps its
+            # job id, so it can still be released by hand.
+            logger.warning(
+                "job %s has no job record at cleanup — the free generation stays spent (undecidable)",
+                sanitize_log_value(job_id),
+            )
+            return
+        status = job.get("status")
+        if status == "done":
+            return
+        persisted = await _job_persisted_a_strategy(job_id, store)
+        if persisted is None:
+            logger.warning(
+                "job %s ended as %s and its event log could not be read — the free generation "
+                "stays spent rather than being handed back on no evidence",
+                sanitize_log_value(job_id),
+                sanitize_log_value(str(status)),
+            )
+            return
+        if persisted:
+            logger.info(
+                "job %s ended as %s but persisted a strategy — the free generation stays spent",
+                sanitize_log_value(job_id),
+                sanitize_log_value(str(status)),
+            )
+            return
+        if free_generations.release_for_job(job_id):
+            logger.warning(
+                "job %s ended as %s with no strategy — free generation returned to the account",
+                sanitize_log_value(job_id),
+                sanitize_log_value(str(status)),
+            )
+    except Exception:
+        logger.exception(
+            "could not evaluate the free-generation release for job %s — the slot stays spent",
+            sanitize_log_value(job_id),
+        )
+
+
+async def release_entitlements_if_undelivered(job_id: str, store) -> None:
+    """Every refund an undelivered run owes, in ONE place both run paths call.
+
+    Two code paths run a generation, and only one of them used to clean up:
+
+    * ``_run_with_cleanup`` — the serving task's background coroutine, spawned
+      by ``POST /api/generate/start``;
+    * ``scripts/run_generation_job.run_job`` — the out-of-process entrypoint
+      that ``docs/adr/lambda-generation-offload.md`` ADOPTED (an
+      ``ecs:RunTask``, a Lambda invocation, or an operator's ``python -m``).
+
+    The enqueue spends the caller's entitlements *before* either of them
+    starts, so both owe the same refunds when the run then delivers nothing.
+    The refunds lived inside ``_run_with_cleanup``'s ``finally``, which the
+    script never enters, so on that path every post-enqueue failure — thin
+    corpus, crash, cancel, timeout — kept the caller's credit, and after #1785
+    their free slot, spent (#1793).
+
+    **A new release goes HERE, not into a caller's ``finally``.** That is the
+    whole point of the seam, and it is enforced rather than asked for:
+    ``test_run_generation_job.py::TestBothRunPathsReleaseTheSameThings``
+    discovers every release helper in this module and fails if one of them is
+    not reached through this function. #1785's
+    ``_release_free_slot_if_undelivered`` — the free tier's equivalent — landed
+    on main in ``_run_with_cleanup``'s ``finally``, i.e. the serving path only,
+    which is the very shape that test fails on; moving it into this function is
+    what gives the offload entrypoint the free slot back too.
+
+    **The limit of that discovery, stated where the next author will read it:**
+    it matches a NAMING CONVENTION —
+    ``_(release|void|refund|restore)_<thing>_(if|when)_undelivered`` on this
+    module — not reachability. A refund helper named outside that pattern is
+    invisible to the tripwire and can be given to one run path only without
+    anything going red. Name a new one ``_release_<thing>_if_undelivered``.
+
+    ``store`` is a parameter rather than a ``get_job_store()`` call because the
+    offload worker binds its store from the environment *as it is at run time*
+    — ``get_job_store()``'s singleton reads a ``REDIS_URL`` frozen at import,
+    which for that worker is the localhost default. See
+    ``run_generation_job``'s module docstring for why no import ordering can
+    win that race.
+    """
+    await _release_credit_if_undelivered(job_id, store)
+    # …and the free-tier equivalent. Both run: a run is funded by a credit or
+    # by a free slot, never both, and each helper is a no-op for the funding it
+    # does not own.
+    await _release_free_slot_if_undelivered(job_id, store)
 
 
 async def _run_with_cleanup(
@@ -731,7 +1001,11 @@ async def _run_with_cleanup(
         heartbeat_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await heartbeat_task
-        await _release_credit_if_undelivered(job_id, store)
+        # ONE seam, both run paths (#1793). A new refund goes INSIDE
+        # `release_entitlements_if_undelivered`, never on the next line here:
+        # a release added to this `finally` is a release the offload
+        # entrypoint does not get. That is how #1785 arrived.
+        await release_entitlements_if_undelivered(job_id, store)
 
 
 @generate_router.get("/stream/{job_id}")
@@ -932,15 +1206,23 @@ async def cancel_job(
 ) -> dict[str, str]:
     """Cancel a running job. Idempotent.
 
-    Hard cancellation: looks up the asyncio.Task driving the job and calls
-    ``task.cancel()`` on it. The pipeline's ``except CancelledError`` branch
-    emits the synthetic error event + flips Redis status to ``cancelled``.
+    Cancellation is a **durable Redis flag**, not a local task handle (#1667).
+    The pipeline polls that flag at its stage boundaries and stops from
+    whichever task is actually running it. This is the only shape that works
+    once the service runs more than one task: ``_RUNNING_TASKS`` is
+    process-local, so at ``MinCapacity=2`` this POST landed on the task that
+    started the job barely half the time — and every other time the old code
+    returned ``{"status": "cancelled"}`` while the pipeline kept running and
+    burning LLM tokens. A worker/offload lane has no task registry at all.
 
-    Caveat: if the agent is mid-``asyncio.to_thread(llm_call)``, the OS
-    thread itself isn't cancellable (Python doesn't expose that). The
-    awaiter unblocks immediately, the in-flight LLM call burns to
-    completion but its result is discarded — no events emitted after the
-    cancellation, no strategy persisted.
+    The flag is written and read back BEFORE the job is reported cancelled;
+    if that write cannot be confirmed we return 503 rather than claim a
+    cancellation that never happened.
+
+    Caveat (unchanged): if the agent is mid-``asyncio.to_thread(llm_call)``,
+    that OS thread isn't cancellable, so the in-flight call finishes and its
+    result is discarded at the next stage boundary — no events emitted after
+    the cancellation, no strategy persisted.
     """
     store = get_job_store()
     job = await store.get(job_id)
@@ -952,8 +1234,25 @@ async def cancel_job(
     if job["status"] in ("done", "error", "cancelled"):
         return {"job_id": job_id, "status": job["status"]}
 
-    # Flip status first so observers see "cancelled" even if the cancel
-    # callback hasn't fully propagated yet.
+    # Durably request the cancel FIRST — this is what actually stops the
+    # pipeline, from any task. Nothing below may claim "cancelled" until this
+    # write is confirmed.
+    try:
+        requested = await store.request_cancel(job_id)
+    except Exception:
+        logger.exception("cancel: flag write failed for job %s", sanitize_log_value(job_id))
+        requested = False
+    if not requested:
+        # Honest failure: the job IS still running. Reporting "cancelled" here
+        # is the claims-truth violation this endpoint used to commit every time
+        # the POST landed on a task that didn't own the job.
+        raise HTTPException(
+            status_code=503,
+            detail=f"cancellation for job {job_id} could not be recorded — the job is still running; retry",
+        )
+
+    # Now the flag is durable, the status may be flipped and the terminal
+    # event pushed: observers see "cancelled" and the claim is backed.
     await store.update_status(job_id, "cancelled", error="cancelled by user")
     await store.push_event(
         job_id,
@@ -962,14 +1261,6 @@ async def cancel_job(
             "data": {"job_id": job_id, "message": "cancelled by user", "recoverable": False, "code": "CANCELLED"},
         },
     )
-
-    # Hard-cancel the task itself if we're still holding a reference.
-    task = _RUNNING_TASKS.get(job_id)
-    if task is not None and not task.done():
-        task.cancel()
-        logger.info("hard-cancelled job %s", sanitize_log_value(job_id))
-    else:
-        logger.info("cancel for %s: no live task (already finished or restart)", sanitize_log_value(job_id))
 
     return {"job_id": job_id, "status": "cancelled"}
 

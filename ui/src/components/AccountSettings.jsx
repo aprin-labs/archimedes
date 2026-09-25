@@ -1,10 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import {
+  accountHasPassword,
+  DELETE_CONFIRMATION_PHRASE,
+  deleteConfirmationMatches,
+  DELETION_DETACHED,
+  DELETION_ERASED,
+  DELETION_RETAINED,
+} from '../account-deletion'
 import { canUnlink, connectableProvidersIntro, connectedActionErrorState, connectedProviderLabel, isLinkableProvider } from '../account-linking'
 import { linkErrorMessage } from '../auth-errors'
 import { getProviders, linkSocial, listAccounts, unlinkAccount } from '../auth-client'
 import { useAuth } from '../AuthContext'
-import { resendVerificationEmail } from '../auth-client'
+import { canStore } from '../storage-consent.js'
+import {
+  changeEmail,
+  changePassword,
+  deleteAccount,
+  getVerificationStatus,
+  listSessions,
+  resendVerificationEmail,
+  revokeOtherSessions,
+  revokeSession,
+} from '../auth-client'
+import VerificationDeliveryStatus from './VerificationDeliveryStatus'
+import { deriveVerificationDeliveryView, RATE_LIMITED_BY_CLIENT, shouldShowRequestedFallback } from '../verificationDelivery'
+import { PASSWORD_MIN, passwordRulesMet, passwordsMatch } from '../password-rules'
 import { listLinkedWallets, makePrimaryWallet, removeLinkedWallet } from '../linked-wallets'
 import { providerLabel } from '../wallet-providers'
 
@@ -24,14 +45,89 @@ const PENDING_LINK_KEY = 'archimedes:pending-link'
 // delivery, only that a send was requested.
 const VERIFICATION_REQUESTED_MESSAGE = "Verification email requested — delivery isn't confirmed and may take a few minutes."
 
+// #1367: one message for every outcome of an email-change request, on
+// purpose. Better Auth answers an address that already belongs to another
+// account with the same `{status:true}` it answers a free one, and sends
+// nothing (better-auth/dist/api/routes/update-user.mjs:456-460) — branching
+// this copy on the result would hand any signed-in visitor an
+// account-existence oracle the server deliberately refuses to give. Same
+// discipline as AuthPage.jsx's RESET_REQUESTED_MESSAGE.
+//
+// It also must not claim delivery (mail is fail-soft while SES is
+// sandboxed — see auth/auth.js) and must not claim the address changed,
+// because it has not: the switchover happens when the link in the NEW
+// address's message is opened, and not before.
+const EMAIL_CHANGE_REQUESTED_MESSAGE
+  = 'Requested. If that address is usable, a confirmation link is on its way — delivery '
+  + "isn't confirmed and may take a few minutes. Your email address does not change until "
+  + 'the new address confirms it.'
+
+const PASSWORD_CHANGED_MESSAGE = 'Password changed. Every other signed-in session was ended.'
+
+// Deliberately NOT auth-errors.js's SESSION_NOT_FRESH copy, which names
+// "changing sign-in methods" — the trigger here is listing sessions, and
+// naming the wrong action would be a small lie in the one place the user is
+// trying to work out whether someone else is signed in. Revoking is not
+// gated the same way (session.mjs uses sensitiveSessionMiddleware there,
+// not freshSessionMiddleware), so the "end all other sessions" control
+// deliberately stays live in this state — it is the one thing a worried
+// user most needs to still work.
+const SESSIONS_STALE_MESSAGE
+  = 'For security, listing your sessions needs a sign-in from the last 24 hours. '
+  + 'You can still end every other session below.'
+
+// Better Auth's /list-sessions row carries no "this is you" marker, so the
+// current session is identified by comparing against the session the app is
+// already holding (AuthContext's `session`) rather than by guessing from
+// recency or user-agent.
+function isCurrentSession(session, currentSession) {
+  return Boolean(currentSession?.id) && session?.id === currentSession.id
+}
+
+function formatSessionTimestamp(value) {
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? '—' : parsed.toLocaleString()
+}
+
 export default function AccountSettings({ walletAddr, onDisconnect, linkError }) {
-  const { user, signOut } = useAuth()
+  const { user, session: currentSession, signOut } = useAuth()
   const [wallets, setWallets] = useState([])
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(null)
   const [verifyStatus, setVerifyStatus] = useState('idle') // idle | sending | sent | error
   const [verifyError, setVerifyError] = useState('')
+  // #1748 item 2 — the auth service's own record of what happened to this
+  // address's verification mail. `null` until the first successful read, and
+  // back to `null` on any failure: an unreachable status endpoint renders
+  // nothing, never an optimistic default.
+  const [verifyDelivery, setVerifyDelivery] = useState(null)
+
+  // #1367 — email change
+  const [newEmail, setNewEmail] = useState('')
+  const [emailBusy, setEmailBusy] = useState(false)
+  const [emailNotice, setEmailNotice] = useState('')
+  const [emailError, setEmailError] = useState('')
+
+  // #1367 — password change
+  const [passwordForm, setPasswordForm] = useState({ current: '', next: '', confirm: '' })
+  const [passwordBusy, setPasswordBusy] = useState(false)
+  const [passwordNotice, setPasswordNotice] = useState('')
+  const [passwordError, setPasswordError] = useState('')
+
+  // #1367 — active sessions
+  const [sessions, setSessions] = useState([])
+  const [sessionsLoaded, setSessionsLoaded] = useState(false)
+  const [sessionsStale, setSessionsStale] = useState(false)
+  const [sessionsError, setSessionsError] = useState('')
+  const [sessionsNotice, setSessionsNotice] = useState('')
+  const [sessionBusy, setSessionBusy] = useState(null)
+
+  // #1367 — account deletion
+  const [deletePhrase, setDeletePhrase] = useState('')
+  const [deletePassword, setDeletePassword] = useState('')
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
 
   const [connectedAccounts, setConnectedAccounts] = useState([])
   const [connectedLoaded, setConnectedLoaded] = useState(false)
@@ -67,6 +163,28 @@ export default function AccountSettings({ walletAddr, onDisconnect, linkError })
     [],
   )
   useEffect(() => { loadConnected() }, [loadConnected])
+
+  // #1367: /list-sessions is gated behind Better Auth's OWN
+  // freshSessionMiddleware (better-auth/dist/api/routes/session.mjs:378),
+  // unlike /revoke-session and /revoke-other-sessions, which are not. With
+  // sessions living 7 days and freshAge at 24h (auth/auth.js), a stale
+  // session therefore CANNOT list its own sessions — and that must render
+  // as the honest re-auth state, never as "no other sessions", which is the
+  // same empty shape a genuinely single-session account produces. Same
+  // attempt-then-react-to-the-server contract as the connected-accounts
+  // section: no client-side clock arithmetic anywhere in this file.
+  const loadSessions = useCallback(
+    () => listSessions()
+      .then((rows) => { setSessions(Array.isArray(rows) ? rows : []); setSessionsStale(false); setSessionsLoaded(true) })
+      .catch((err) => {
+        const { stale, message } = connectedActionErrorState(err)
+        setSessionsStale(stale)
+        setSessionsError(stale ? SESSIONS_STALE_MESSAGE : message)
+        setSessionsLoaded(true)
+      }),
+    [],
+  )
+  useEffect(() => { loadSessions() }, [loadSessions])
   // Round-3 review finding (minor): a rejected getProviders() used to be
   // swallowed with an empty no-op catch handler — indistinguishable from the
   // legitimate "no OAuth providers configured" state, so a real fetch
@@ -146,7 +264,10 @@ export default function AccountSettings({ walletAddr, onDisconnect, linkError })
       // PENDING_LINK_KEY above. Both callbacks land back on THIS page — the
       // /callback/:id endpoint (library-managed CSRF state, not this code)
       // is what actually decides success/failure before either is reached.
-      sessionStorage.setItem(PENDING_LINK_KEY, provider)
+      // Strictly necessary (#1647): this is the anti-replay check on the
+      // linking flow, so canStore always allows it. Gated anyway so that no
+      // write in ui/src is ungated.
+      if (canStore(PENDING_LINK_KEY)) sessionStorage.setItem(PENDING_LINK_KEY, provider)
       await linkSocial(provider, `${origin}/app/account?linked=${provider}`, `${origin}/app/account`)
     } catch (err) {
       // The redirect never happened — clear the marker so a later, unrelated
@@ -247,26 +368,176 @@ export default function AccountSettings({ walletAddr, onDisconnect, linkError })
     window.location.assign(`/sign-in?next=${encodeURIComponent('/app/account')}`)
   }
 
-  // On-demand resend: gives testers a path to exercise the flow with an
-  // SES-verified address today, and heals anyone who missed their window once
-  // SES production access lands. Does not gate anything — email-verification
-  // ENFORCEMENT stays off (auth/auth.js requireEmailVerification).
+  // #1748 item 2 — what the auth service actually recorded for this address.
+  // Read on mount (unverified accounts only: a verified one has no pending
+  // delivery to describe) and again after every resend click.
+  const refreshVerifyDelivery = useCallback(async () => {
+    try {
+      setVerifyDelivery(await getVerificationStatus())
+    } catch {
+      // 401 (signed out), 503 (no delivery log wired), or a network failure.
+      // None of those is knowledge about anyone's mail, so the panel shows
+      // nothing rather than guessing.
+      setVerifyDelivery(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (user?.emailVerified === false) refreshVerifyDelivery()
+  }, [user?.emailVerified, refreshVerifyDelivery])
+
+  // On-demand resend: heals anyone who missed their verification window.
+  // Does not gate anything — email-verification ENFORCEMENT stays off
+  // (auth/auth.js requireEmailVerification). Until #1748 this button's only
+  // possible answer was VERIFICATION_REQUESTED_MESSAGE, because Better Auth
+  // returns {status:true} once the send is QUEUED and the mailer fail-softs;
+  // the delivery panel below now carries what happened after that.
   const sendVerification = async () => {
     setVerifyStatus('sending')
     setVerifyError('')
     try {
       await resendVerificationEmail(user.email, `${window.location.origin}/app`)
       setVerifyStatus('sent')
+      // Re-read AFTER the send so the panel reflects this click — including
+      // the case where the send was accepted and then suppressed.
+      await refreshVerifyDelivery()
     } catch (err) {
       setVerifyError(err.message)
       setVerifyStatus('error')
+      // Better Auth's limiter is keyed per client IP, not per address, so a
+      // 429 is a fact the server-side status cannot always see. Render it from
+      // what this client just observed instead of leaving the old state up.
+      if (err.status === 429) setVerifyDelivery(RATE_LIMITED_BY_CLIENT)
+      else await refreshVerifyDelivery()
+    }
+  }
+
+  // Suppressed and rate-limited are the two states where pressing the button
+  // again cannot help. The control reads the SAME derivation the panel
+  // renders, so the button and the copy under it can never disagree.
+  const resendDisabled = verifyStatus === 'sending'
+    || deriveVerificationDeliveryView(verifyDelivery)?.canResend === false
+
+  // ── #1367: email change ───────────────────────────────────────────────
+  // Never reads the response. See EMAIL_CHANGE_REQUESTED_MESSAGE for why the
+  // same sentence has to follow every non-error outcome.
+  const submitEmailChange = async (event) => {
+    event.preventDefault()
+    setEmailBusy(true)
+    setEmailError('')
+    setEmailNotice('')
+    try {
+      await changeEmail(newEmail.trim(), `${window.location.origin}/app/account`)
+      setEmailNotice(EMAIL_CHANGE_REQUESTED_MESSAGE)
+      setNewEmail('')
+    } catch (err) {
+      setEmailError(err.message)
+    } finally {
+      setEmailBusy(false)
+    }
+  }
+
+  // ── #1367: password change ────────────────────────────────────────────
+  const passwordReady
+    = passwordForm.current.length > 0
+    && passwordRulesMet(passwordForm.next)
+    && passwordsMatch(passwordForm.next, passwordForm.confirm)
+
+  const submitPasswordChange = async (event) => {
+    event.preventDefault()
+    setPasswordBusy(true)
+    setPasswordError('')
+    setPasswordNotice('')
+    try {
+      await changePassword(passwordForm.current, passwordForm.next)
+      setPasswordForm({ current: '', next: '', confirm: '' })
+      setPasswordNotice(PASSWORD_CHANGED_MESSAGE)
+      // The rotation revoked every other session server-side, so the list
+      // on this page is now wrong until it is refetched.
+      await loadSessions()
+    } catch (err) {
+      setPasswordError(err.message)
+    } finally {
+      setPasswordBusy(false)
+    }
+  }
+
+  // ── #1367: session revocation ─────────────────────────────────────────
+  // A 200 from /revoke-session only means the session is gone because
+  // auth/auth.js's hooks.before turns "that token isn't yours" into a 404
+  // first — the library on its own answers 200 either way. Without that
+  // guard the success notice below would be a claim the code does not back.
+  const revokeOne = async (session) => {
+    if (!window.confirm('End this session? Whoever is using it will have to sign in again.')) return
+    setSessionBusy(session.id)
+    setSessionsError('')
+    setSessionsNotice('')
+    try {
+      await revokeSession(session.token)
+      await loadSessions()
+      setSessionsNotice('Session ended.')
+    } catch (err) {
+      setSessionsError(err.message)
+    } finally {
+      setSessionBusy(null)
+    }
+  }
+
+  const revokeEveryOther = async () => {
+    if (!window.confirm('End every other session? Every other device signed in as you will have to sign in again.')) return
+    setSessionBusy('others')
+    setSessionsError('')
+    setSessionsNotice('')
+    try {
+      await revokeOtherSessions()
+      await loadSessions()
+      setSessionsNotice('Every other session was ended.')
+    } catch (err) {
+      setSessionsError(err.message)
+    } finally {
+      setSessionBusy(null)
+    }
+  }
+
+  // ── #1367: account deletion ───────────────────────────────────────────
+  // Two independent guards before the request, plus the server's own
+  // re-authentication: the typed phrase (deleteConfirmationMatches, unit
+  // tested) gates the button, and window.confirm still runs after it — the
+  // same belt-and-suspenders shape as unlinkConnected above, for an action
+  // that unlike an unlink cannot be undone by redoing it.
+  const hasPassword = accountHasPassword(connectedAccounts)
+  const deleteReady
+    = deleteConfirmationMatches(deletePhrase)
+    && (!hasPassword || deletePassword.length > 0)
+
+  const submitDeleteAccount = async (event) => {
+    event.preventDefault()
+    if (!deleteReady) return
+    if (!window.confirm('Delete your account? This cannot be undone.')) return
+    setDeleteBusy(true)
+    setDeleteError('')
+    try {
+      // A password-less account (Google/GitHub only) must NOT send an empty
+      // password — Better Auth would answer CREDENTIAL_ACCOUNT_NOT_FOUND
+      // instead of falling through to its session-freshness check.
+      await deleteAccount(hasPassword ? deletePassword : undefined)
+      onDisconnect?.()
+      window.location.assign('/')
+    } catch (err) {
+      setDeleteError(err.message)
+      setDeleteBusy(false)
     }
   }
 
   return (
-    <div className="max-w-[760px]">
-      <h1 className="serif text-[2rem] mb-2">Account</h1>
-      <p className="body mb-7">Better Auth user owns application data. Linked wallets prove on-chain control only.</p>
+    <div className="account-page max-w-[760px]">
+      <header className="app-page-heading">
+        <p className="app-eyebrow">Identity and control</p>
+        <h1>Account</h1>
+        {/* #1370 item 8: the npm auth library is an internal dependency, not a
+            user-facing noun — describe what the account *is*, not what built it. */}
+        <p>Your account owns application data. Linked wallets prove on-chain control only.</p>
+      </header>
 
       <section className="card-flat p-5 mb-5">
         <h2 className="serif text-xl mb-3">Profile</h2>
@@ -283,7 +554,7 @@ export default function AccountSettings({ walletAddr, onDisconnect, linkError })
                 <button
                   className="btn-secondary"
                   type="button"
-                  disabled={verifyStatus === 'sending'}
+                  disabled={resendDisabled}
                   onClick={sendVerification}
                 >
                   {verifyStatus === 'sending' ? 'Sending…' : 'Send verification email'}
@@ -292,14 +563,126 @@ export default function AccountSettings({ walletAddr, onDisconnect, linkError })
             ) : (
               <span className="caption">Email verified ✓</span>
             )}
-            {verifyStatus === 'sent' && (
+            {/* The eternal "requested" line is the PRE-STATUS fallback only.
+                Once the GET below has an answer this build recognises, the
+                panel is the single source of truth for this click — mounting
+                both puts "delivery isn't confirmed…" next to a specific
+                suppressed / failed / rate_limited, or a second softer
+                "requested" next to an honest sent. Shared predicate so this
+                surface and the Generate page cannot drift. */}
+            {verifyStatus === 'sent' && shouldShowRequestedFallback(verifyDelivery) && (
               <div className="status" role="status">{VERIFICATION_REQUESTED_MESSAGE}</div>
             )}
             {verifyStatus === 'error' && (
               <div className="status" role="alert">{verifyError}</div>
             )}
+            {/* #1748 item 2: the honest state — sent / suppressed /
+                rate_limited / failed / unknown — from the auth service's own
+                delivery record, replacing the eternal silent 200. Renders
+                nothing for a verified account or an unrecognised state. */}
+            <VerificationDeliveryStatus status={verifyDelivery} />
           </div>
         )}
+      </section>
+
+      <section className="card-flat p-5 mb-5">
+        <h2 className="serif text-xl mb-3">Change email</h2>
+        <p className="caption mb-3">
+          Your address does not change when you submit this. We email a link, and the change happens
+          only when the new address opens it.
+          {user?.emailVerified
+            ? ' Because your current address is verified, the first link goes there — approve it and the second one goes to the new address.'
+            : ' The link goes straight to the new address.'}
+        </p>
+        <form className="flex flex-wrap items-end gap-2" onSubmit={submitEmailChange}>
+          <label className="flex flex-col gap-1 grow">
+            <span className="caption">New email address</span>
+            <input
+              type="email"
+              required
+              autoComplete="email"
+              value={newEmail}
+              onChange={(event) => setNewEmail(event.target.value)}
+            />
+          </label>
+          <button className="btn-secondary" type="submit" disabled={emailBusy || newEmail.trim() === ''}>
+            {emailBusy ? 'Requesting…' : 'Request email change'}
+          </button>
+        </form>
+        <div role="status" aria-live="polite" className={emailNotice ? 'caption mt-3' : 'sr-only'}>
+          {emailNotice}
+        </div>
+        {emailError && <div className="status mt-3" role="alert">{emailError}</div>}
+      </section>
+
+      <section className="card-flat p-5 mb-5">
+        <h2 className="serif text-xl mb-3">Change password</h2>
+        {!connectedLoaded ? (
+          <p className="body">Loading…</p>
+        ) : !hasPassword ? (
+          // Honest rather than a disabled form: /change-password needs a
+          // credential row to verify against, and /set-password is
+          // server-only in Better Auth (update-user.mjs's
+          // createAuthEndpoint.serverOnly), so there is no client path to
+          // add one. Saying so beats an input that can only ever fail.
+          <p className="body">
+            This account signs in with {connectedAccounts.map((account) => connectedProviderLabel(account.providerId)).join(' and ') || 'a linked provider'} only,
+            so it has no password to change.
+          </p>
+        ) : (
+          <>
+            <p className="caption mb-3">
+              Changing your password ends every other signed-in session. This one stays signed in.
+            </p>
+            <form className="flex flex-col gap-2 max-w-[420px]" onSubmit={submitPasswordChange}>
+              <label className="flex flex-col gap-1">
+                <span className="caption">Current password</span>
+                <input
+                  type="password"
+                  required
+                  autoComplete="current-password"
+                  value={passwordForm.current}
+                  onChange={(event) => setPasswordForm({ ...passwordForm, current: event.target.value })}
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="caption">New password</span>
+                <input
+                  type="password"
+                  required
+                  autoComplete="new-password"
+                  minLength={PASSWORD_MIN}
+                  value={passwordForm.next}
+                  onChange={(event) => setPasswordForm({ ...passwordForm, next: event.target.value })}
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="caption">Confirm new password</span>
+                <input
+                  type="password"
+                  required
+                  autoComplete="new-password"
+                  minLength={PASSWORD_MIN}
+                  value={passwordForm.confirm}
+                  onChange={(event) => setPasswordForm({ ...passwordForm, confirm: event.target.value })}
+                />
+              </label>
+              {passwordForm.next !== '' && !passwordRulesMet(passwordForm.next) && (
+                <p className="caption">At least {PASSWORD_MIN} characters.</p>
+              )}
+              {passwordForm.confirm !== '' && !passwordsMatch(passwordForm.next, passwordForm.confirm) && (
+                <p className="caption">Passwords do not match.</p>
+              )}
+              <button className="btn-secondary self-start" type="submit" disabled={passwordBusy || !passwordReady}>
+                {passwordBusy ? 'Changing…' : 'Change password'}
+              </button>
+            </form>
+          </>
+        )}
+        <div role="status" aria-live="polite" className={passwordNotice ? 'caption mt-3' : 'sr-only'}>
+          {passwordNotice}
+        </div>
+        {passwordError && <div className="status mt-3" role="alert">{passwordError}</div>}
       </section>
 
       <section className="card-flat p-5 mb-5">
@@ -385,6 +768,72 @@ export default function AccountSettings({ walletAddr, onDisconnect, linkError })
       </section>
 
       <section className="card-flat p-5 mb-5">
+        <h2 className="serif text-xl mb-3">Active sessions</h2>
+        <p className="caption mb-3">
+          Every browser currently signed in as you. Sessions last seven days. Ending one signs that
+          browser out immediately.
+        </p>
+
+        {!sessionsLoaded ? (
+          <p className="body">Loading…</p>
+        ) : sessionsStale ? (
+          // NOT rendered as "no other sessions" — a stale session can't read
+          // the list at all, and an empty list is what a genuinely
+          // single-session account looks like. Showing one as the other
+          // would be a fabricated all-clear at the exact moment someone is
+          // checking whether they have been compromised.
+          <p className="body">{SESSIONS_STALE_MESSAGE}</p>
+        ) : sessions.length === 0 ? (
+          <p className="body">No active sessions listed.</p>
+        ) : (
+          <ul className="flex flex-col gap-3">
+            {sessions.map((session) => {
+              const current = isCurrentSession(session, currentSession)
+              return (
+                <li key={session.id} className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--glass-border)] pt-3">
+                  <div>
+                    <div className="text-sm">
+                      {current ? 'This browser' : session.userAgent || 'Unknown browser'}
+                      {current && ' · current session'}
+                    </div>
+                    <div className="caption">
+                      Started {formatSessionTimestamp(session.createdAt)}
+                      {session.ipAddress ? ` · ${session.ipAddress}` : ''}
+                      {' · expires '}{formatSessionTimestamp(session.expiresAt)}
+                    </div>
+                  </div>
+                  {!current && (
+                    <button
+                      className="btn-secondary"
+                      disabled={sessionBusy !== null}
+                      onClick={() => revokeOne(session)}
+                    >
+                      End session
+                    </button>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+
+        {/* Deliberately live even in the stale state: /revoke-other-sessions
+            is not fresh-gated (session.mjs uses sensitiveSessionMiddleware
+            there), so the one control a worried user most needs still
+            works when the list itself will not load. */}
+        <div className="mt-4">
+          <button className="btn-secondary" disabled={sessionBusy !== null} onClick={revokeEveryOther}>
+            {sessionBusy === 'others' ? 'Ending…' : 'End all other sessions'}
+          </button>
+        </div>
+
+        <div role="status" aria-live="polite" className={sessionsNotice ? 'caption mt-3' : 'sr-only'}>
+          {sessionsNotice}
+        </div>
+        {sessionsError && !sessionsStale && <div className="status mt-3" role="alert">{sessionsError}</div>}
+      </section>
+
+      <section className="card-flat p-5 mb-5">
         <div className="flex items-center justify-between gap-3 mb-3">
           <div>
             <h2 className="serif text-xl">Linked wallets</h2>
@@ -419,6 +868,66 @@ export default function AccountSettings({ walletAddr, onDisconnect, linkError })
           {notice}
         </div>
         {error && <div className="status mt-3" role="alert">{error}</div>}
+      </section>
+
+      <section className="card-flat p-5 mb-5">
+        <h2 className="serif text-xl mb-3">Delete account</h2>
+        <p className="body mb-3">
+          Deleting your account cannot be undone, and there is no recovery window. Read what happens
+          before you type the confirmation.
+        </p>
+
+        {/* Every sentence below is generated from account-deletion.js's
+            table→sentence map, which ui/test/account-deletion.test.js pins
+            against the ON DELETE actions actually declared in
+            backend/archimedes/models/*.py. Hand-written copy here would be a
+            claim nothing keeps true. */}
+        <p className="caption">Erased outright:</p>
+        <ul className="body mb-3 list-disc pl-5">
+          {DELETION_ERASED.map((row) => <li key={row.table}>{row.label}</li>)}
+        </ul>
+        <p className="caption">Kept, with your name taken off them — other accounts can reference these by id, so removing them would break someone else&rsquo;s data:</p>
+        <ul className="body mb-3 list-disc pl-5">
+          {DELETION_DETACHED.map((row) => <li key={row.table}>{row.label}</li>)}
+        </ul>
+        <p className="caption">Not removed by this, and you should know it:</p>
+        <ul className="body mb-3 list-disc pl-5">
+          {DELETION_RETAINED.map((row) => <li key={row.table}>{row.label}</li>)}
+        </ul>
+        <p className="caption mb-3">
+          Anything already published to a blockchain stays there — no deletion here
+          can reach it. Server and load-balancer logs age out on their own schedule rather than being
+          pulled out per account.
+        </p>
+
+        <form className="flex flex-col gap-2 max-w-[420px]" onSubmit={submitDeleteAccount}>
+          <label className="flex flex-col gap-1">
+            <span className="caption">Type &ldquo;{DELETE_CONFIRMATION_PHRASE}&rdquo; to confirm</span>
+            <input
+              type="text"
+              autoComplete="off"
+              autoCapitalize="none"
+              spellCheck="false"
+              value={deletePhrase}
+              onChange={(event) => setDeletePhrase(event.target.value)}
+            />
+          </label>
+          {hasPassword && (
+            <label className="flex flex-col gap-1">
+              <span className="caption">Your password</span>
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={deletePassword}
+                onChange={(event) => setDeletePassword(event.target.value)}
+              />
+            </label>
+          )}
+          <button className="btn-secondary self-start" type="submit" disabled={deleteBusy || !deleteReady}>
+            {deleteBusy ? 'Deleting…' : 'Delete my account'}
+          </button>
+        </form>
+        {deleteError && <div className="status mt-3" role="alert">{deleteError}</div>}
       </section>
 
       <button className="btn-secondary" onClick={logout}>Sign out</button>

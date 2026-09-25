@@ -44,11 +44,13 @@ class MetricsResponse(BaseModel):
     human_count: int = Field(..., description="Human-UA REQUESTS (cumulative, site traffic — NOT users).")
     agent_count: int = Field(..., description="Agent/bot REQUESTS (cumulative, site traffic — NOT users).")
     total_requests: int = Field(..., description="human_count + agent_count (cumulative requests — NOT users).")
-    real_users: int = Field(
-        default=0,
+    real_users: int | None = Field(
+        default=None,
         description=(
             "Distinct real users = canonical Better Auth accounts. "
-            "Linked-wallet and profile counts are separate metrics."
+            "Linked-wallet and profile counts are separate metrics. "
+            "None (not 0) means the account-count query failed — a loud absence, "
+            "never a fabricated measured zero (round 4 fix)."
         ),
     )
     epoch_started_at: str | None = Field(
@@ -76,9 +78,11 @@ class FunnelStageCount(BaseModel):
     step_conversion: float = Field(..., description="distinct_visitors / previous-stage count (0.0-1.0).")
     by_agent_type: dict[str, int] = Field(
         default_factory=dict,
-        description="distinct_visitors at this stage, broken out by agent_type ('internal'/'external'/'human') "
-        "so agent conversion can be measured separately from human (issue #788). Empty for source=identity, "
-        "which has no per-request agent_type.",
+        description="distinct_visitors at this stage, broken out by agent_type "
+        "('internal'/'keyed'/'external'/'human') so agent conversion can be measured separately from "
+        "human (issue #788). 'keyed' is a caller authenticated by a scoped API key (#1653 D3) — an "
+        "identity, unlike 'external', which is a User-Agent guess about an unauthenticated client. "
+        "Empty for source=identity, which has no per-request agent_type.",
     )
 
 

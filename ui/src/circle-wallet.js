@@ -26,6 +26,7 @@ import {
   toCircleSmartAccount,
   WebAuthnMode,
 } from '@circle-fin/modular-wallets-core'
+import { canStore } from './storage-consent.js'
 
 const CLIENT_KEY = import.meta.env.VITE_CIRCLE_CLIENT_KEY ?? ''
 const CLIENT_URL = import.meta.env.VITE_CIRCLE_CLIENT_URL
@@ -63,8 +64,11 @@ function getTabSeenCredentialId() {
 
 function setTabSeenCredentialId(id) {
   try {
-    if (id) sessionStorage.setItem(TAB_SEEN_CREDENTIAL_ID_KEY, id)
-    else sessionStorage.removeItem(TAB_SEEN_CREDENTIAL_ID_KEY)
+    // Strictly necessary (#1647): this stamp is the guard against signing as
+    // a wallet another tab swapped in, so canStore always allows it. Gated
+    // anyway so no write in ui/src is ungated.
+    if (id && canStore(TAB_SEEN_CREDENTIAL_ID_KEY)) sessionStorage.setItem(TAB_SEEN_CREDENTIAL_ID_KEY, id)
+    else if (!id) sessionStorage.removeItem(TAB_SEEN_CREDENTIAL_ID_KEY)
   } catch { /* storage unavailable */ }
 }
 
@@ -83,7 +87,9 @@ function loadStoredCredential() {
 
 function saveCredential(credential) {
   try {
-    localStorage.setItem(CREDENTIAL_STORAGE_KEY, JSON.stringify(credential))
+    // Strictly necessary (#1647): the passkey wallet cannot be reconnected or
+    // used to sign without it, so it is never offered as a toggle.
+    if (canStore(CREDENTIAL_STORAGE_KEY)) localStorage.setItem(CREDENTIAL_STORAGE_KEY, JSON.stringify(credential))
   } catch { /* storage unavailable */ }
   // This tab is the one that just wrote the credential, so it's the source of
   // the change, not a victim of drift — establish it as this tab's baseline.

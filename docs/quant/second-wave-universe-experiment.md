@@ -1,6 +1,17 @@
 # Universe Experiment: does a bigger universe rescue the second-wave strategies?
 
-> **Status:** Findings note, 2026-06-11 (Önder, quant lane). Companion to
+> **Status:** Findings note, 2026-06-11 (Önder, quant lane). **Historical — read at its
+> vintage.** Every number below was measured on **2026-06-11**, against the library as it
+> stood then (22 of 23 strategies) and against the **0.95 DSR bar and the library-sized
+> `num_trials` convention that were current on that date**. The bar moved down in PR #901
+> and back to `0.95` in [#1794](https://github.com/aprin-labs/archimedes/issues/1794), so
+> the DSR column below is once again read against the live bar; the library-sized trial
+> count, however, was reversed on 2026-07-09
+> ([`../adr/num-trials-self-containment.md`](../adr/num-trials-self-containment.md)). The
+> experiment's *conclusion* is unaffected — it turns on Sharpe ratios, not on the gate
+> threshold — but three passages were corrected in place on 2026-08-31
+> ([#1598](https://github.com/aprin-labs/archimedes/issues/1598)) and are marked where they sit.
+> Companion to
 > [`second-wave-multi-asset-strategies.md`](../plans/second-wave-multi-asset-strategies.md).
 > **TL;DR:** No. All nine second-wave strategies are admitted as `CANDIDATE`
 > (none clears the rigor gate). The natural hypothesis — "they fail only because
@@ -23,11 +34,22 @@ larger and more appropriate universes, using the **identical** rigor machinery
 
 ## First: the gate is not a black hole
 
-Of the full 22-strategy library, **two pass** the rigor gate today —
-`moreira_muir_2017_volatility_managed` (DSR p = 0.995) and
-`moskowitz_ooi_pedersen_2012_tsmom` (p = 0.976) — and a third comes within 0.006.
-So the gate discriminates; it is not rejecting everything reflexively. The
-question is only why *these* fail.
+> **Retracted 2026-08-31 ([#1598](https://github.com/aprin-labs/archimedes/issues/1598)).**
+> This paragraph stated how many library strategies clear the rigor gate and named them with
+> their DSR p-values. `CLAUDE.md` forbids quoting a curated-library pass count anywhere, and
+> for a concrete reason that post-dates this note: strategies reported as passing were later
+> found to be grading equity-like return series (~18.5% annual vol) that arrived through a
+> data-feed fallback in the backtest loader. **The corrected pass count is unestablished.**
+> The p-values quoted here were additionally computed under the `num_trials = 22`
+> convention, reversed on 2026-07-09, so they are not comparable to anything the gate
+> returns today. The live rigor gate is the only authority; see the PASS/CANDIDATE badges in
+> the app and `backend/archimedes/services/live_rigor_gate.py`.
+
+The claim this section needs is weaker than a count and survives the retraction intact:
+**the gate discriminates — it is not rejecting everything reflexively.** The evidence for
+that is below and does not depend on any pass number. The library's strategies spread across
+a wide range of outcomes on the same machinery, and the question this note answers is only
+why *these nine* fail.
 
 The dominant reason is blunt: **7 of the 9 new strategies posted a *negative*
 Sharpe on real 2004–2026 data** — they lost money. No validation system should
@@ -92,16 +114,37 @@ The single near-miss — risk parity on the original 5 assets (Sharpe +0.35,
 max-DD 27%) — fails the DSR significance bar *only* because of how conservatively
 we set `num_trials_in_selection`. Sweeping it on that strategy's real returns:
 
-| `num_trials` | DSR p-value | passes p ≥ 0.95? |
-|---|---|---|
-| 1–13 | 0.999 → 0.963 | **yes** |
-| 22 (full library) | 0.941 | no |
-| 50 | 0.896 | no |
+| `num_trials` | DSR p-value | vs. the 0.95 bar (live, and the bar of 2026-06-11) | vs. the lower bar PR #901 briefly used |
+|---|---|---|---|
+| 1–13 | 0.999 → 0.963 | **yes** | **yes** |
+| 22 (full library) | 0.941 | no | **yes** |
+| 50 | 0.896 | no | no |
 
-We currently set `num_trials` = the full library size (22), which penalizes each
-strategy as if it were cherry-picked as the best of 22 independent trials. For an
-*individually-specified, paper-grounded* strategy that was **not** data-mined from
-the library, that is arguably too harsh. This is a genuine design question about
-the gate's calibration — written up separately for a team decision (it touches
-the shared `rigor_evaluator`, so it is not a unilateral change). Note it is **not**
-what blocks the other eight: they fail on performance, not on the penalty.
+> **Corrected 2026-08-31 ([#1598](https://github.com/aprin-labs/archimedes/issues/1598)).**
+> The table shipped with a single pass/fail column computed against the 0.95 bar, and its
+> verdicts went stale twice over. Both bars are kept side by side rather than the old one
+> being overwritten: the p-values are the measurement and have not changed, but **what they
+> clear has**. The `num_trials = 22` row, marked "no" at 0.941, cleared the lower bar PR
+> #901 briefly used — the conclusion this section drew from that row did not survive it.
+> **Updated 2026-09-03 (#1794):** the bar is 0.95 again and is now a single named constant,
+> so the left-hand column is once more the live one and that row is "no" again. The
+> whipsaw is precisely why the number is no longer written down in more than one place.
+>
+> **And the sweep itself is now moot for this strategy.** It asks what happens as the
+> library-sized trial count varies; that convention was reversed on 2026-07-09 and
+> `maillard_2010_risk_parity` is a curated single-paper implementation, so it is graded at
+> `num_trials = 1` — the top row — with no deflation at all
+> ([`../adr/num-trials-self-containment.md`](../adr/num-trials-self-containment.md),
+> ratified 2026-08-31). Whether it clears the bar *today* is a question for the live gate on
+> current data, not for this table: these p-values are 2026-06-11 measurements and the
+> vintage-drift caveat in [`third-wave-retest.md`](third-wave-retest.md) applies.
+
+**What the note argued at the time, preserved:** we then set `num_trials` = the full
+library size (22), which penalized each strategy as if it were cherry-picked as the best of
+22 independent trials. For an *individually-specified, paper-grounded* strategy that was
+**not** data-mined from the library, that was argued to be too harsh — a genuine design
+question about the gate's calibration, written up separately for a team decision rather
+than changed unilaterally. **That decision was subsequently taken this way**
+([#537](https://github.com/aprin-labs/archimedes/issues/537) → the self-containment ADR): the
+library size no longer enters `num_trials` on any path. Note it was **not** what blocked
+the other eight: they fail on performance, not on the penalty.

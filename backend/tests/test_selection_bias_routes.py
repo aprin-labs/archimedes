@@ -17,6 +17,8 @@ Tests pass with:
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pytest
 from archimedes.api.selection_bias_routes import (
@@ -30,6 +32,7 @@ from archimedes.api.selection_bias_routes import (
 )
 from archimedes.services.rigor_evaluator import run_rigor_gate
 from httpx import ASGITransport, AsyncClient
+from pydantic import BaseModel
 
 from tests.db_isolation import redirect_to_tmp_sqlite
 
@@ -246,19 +249,186 @@ async def test_gate_endpoint_has_required_top_level_keys():
 
 @pytest.mark.asyncio
 async def test_gate_endpoint_counts_are_consistent():
-    """total == passing + failing and strategies list length matches total."""
+    """total == passing + failing + pending (#1358) and strategies list length
+    matches total. Pre-#1358 this asserted total == passing + failing, which
+    silently counted every never-scored (pending) row as a rigor-gate failure."""
     from archimedes.main import app
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/api/selection-bias/gate")
     data = resp.json()
-    assert data["total"] == data["passing"] + data["failing"]
+    assert data["total"] == data["passing"] + data["failing"] + data["pending"]
     assert len(data["strategies"]) == data["total"]
 
 
 @pytest.mark.asyncio
+async def test_gate_endpoint_pending_rows_excluded_from_failing():
+    """#1358: a strategy with no persisted backtest data (this hermetic test's
+    fresh tmp-sqlite DB has none) reports as ``pending``, not ``failing`` — a
+    strategy with zero statistics computed must never render as a rigor-gate
+    failure. Every ``StrategyRigorResult`` in the curated library response is
+    marked ``pending`` in this fixture (no backtests have been persisted), so
+    ``failing`` must be 0 and ``pending`` must equal ``total``."""
+    from archimedes.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/api/selection-bias/gate")
+    data = resp.json()
+    assert data["total"] > 0, "expected at least one curated strategy in the fixture library"
+    assert data["failing"] == 0
+    assert data["pending"] == data["total"]
+    assert all(s["pending"] is True for s in data["strategies"])
+
+
+@pytest.mark.asyncio
+async def test_gate_endpoint_scored_row_is_not_pending(monkeypatch):
+    """#1358 round-2 review: the guard above is one-directional — every existing
+    pending assertion is satisfied by "everything is pending" (this file's fresh,
+    unpopulated tmp-sqlite DB), so a mutation that hoists ``pending=True`` out of
+    the ``len(daily_returns) < 10`` branch onto EVERY row (converting a real
+    rigor-gate FAILURE into a neutral "pending" chip) would still pass the whole
+    suite. This is the missing inverse: a strategy the gate actually SCORES
+    (>=10 persisted daily returns, injected at the ``get_all_daily_returns`` DB
+    boundary per ``TestDegenerateSeriesExcludedFromCohort``'s pattern) must
+    report ``pending is False`` — and since the injected series is the same
+    deterministic strong-IS/weak-OOS shape ``TestOosCliffDenominator`` uses to
+    force a genuine oos_sharpe FAIL, it must also be counted in ``failing``."""
+    from archimedes.api import selection_bias_routes as routes
+    from archimedes.main import app
+
+    strategies = routes._provider().list_strategies()
+    if not strategies:
+        pytest.skip("no strategies in provider")
+    target_id = strategies[0].id
+
+    # Same deterministic strong-IS / weak-OOS shape as TestOosCliffDenominator
+    # (no RNG -> version-independent): guaranteed to FAIL the oos_sharpe cliff
+    # criterion, so this row's passes_all is deterministically False.
+    amp = 0.01
+    is_part = [0.003 + (amp if i % 2 == 0 else -amp) for i in range(700)]
+    oos_part = [0.0015 + (amp if i % 2 == 0 else -amp) for i in range(300)]
+    series = is_part + oos_part
+
+    monkeypatch.setattr(
+        "archimedes.services.backtest_repository.get_all_daily_returns",
+        lambda session, ids: {target_id: series},
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/api/selection-bias/gate")
+    data = resp.json()
+    row = next(s for s in data["strategies"] if s["strategy_id"] == target_id)
+    assert row["pending"] is False, "a strategy the gate actually scored must not report pending"
+    assert row["passes_all"] is False, "the deterministic series must fail the oos cliff"
+    assert data["failing"] >= 1, (
+        "a real rigor-gate failure must be counted in `failing`, not silently reclassified as pending"
+    )
+
+
+@pytest.mark.asyncio
+async def test_gate_endpoint_degenerate_row_is_distinguishable_from_a_floor_failure(monkeypatch):
+    """#1358 round-3: a zero-variance persisted series must be reported as its own
+    thing on the wire, not left indistinguishable from a graded correctness failure.
+
+    Why the field is needed at all — the mechanism, asserted here rather than
+    described: a flat series makes ``dsr_p_value`` and ``oos_sharpe`` both None,
+    and ``RigorGateResult.blocked_by_floor`` treats a None on either as a floor
+    failure. So this row arrives with ``blocked_by_floor is True`` and
+    ``min_passing_level is None`` — byte-for-byte the shape of a strategy that
+    WAS fully graded and found broken. Every UI consumer of those two fields then
+    says "fails an always-on correctness floor" about a series no floor ever got
+    to measure. ``degenerate`` is the discriminator that makes the honest
+    rendering possible; ``pending`` cannot serve, because there IS data here.
+
+    Note the row is still *scored* (>= 10 returns), so ``pending`` must stay
+    False — the two neutral states are not interchangeable and this asserts it.
+    """
+    from archimedes.api import selection_bias_routes as routes
+    from archimedes.main import app
+
+    strategies = routes._provider().list_strategies()
+    if not strategies:
+        pytest.skip("no strategies in provider")
+    target_id = strategies[0].id
+
+    # Zero-variance and long enough to clear the `< 10 returns` pending branch,
+    # so the ONLY thing that can explain a neutral verdict here is degeneracy.
+    series = [0.0] * 300
+
+    monkeypatch.setattr(
+        "archimedes.services.backtest_repository.get_all_daily_returns",
+        lambda session, ids: {target_id: series},
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/api/selection-bias/gate")
+    assert resp.status_code == 200
+    data = resp.json()
+    row = next(s for s in data["strategies"] if s["strategy_id"] == target_id)
+
+    assert row["degenerate"] is True, (
+        "a zero-variance persisted series must be reported as degenerate on the wire — "
+        "without this the UI cannot tell it apart from a graded correctness failure"
+    )
+    assert row["pending"] is False, (
+        "degenerate is not pending: this row HAS persisted returns, they are merely flat, "
+        "so 'not yet evaluated' would be a false claim"
+    )
+    # The shape that makes the field load-bearing. If these two ever stop
+    # holding, the honest-rendering problem this field solves has changed and
+    # the UI branches keyed on `degenerate` need re-reading.
+    assert row["blocked_by_floor"] is True, (
+        "documents WHY `degenerate` is needed: a flat series trips the floor mechanically"
+    )
+    assert row["min_passing_level"] is None
+
+
+@pytest.mark.asyncio
+async def test_gate_endpoint_ordinary_failure_is_not_marked_degenerate(monkeypatch):
+    """The inverse of the guard above, without which it is one-directional.
+
+    Every strategy in this file's fresh tmp-sqlite DB is pending, so a mutation
+    that hoisted ``degenerate=True`` onto every scored row would satisfy the test
+    above and quietly convert every genuine rigor-gate failure into a neutral
+    "unevaluable" chip — the exact defect class #1358 exists to fix, just pointed
+    the other way. A real (non-flat) series that fails the gate must report
+    ``degenerate is False``.
+    """
+    from archimedes.api import selection_bias_routes as routes
+    from archimedes.main import app
+
+    strategies = routes._provider().list_strategies()
+    if not strategies:
+        pytest.skip("no strategies in provider")
+    target_id = strategies[0].id
+
+    # Same deterministic strong-IS / weak-OOS shape the pending inverse uses:
+    # real variance throughout, guaranteed to fail the oos_sharpe cliff.
+    amp = 0.01
+    is_part = [0.003 + (amp if i % 2 == 0 else -amp) for i in range(700)]
+    oos_part = [0.0015 + (amp if i % 2 == 0 else -amp) for i in range(300)]
+    series = is_part + oos_part
+
+    monkeypatch.setattr(
+        "archimedes.services.backtest_repository.get_all_daily_returns",
+        lambda session, ids: {target_id: series},
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/api/selection-bias/gate")
+    data = resp.json()
+    row = next(s for s in data["strategies"] if s["strategy_id"] == target_id)
+
+    assert row["passes_all"] is False, "the deterministic series must fail the oos cliff"
+    assert row["degenerate"] is False, (
+        "a graded failure on a real series must NOT be marked degenerate — that would "
+        "excuse a genuine rigor-gate loss as 'nothing to measure'"
+    )
+
+
+@pytest.mark.asyncio
 async def test_gate_endpoint_counts_non_negative():
-    """total, passing, failing are all non-negative integers."""
+    """total, passing, failing, pending are all non-negative integers."""
     from archimedes.main import app
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -267,6 +437,7 @@ async def test_gate_endpoint_counts_non_negative():
     assert data["total"] >= 0
     assert data["passing"] >= 0
     assert data["failing"] >= 0
+    assert data["pending"] >= 0
 
 
 @pytest.mark.asyncio
@@ -1194,229 +1365,170 @@ class TestCacheKeyReactsToStrategyCodeChange:
             target.strategy_code_hash = original_hash
 
 
-class TestBoardLevelFdrWiring:
-    """#1185: GET /api/selection-bias/gate wires benjamini_hochberg_fdr in via
-    compute_board_level_fdr — end-to-end through the real HTTP route, real
-    run_rigor_gate DSR computation, and the response schema. Distinct from the
-    pure-math unit tests (TestBenjaminiHochbergFDR / TestComputeBoardLevelFdr in
-    test_rigor_evaluator.py): this exercises the actual wiring this issue's
-    acceptance criteria requires — a real call site outside backend/tests."""
+# ── #1564: board-level FDR must stay OFF the per-strategy gate ───────────────
+#
+# Owner decision (Dan, 2026-08-31): the strategy passport carries only
+# information about the strategy itself; the leaderboard is the one
+# cross-strategy surface. `board_fdr_*` / `board_level_fdr` moved to
+# `GET /api/leaderboard` (see backend/tests/test_leaderboard_board_fdr.py,
+# which owns the correction's own correctness). What is guarded HERE is the
+# absence — an absence is exactly the kind of property that decays silently,
+# because re-adding a convenient field to a per-strategy response is a
+# one-line, locally-sensible edit.
+#
+# The scan is deliberately PATTERN-based (`board_fdr`, `board_level_fdr`), not
+# a hard-coded list of the three field names that were removed, so a
+# reappearance under a near-miss name (`board_fdr_q`, `board_level_fdr_block`)
+# is caught too.
 
-    @staticmethod
-    def _strong_series(seed: int, n: int = 756) -> list[float]:
-        # Long, low-vol, solidly positive drift → dsr_p_value should land close
-        # to 1.0 (confident evidence of a real positive Sharpe).
-        return np.random.default_rng(seed).normal(0.002, 0.008, n).tolist()
+_BOARD_FDR_PATTERN = re.compile(r"board_fdr|board_level_fdr")
 
-    @staticmethod
-    def _weak_series(seed: int, n: int = 300) -> list[float]:
-        # Near-zero drift → weak/borderline DSR evidence, individually
-        # insignificant even before any board-level correction.
-        return np.random.default_rng(seed).normal(0.0001, 0.01, n).tolist()
 
-    def _patch_returns(self, monkeypatch, returns_by_strategy: dict[str, list[float]]):
-        monkeypatch.setattr(
-            "archimedes.services.backtest_repository.get_all_daily_returns",
-            lambda session, ids: dict(returns_by_strategy),
+def _relational_field_names(model: type[BaseModel]) -> list[str]:
+    """Field names on a pydantic model that name the board-level correction."""
+    return sorted(name for name in model.model_fields if _BOARD_FDR_PATTERN.search(name))
+
+
+def _relational_json_keys(payload: object, path: str = "$") -> list[str]:
+    """Every key path in a decoded JSON payload naming the board-level correction.
+
+    Recursive on purpose: the fields lived BOTH at the top level of
+    `RigorGateResponse` and nested one level down inside each
+    `StrategyRigorResult`, so a shallow `key in payload` check would have
+    missed the per-strategy half entirely.
+    """
+    found: list[str] = []
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if _BOARD_FDR_PATTERN.search(str(key)):
+                found.append(f"{path}.{key}")
+            found.extend(_relational_json_keys(value, f"{path}.{key}"))
+    elif isinstance(payload, list):
+        for idx, value in enumerate(payload):
+            found.extend(_relational_json_keys(value, f"{path}[{idx}]"))
+    return found
+
+
+class TestBoardFdrStaysOffThePerStrategyGate:
+    """#1564 acceptance: `GET /api/selection-bias/gate*` responses contain no
+    `board_fdr` or `board_level_fdr` key — on the response MODELS and on a
+    LIVE response shape."""
+
+    # ── the guards are not vacuous ──────────────────────────────────────────
+
+    def test_field_scan_flags_a_deliberate_reappearance(self):
+        """Adversarial pass: build the input that SHOULD fail and show it does.
+
+        A field scan that has stopped matching would pass silently on a model
+        with the field right back on it, which is the whole failure mode. So
+        run the scan against a model deliberately carrying the reappearance —
+        under the exact removed name AND under a near-miss name a future edit
+        might reach for."""
+
+        class _ReappearedRigorResult(BaseModel):
+            strategy_id: str = ""
+            board_fdr_significant: bool | None = None
+            board_level_fdr_block: dict | None = None
+
+        flagged = _relational_field_names(_ReappearedRigorResult)
+        assert flagged == ["board_fdr_significant", "board_level_fdr_block"], (
+            "the field scan no longer detects a board-FDR field on a model — it is guarding nothing"
+        )
+
+    def test_json_scan_flags_a_deliberate_reappearance(self):
+        """Same adversarial pass for the live-shape scan, including the NESTED
+        per-strategy position (a shallow scan would miss it)."""
+        bad = {
+            "strategies": [{"strategy_id": "a", "board_fdr_significant": False}],
+            "board_level_fdr": {"n_tested": 3},
+        }
+        flagged = _relational_json_keys(bad)
+        assert "$.strategies[0].board_fdr_significant" in flagged, (
+            "the JSON scan no longer reaches the nested per-strategy position — it is guarding nothing"
+        )
+        assert "$.board_level_fdr" in flagged
+
+    # ── the guards, applied ─────────────────────────────────────────────────
+
+    def test_no_board_fdr_field_on_the_per_strategy_result_model(self):
+        assert _relational_field_names(StrategyRigorResult) == [], (
+            "board-level FDR is a CROSS-STRATEGY metric and must not ride the per-strategy gate "
+            "(#1564, owner decision 2026-08-31). It belongs on GET /api/leaderboard — see "
+            "api/leaderboard_schemas.BoardLevelFdr."
+        )
+
+    def test_no_board_fdr_field_on_the_gate_response_model(self):
+        assert _relational_field_names(RigorGateResponse) == [], (
+            "the board_level_fdr top-level key moved to GET /api/leaderboard (#1564)"
         )
 
     @pytest.mark.asyncio
-    async def test_board_level_fdr_field_present_and_matches_pure_function(self, monkeypatch):
-        """The response's board_level_fdr + per-strategy board_fdr_* fields must
-        reflect an ACTUAL benjamini_hochberg_fdr call over the served cohort's
-        real dsr_p_value outputs — not a placeholder. Two complementary checks:
-        (1) a cohort-specific outcome the route must produce independently —
-        the strong-series strategy comes back board-FDR-significant while
-        every weak-series one does not, which a stubbed/all-False or
-        all-True `compute_board_level_fdr` would fail; (2) cross-checks by
-        feeding the response's own dsr_p_value list back through
-        rigor_evaluator.compute_board_level_fdr directly and asserting the
-        route's numbers match exactly — this alone would NOT prove realness
-        (a stub run identically on both sides of the boundary matches itself
-        trivially), so it is a consistency check layered on top of (1), not a
-        substitute for it (#1185 code review, 2026-08-20)."""
-        from archimedes.api import selection_bias_routes as routes
+    async def test_live_gate_response_shape_carries_no_board_fdr_key(self):
+        """The batch route, over the real corpus and the real gate."""
         from archimedes.main import app
-        from archimedes.services.rigor_evaluator import compute_board_level_fdr
-
-        strategies = routes._provider().list_strategies()
-        assert len(strategies) >= 6, "need >=6 curated strategies to build this cohort"
-        ids = [s.id for s in strategies[:6]]
-
-        returns = {
-            ids[0]: self._strong_series(0),
-            ids[1]: self._weak_series(1),
-            ids[2]: self._weak_series(2),
-            ids[3]: self._weak_series(3),
-            ids[4]: self._weak_series(4),
-            ids[5]: [0.001] * 5,  # too short (<10) → MISSING, must be excluded
-        }
-        self._patch_returns(monkeypatch, returns)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.get("/api/selection-bias/gate")
         assert resp.status_code == 200
-        data = resp.json()
-
-        by_id = {r["strategy_id"]: r for r in data["strategies"]}
-
-        # The MISSING (too-short) row must not be assigned a fabricated verdict.
-        assert by_id[ids[5]]["dsr_p_value"] is None
-        assert by_id[ids[5]]["board_fdr_significant"] is None
-        assert by_id[ids[5]]["board_fdr_adjusted_p"] is None
-
-        tested_ids = ids[:5]
-        for sid in tested_ids:
-            assert by_id[sid]["dsr_p_value"] is not None, f"{sid} should have a finite DSR p-value"
-            assert by_id[sid]["board_fdr_significant"] is not None
-            assert by_id[sid]["board_fdr_adjusted_p"] is not None
-
-        assert data["board_level_fdr"]["n_tested"] == len(tested_ids)
-        assert data["board_level_fdr"]["fdr_level"] == pytest.approx(0.05)
-        assert 0 <= data["board_level_fdr"]["n_significant"] <= data["board_level_fdr"]["n_tested"]
-
-        # Cohort-specific outcome the route must produce on its own: the
-        # strong-series strategy (dsr_p_value near 1.0, classical p near 0)
-        # is the only one that clears the board-level BH threshold across
-        # this 5-strategy cohort; every weak-series strategy (individually
-        # insignificant, and diluted further by sharing the board with 4
-        # others) does not. A stub that always returns True, always False,
-        # or a fixed pattern unrelated to the real dsr_p_values would fail
-        # this — unlike the pure cross-check below, which a stub could pass
-        # trivially by construction.
-        assert by_id[ids[0]]["board_fdr_significant"] is True, "strong-series strategy should clear board-level BH"
-        for sid in tested_ids[1:]:
-            assert by_id[sid]["board_fdr_significant"] is False, f"weak-series strategy {sid} should not clear it"
-
-        # Rebuild the correction independently from the SAME served dsr_p_values
-        # and require an exact match — proves this is a real computation over
-        # the real cohort, not a stub.
-        expected = compute_board_level_fdr({sid: by_id[sid]["dsr_p_value"] for sid in tested_ids})
-        for sid in tested_ids:
-            assert by_id[sid]["board_fdr_significant"] == expected[sid]["board_fdr_significant"]
-            assert by_id[sid]["board_fdr_adjusted_p"] == pytest.approx(expected[sid]["board_fdr_adjusted_p"])
-        assert data["board_level_fdr"]["n_significant"] == sum(
-            1 for v in expected.values() if v["board_fdr_significant"]
-        )
+        body = resp.json()
+        assert body["strategies"], "the corpus must be non-empty for this shape check to bite"
+        assert _relational_json_keys(body) == []
 
     @pytest.mark.asyncio
-    async def test_board_fdr_is_advisory_never_gates_passes_all(self, monkeypatch):
-        """Forcing compute_board_level_fdr's output must not flip a single
-        passes_all verdict, in EITHER direction — the scope decision
-        (compute_board_level_fdr's docstring) is annotation only. This is the
-        adversarial check: an implementation bug that accidentally threaded
-        board_fdr_significant into passes_all — whether inside `_compute()`
-        (the natural place #1185 names, where a board-level correction would
-        sit alongside the per-strategy gate) or in the post-cache
-        reconciliation block where the wiring actually lives today — would be
-        caught here by the verdicts changing when the forced value flips.
-
-        The cohort is deliberately MIXED: two strong-series strategies that
-        pass at baseline, one weak-series strategy that fails at baseline —
-        NOT the uniformly-passing cohort a prior version of this test used.
-        A uniform (all-True) cohort only exercises one threading direction:
-        forcing board_fdr_significant=False catches an AND-shaped bug
-        (`passes_all and board_fdr_significant`), because `True and <forced
-        False>` changes the verdict — but `True or <forced False>` does NOT,
-        so that exact setup is blind to an OR-shaped bug (`passes_all or
-        board_fdr_significant`), which is the LOOSENING direction and the one
-        that matters most on a rigor gate (a false PASS survives it, not a
-        false FAIL). Forcing all-True on the same uniform cohort would have
-        been equally blind, for the mirror-image reason. This version runs
-        BOTH forced values against a cohort containing both a baseline-True
-        and a baseline-False strategy, so:
-          - forcing ALL to board_fdr_significant=False catches the AND-shaped
-            bug (the baseline-True strategies would flip to False);
-          - forcing ALL to board_fdr_significant=True catches the OR-shaped
-            bug (the baseline-False strategy would flip to True).
-        (#1185 code review, 2026-08-20 — second round; the prior uniform-
-        cohort version of this test was itself a finding of that round.)
-
-        Every forced request must exercise a REAL (non-cached) `_compute()`
-        run for the `_compute()`-site case to be caught at all:
-        `evaluate_rigor_gate` memoizes `_compute()`'s result in `rigor_cache`
-        keyed on cohort+strictness+code, and each forced request below uses
-        the exact same returns/strategies/strictness as the baseline — so
-        without an explicit `rigor_cache.clear()` before each one, it is
-        guaranteed to be a cache HIT, `_compute()` never re-runs, and a bug
-        living inside it would be invisible to this test regardless of the
-        forced monkeypatch (verified by reverting the `clear()` calls below
-        and confirming this test still passes against a `_compute()`-internal
-        mutation that gates passes_all on the forced board_fdr_significant —
-        #1185 code review, 2026-08-20)."""
+    async def test_live_single_strategy_gate_response_shape_carries_no_board_fdr_key(self):
+        """The per-strategy route — the passport's own endpoint, and the one
+        the owner decision is actually about."""
         from archimedes.api import selection_bias_routes as routes
         from archimedes.main import app
-        from archimedes.services import rigor_cache
 
         strategies = routes._provider().list_strategies()
-        assert len(strategies) >= 3
-        ids = [s.id for s in strategies[:3]]
-        # Two strong (baseline-passing) + one weak (baseline-failing): a
-        # uniform cohort cannot exercise both threading directions (see
-        # docstring above).
-        returns = {
-            ids[0]: self._strong_series(10),
-            ids[1]: self._strong_series(11),
-            ids[2]: self._weak_series(12),
-        }
-        self._patch_returns(monkeypatch, returns)
+        assert strategies, "the corpus must be non-empty for this shape check to bite"
+        sid = strategies[0].id
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp_baseline = await client.get("/api/selection-bias/gate")
-        assert resp_baseline.status_code == 200
-        baseline_by_id = {r["strategy_id"]: r for r in resp_baseline.json()["strategies"]}
-        baseline_passes = {sid: baseline_by_id[sid]["passes_all"] for sid in ids}
-        baseline_min_level = {sid: baseline_by_id[sid]["min_passing_level"] for sid in ids}
-        baseline_blocked = {sid: baseline_by_id[sid]["blocked_by_floor"] for sid in ids}
+            resp = await client.get(f"/api/selection-bias/gate/{sid}")
+        assert resp.status_code == 200
+        assert _relational_json_keys(resp.json()) == []
 
-        # Sanity: the cohort really is mixed under the REAL (unforced)
-        # correction — otherwise this test would silently degrade back into
-        # the uniform, one-directional case it was written to fix.
-        assert baseline_passes[ids[2]] is False, "weak-series strategy must fail at baseline for this guard to bite"
-        assert any(baseline_passes[sid] for sid in ids[:2]), (
-            "at least one strong-series strategy must pass at baseline for this guard to bite"
+
+class TestLibraryPboStaysOnThePassport:
+    """#1564 item 3, the explicit call, made executable.
+
+    DECISION: `library_pbo` STAYS on `StrategyRigorResult` as display-only
+    context; it does NOT follow `board_fdr_*` to the leaderboard. It was
+    owner-flagged as the same impurity class and it is not one, for two
+    reasons that are checkable rather than rhetorical — this class checks
+    both. (The third reason — its `source`/`data_vintage`/`rf_convention`
+    fields are provenance for the PBO figure and are meaningless apart from
+    it — is a structural fact of the model, not a runtime property.)
+    """
+
+    def test_library_pbo_is_still_on_the_per_strategy_result(self):
+        """Not removed silently — the issue's explicit instruction."""
+        assert "library_pbo" in StrategyRigorResult.model_fields
+
+    def test_library_pbo_is_a_constant_not_a_verdict(self):
+        """Reason 1: PBO is byte-identical for every strategy in a selection
+        set, so it cannot make one strategy's passport say a different thing
+        about that strategy because of another strategy — which is the whole
+        property the owner decision turns on (`board_fdr_significant` DOES
+        differ per strategy, and flips as the cohort changes).
+
+        Reason 2 rides along: `pbo_score`, ALREADY on the per-strategy result
+        on the curated path, is itself this same library-wide value. Removing
+        `library_pbo` would delete the scope label while leaving the labelled
+        number — strictly less honest, and it would purify nothing.
+        """
+        from archimedes.services.rigor_evaluator import compute_pbo
+
+        rng = np.random.default_rng(1564)
+        returns = {f"s{i}": rng.normal(0.0005, 0.01, 400).tolist() for i in range(6)}
+        scores = compute_pbo(returns)
+
+        assert len(scores) == len(returns)
+        distinct = set(scores.values())
+        assert len(distinct) == 1, (
+            "compute_pbo is documented (and asserted in analytics-engine/scripts/compute_library_pbo.py) "
+            "to assign ONE library-wide value to every strategy; if that ever stops being true, the "
+            "#1564 decision to keep library_pbo on the passport has to be revisited"
         )
-
-        for forced_value, bug_direction in [(False, "AND-shaped"), (True, "OR-shaped")]:
-            # Force every strategy to the same board-FDR verdict. `_v=forced_value`
-            # binds the loop variable per-lambda (default-arg trick), avoiding the
-            # classic late-binding-closure bug across the two iterations.
-            monkeypatch.setattr(
-                routes,
-                "compute_board_level_fdr",
-                lambda dsr_p_values, fdr_level=0.05, _v=forced_value: {
-                    sid: {"board_fdr_significant": _v, "board_fdr_adjusted_p": 0.0 if _v else 1.0}
-                    for sid, p in dsr_p_values.items()
-                    if p is not None
-                },
-            )
-
-            # Force a real recompute for this forced request. Without this,
-            # the call has the IDENTICAL cache_key (same strategy_ids, same
-            # patched returns, same code_versions, same strictness) as the
-            # baseline and is guaranteed to be a rigor_cache HIT — `_compute()`
-            # would never re-run, and this test would be blind to any bug
-            # living inside it (see docstring above).
-            rigor_cache.clear()
-
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                resp_forced = await client.get("/api/selection-bias/gate")
-            assert resp_forced.status_code == 200
-            forced_by_id = {r["strategy_id"]: r for r in resp_forced.json()["strategies"]}
-
-            # The forced patch DID take effect (sanity check the patch is live)...
-            for sid in ids:
-                assert forced_by_id[sid]["board_fdr_significant"] is forced_value
-                assert forced_by_id[sid]["board_fdr_adjusted_p"] == pytest.approx(0.0 if forced_value else 1.0)
-            # ...yet every passes_all / min_passing_level verdict is byte-identical
-            # to the baseline where the real correction ran, in EITHER direction.
-            for sid in ids:
-                assert forced_by_id[sid]["passes_all"] == baseline_passes[sid], (
-                    f"board_fdr_significant must never gate passes_all "
-                    f"({bug_direction} bug, strategy {sid}, forced={forced_value})"
-                )
-                assert forced_by_id[sid]["min_passing_level"] == baseline_min_level[sid]
-                assert forced_by_id[sid]["blocked_by_floor"] == baseline_blocked[sid], (
-                    f"board_fdr_significant must never gate blocked_by_floor "
-                    f"({bug_direction} bug, strategy {sid}, forced={forced_value})"
-                )

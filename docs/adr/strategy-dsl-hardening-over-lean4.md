@@ -2,7 +2,7 @@
 
 > **Audience:** Archimedes team
 > **Status:** **Accepted**
-> **Date:** 2026-08-30
+> **Date:** 2026-08-30 (amended same day: § Implementation status records item 3 landing)
 > **Owner:** Dan Browne
 > **Supersedes:** —
 > **Superseded-by:** —
@@ -93,6 +93,9 @@ exactly the shape [`rigor-gate-unification.md`](rigor-gate-unification.md) exist
   distinct `look_ahead_label` in
   [`strategies_routes.py`](../../backend/archimedes/api/strategies_routes.py)), which is
   correct labelling of a weak signal but does not make the signal strong.
+  **(Closed — see § Implementation status. This paragraph is the diagnosis as
+  found, kept as the record of what was wrong; the state it describes no longer
+  ships.)**
 - **Two of the four position-sizing types are not implemented.**
   `POSITION_SIZING_TYPES` advertises `full_invested_when_in_market`, `equal_weight`,
   `inverse_vol`, `volatility_target`. `_enter_position` implements the first and the last;
@@ -234,6 +237,75 @@ lines of hand-written Python over a closed grammar, a genuinely tractable target
 reasonable use of a theorem prover. Proving properties of a small artifact a human wrote is
 the thing Lean is actually good at. Having an LLM emit Lean is not, and that door is closed.
 
+## Implementation status
+
+Recorded here so the decision above and the shipped code cannot drift apart. This
+section reports what landed; it does not reopen the decision.
+
+**Item 3 (derived no-lookahead check) — LANDED, 2026-08-30.**
+[`services/dsl_lookahead_audit.py`](../../backend/archimedes/services/dsl_lookahead_audit.py).
+It went further than the item described. The item proposed walking the condition
+tree to confirm every operand resolves to a value available at decision time; the
+shipped audit does that *and* proves the thing that walk quietly assumes — that the
+interpreter evaluating those operands never reads forward:
+
+1. **The interpreter is audited, once, by AST.** `verify_interpreter_surface`
+   parses [`dsl_to_backtrader.py`](../../backend/archimedes/services/dsl_to_backtrader.py)
+   and classifies every read of a backtrader line, proving each carries a bar
+   offset ≤ 0. An offset it cannot *prove* non-positive is treated exactly like
+   one it disproved — the only accepted proofs are a non-negative integer
+   literal, a `range()`-bound loop variable, and a parameter the enclosing
+   function guards (`if period < 1: raise`, which is why that guard in
+   `_make_indicator` is load-bearing rather than defensive). A read site with
+   zero matches is a *broken verifier*, not a clean one, and fails.
+2. **The spec is proven to stay inside that audited surface.**
+   `audit_dsl_strategy` checks every indicator, operator, operand, sizing type,
+   cadence and parameter-variant period against a surface pinned in the audit
+   module — deliberately *not* imported from `strategy_dsl`, so widening a DSL
+   enum without re-auditing the interpreter makes specs using the new construct
+   FAIL rather than inherit a pass they never earned.
+3. **Broker execution timing is charged on the real run.**
+   cheat-on-close / cheat-on-open must be off, read on both sides of
+   `cerebro.run()` because a strategy can set it mid-run.
+
+The verdict is four-state — `pass` / `fail` / `pending` / `degenerate`, the same
+words the rest of the rigor stack uses for a verdict that may not exist — and
+**only `pass` clears the gate's LEAK criterion**. `pending` means nothing was
+audited (no validated spec, or no broker execution-timing check for the run);
+`degenerate` means the audit ran and its own instrument gave no reading (the
+interpreter source was unreadable, or the AST pass matched zero read sites, which
+proves nothing rather than proving cleanliness).
+
+`look_ahead_safe` is **removed from the DSL entirely** — from `REQUIRED_FIELDS`,
+from `StrategySpec`, from `to_dict`, and from the generation prompt. It is not
+demoted to a recorded field: an emitter's assertion about its own output is not
+provenance worth carrying, and keeping it invited exactly the "read it back as if
+it were a check" mistake the diagnosis describes. Since the attribute does not
+exist, consulting a declaration is an `AttributeError`, not a silent false claim.
+That is the "input the emitter asserts becomes an output the validator computes"
+the item asked for, with the input deleted rather than demoted.
+`look_ahead_audit_source` is derived — `dsl_structural_audit` when the audit
+concluded either way, `dsl_audit_not_run` when it did not — and the hardcoded
+`self_attested` the diagnosis cites is retired: never written again, and no
+longer honoured on read (a stored `True` beside it is a claim, not a
+measurement, so `verdict_from_persisted_row` reads such a row as `pending`).
+
+Two properties are separate on purpose and must stay that way: **deployability is
+fail-closed** (`pending` and `degenerate` block exactly as hard as `fail` — an
+audit that reached no verdict is not evidence), while **rendering is honest**
+(neither is ever shown as a failure, because nothing found a leak). There is one
+vocabulary for both surfaces and the gate: the four-state `look_ahead_status`,
+plus `blocks_deploy` for the axis a status word cannot carry.
+
+**Not proven, stated rather than hidden.** backtrader's own `SimpleMovingAverage`
+/ `ExponentialMovingAverage` / `RSI` are library code: the audit proves the
+interpreter *feeds* them only bar-*t*-and-earlier lines and *reads* their output
+at offset 0; it does not re-derive backtrader's internal causality. Data-feed
+time alignment is a provenance question handled by the evaluator's `data_source`
+leg, not here.
+
+Items 1, 2 and 4 are unchanged by this and remain as written above.
+
 ## Consequences
 
 **Good.** The structural safety property survives untouched: generated content stays data,
@@ -253,7 +325,12 @@ loudly rather than emitting a degraded approximation under the paper's name.
 `equal_weight` passports describe sizing that did not happen; `realized_vol` specs are
 filtered out by a workaround rather than supported or rejected at the source; and the spec doc
 misdescribes the schema. Those are named here so nobody has to rediscover them, and none of
-them should be cited as working until the corresponding item ships.
+them should be cited as working until the corresponding item ships. (Item 3 has
+since shipped — see § Implementation status. These three are items 1, 2 and 4 and
+are still open. `realized_vol` is now at least *rejected loudly*: it sits in the
+DSL enum with no interpreter branch, so the structural audit fails any spec naming
+it rather than letting it through — a rejection, not the implementation item 2
+asks for.)
 
 **What this does not decide.** Whether the sandbox eventually gets built, and what its
 containment boundary looks like. That is a separate decision with a separate ADR, triggered by

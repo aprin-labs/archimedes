@@ -47,7 +47,7 @@ flowchart TB
   VAULT -. "read state (truth)" .-> RUNNER
   RUNNER -- "① commit trace hash" --> RTR
   RUNNER -- "② rebalance(trades)" --> VAULT
-  RUNNER -- "③ reveal full trace (IPFS pointer)" --> RTR
+  RUNNER -- "③ reveal full trace (hash-only)" --> RTR
   VAULT -- "swaps" --> AMM
   ORACLE -- "price pushes" --> PO
   MARKET -- "register + 90/10 fees (USDC)" --> SR

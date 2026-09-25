@@ -224,7 +224,7 @@ export default function AssetGroupModal({ assetClass, assets, onClose }) {
         {/* Aggregate stat */}
         <div style={{ display: 'flex', gap: 24, alignItems: 'baseline', marginTop: 16, flexWrap: 'wrap' }}>
           <div>
-            <div className="caption" style={{ color: 'var(--text-4)', fontSize: '0.7rem' }}>
+            <div className="caption" style={{ color: 'var(--text-3)', fontSize: '0.7rem' }}>
               {medianWindow ? `Median ${medianWindow} change` : 'Median change'} ({members.length} assets)
             </div>
             <div className={`mono ${changeClass(medianChange24h)}`} style={{ fontSize: '1.3rem', fontWeight: 600 }}>
@@ -251,7 +251,7 @@ export default function AssetGroupModal({ assetClass, assets, onClose }) {
               {r}
             </button>
           ))}
-          <span className="caption" style={{ marginLeft: 'auto', color: 'var(--text-4)', fontSize: '0.7rem' }}>
+          <span className="caption" style={{ marginLeft: 'auto', color: 'var(--text-3)', fontSize: '0.7rem' }}>
             Equal-weight % change index
             {members.length > MAX_AGGREGATE_MEMBERS ? ` · first ${MAX_AGGREGATE_MEMBERS} of ${members.length} assets` : ''}
           </span>
@@ -271,7 +271,7 @@ export default function AssetGroupModal({ assetClass, assets, onClose }) {
 
         {/* Member list */}
         <div style={{ marginTop: 20, paddingTop: 14, borderTop: '1px solid var(--glass-border)' }}>
-          <div className="caption" style={{ color: 'var(--text-4)', fontSize: '0.7rem', marginBottom: 8 }}>
+          <div className="caption" style={{ color: 'var(--text-3)', fontSize: '0.7rem', marginBottom: 8 }}>
             Assets in this group
           </div>
           <div

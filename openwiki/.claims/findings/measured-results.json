@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:24ea0dc70719e03cdd4b9fbc3947afb67f41a29cae0e8abb4471acc0a0df90e3",
+  "claims": [
+    {
+      "id": "claim_756b867c985b4606b25a502ad1016869",
+      "statement": "The fourth-wave measurement reports a library-level PBO of 0.046698 over 22 strategies, computed with S=16 partitions across C(16,8)=12,870 CSCV splits on a joint window of 2006-05-22 to 2026-04-30 (4709 trading days).",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/library-pbo.md#L14-L30",
+          "version": "repo-lines-v1:sha256:70de47958dd49d600180950fc2ebf6863074e723d83ec9f0d71824bc5010049a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk0MDg5YTU1MzFkZDQ2NzRlYzNhYTIzMDhkOWYwNzYzOWQ1YzRkMmRmZjI2ZjJlZTkyNjExZGY4M2RjMjJjMzMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjgwYjQwMDIyODJhZDZkNzQ3Nzg2NTdmZTlhMGZmYWVlMTI4MjBmMzhkODEzYmVmNWY3NGU4ZDJjYjMzZWNlOTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNjNjFjODk4ZjM3ZTY2YjllOGMyZmRjOGIwMjIzNDkwYzhkMmVjZTcxMDRhMTJlZWUzNDZiNjdiNzIzNTAyMjIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1aa78ad6201745bc94395e0af2530b2a",
+      "statement": "A low library-level PBO is a statement about ranking stability, not strategy quality: two-thirds of the library has negative Sharpe on the joint window and CSCV sees those failures lose consistently in-sample and out-of-sample, so the in-sample winner is rarely a fluke.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/library-pbo.md#L31-L50",
+          "version": "repo-lines-v1:sha256:d457b2d3402c07c847fbf3b564fb462ad1bcdf3904c0739a28a592f002cd3143:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY4Nzc1YzM1NTJkZWMyOWIxNjYyZmJlNmM0ZDNhNzUxYzQ2NjA3NWVhNWYyYTNmZDQxMzg2MDcwMzQxNTIwNmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJhNGMwOTYzMjEwNTU1MDEwZjI5Y2VhMGVlYTU5NTA5NzY2OGExY2VlZjc4Mzk1ZjMyOTQ3MTU2NjU2YmIxMDUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMyZGM4YzcxOTVjZWZlMDY2MmY3N2E3NWQ3MWFkNTAyZjI3MzVhNGVkZmQ5MjUwMjQzN2QzOWY5YTkyOTg0ZDMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5291ed9688c3460a9837335df7a10e8f",
+      "statement": "The PBO measurement excludes capital_preservation_tbill (22 of 23 strategies) because its fixture models a synthetic T-bill yield rather than a tradeable instrument run, and the S-sensitivity range 0.022-0.047 is the error bar to quote rather than the headline's six decimals.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/library-pbo.md#L116-L130",
+          "version": "repo-lines-v1:sha256:5ffc7eec10d749d8e8d148d9b0680db4af2d83d4b6d4f5e3398d711b2de072ea:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNmZjE4MWU1OTEzN2Q2NGMzZTE2ZmE4MDhlOTZjNGFiNzhkMzg0MGE5YmM3MGY2MDBmYzkwZGY3ZWVlNDkyNjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNjZWIzNTk0ZmZjYjAwMjhjZGNlMzcyNThlMzBkNzU0OGQ5MTA1MjQ1Y2U1YWNlOTQ3OWU0NjgyZmFiOTg3ZTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQwNzdkMzRiMzcwNzA1ZDg4YjAzYjYzZWNmNDQ0OWVkZTQwZWY0MGFmYzQxYTJkZjk2NDFmY2E5MGUxZGFjMTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_dfbb573ba3364928aab237909f0b9bcd",
+      "statement": "The library-PBO run changed no served value: no pbo_score in backtest_fixtures.json was touched and no gate verdict moved; whether passports should surface a library_pbo field, and on what cadence, is recorded as an open team decision.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/library-pbo.md#L142-L152",
+          "version": "repo-lines-v1:sha256:dd1ad7e3ef52594191c15438df67afd71722a0acd0fcf7dcef3f15014c4bf870:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ0ZjY5MDMyYTUxMjBjMDdhZmY5MTc3NWI2MTBjZjA5YmUxMzI4M2RhNTYxZTI0MWY3MjYxYWRiYTI1MjJjYmMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg5ODZiMGI0MTlhYmY3ZmM1ODYwN2JhZjliNjQzY2Q1YzY1YTJkYzI0YTgxMWMwNGQ5NTY1NDA1ZTBlODNiMDYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU5MWY3YWVhNGY0NzZlYjNhOTQ4NDhlYzFmMzFkY2M4YTM4ZDA2MTc3NDU0MjlmNmU3ZTJkODdlNDk2NWI5MjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9348c00c5521412ea2f78622ec729c1c",
+      "statement": "The third-wave cost re-test rejects the execution-cost hypothesis for the candidates: every negative-net candidate is also negative gross, and Kalman pairs improves only from -1.47 to -0.75 gross while still failing, so no candidate's verdict flips even with free execution.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/third-wave-retest.md#L74-L95",
+          "version": "repo-lines-v1:sha256:103f4d16a4d2b6acad62d86c19dba95d202ce58f03b6a2fcbd043fc6f877fc68:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYxZDIzZDUwMWQyMDUzZmUzNGJmMmE0NzRkOGMyOGZkODQwZWI5YzkzMjRkZDMxYTVmZWRhNDFiZGY1ZWUyMWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM3MTc2ZTcyNjYxNDViNDhjYjU2ZDM5MDYwMzI5OTY0ZWM1YmFiMTZiZjk1MDMzYTRhZDQyYmEzNzZmZDFiYWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBlYTMzMzM0MDgzNzM2MDlkNzI4ZjQ3ZDBmZWIxMmJiY2MxZDdlMzRiYmQxYWJkMjRjYzYxMDg3OTM3MWE0ZGEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5f402fc0b6ec4990a72175a32d5914f8",
+      "statement": "Break-even cost separates the implementable shelf from the uninvestable one: survivors and near-misses carry 116-1221 bps of headroom while the failures sit at or below 50 bps.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/third-wave-retest.md#L74-L95",
+          "version": "repo-lines-v1:sha256:103f4d16a4d2b6acad62d86c19dba95d202ce58f03b6a2fcbd043fc6f877fc68:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYxZDIzZDUwMWQyMDUzZmUzNGJmMmE0NzRkOGMyOGZkODQwZWI5YzkzMjRkZDMxYTVmZWRhNDFiZGY1ZWUyMWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM3MTc2ZTcyNjYxNDViNDhjYjU2ZDM5MDYwMzI5OTY0ZWM1YmFiMTZiZjk1MDMzYTRhZDQyYmEzNzZmZDFiYWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBlYTMzMzM0MDgzNzM2MDlkNzI4ZjQ3ZDBmZWIxMmJiY2MxZDdlMzRiYmQxYWJkMjRjYzYxMDg3OTM3MWE0ZGEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_11d5b6a622774383a70174b2b3003bd4",
+      "statement": "Trade count understates activity for resize-style strategies: Moreira-Muir reports zero closed trades because backtrader's TradeAnalyzer never counts a continuously-resized position as a round trip, yet it turns over 1.07x equity per year and pays 0.21%/yr, so turnover is the honest activity metric.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/third-wave-retest.md#L74-L95",
+          "version": "repo-lines-v1:sha256:103f4d16a4d2b6acad62d86c19dba95d202ce58f03b6a2fcbd043fc6f877fc68:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYxZDIzZDUwMWQyMDUzZmUzNGJmMmE0NzRkOGMyOGZkODQwZWI5YzkzMjRkZDMxYTVmZWRhNDFiZGY1ZWUyMWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM3MTc2ZTcyNjYxNDViNDhjYjU2ZDM5MDYwMzI5OTY0ZWM1YmFiMTZiZjk1MDMzYTRhZDQyYmEzNzZmZDFiYWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBlYTMzMzM0MDgzNzM2MDlkNzI4ZjQ3ZDBmZWIxMmJiY2MxZDdlMzRiYmQxYWJkMjRjYzYxMDg3OTM3MWE0ZGEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_775a7abc2cd74ad68d9e62bd443691c1",
+      "statement": "Walk-forward parameter selection over a 1008-bar train and 252-bar test rescues no candidate: every stitched OOS Sharpe stays far below the gate, and the modal parameter wins only about half the folds for most strategies, which is itself the overfitting signature.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/third-wave-retest.md#L96-L129",
+          "version": "repo-lines-v1:sha256:9b0313821242c39a5ffaa4bdc876bf0361841c35bcb9a59ef62862b505d39b7c:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAzNDZhZjFiMTM1ZmJjYzBlYjViNTBiMjYzZWIwYzlkMjUyZmQ5NmYxYjA0MjUwYWIxMjAxOGQ3NWVlMzk2M2YiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUwMjVlZTdhZjY0OTdmOTc4YTMyMDBlOThiNzc3YjUzNTk4MDkxNzhjMWEwZGI0NWQwYjBmYTZkNGM3YTMzMWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjEzYzQ3MzJkZmYzOTQyMDdiNjI1ODZmOTEyMWVmMjQwZDY5MWYxNWFmYzFhM2UzNDEyZTIzYzA4NjU5M2JmMWQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c2b9c1eb235340398a477dee246f15ec",
+      "statement": "The universe experiment tested and rejected the hypothesis that the second-wave strategies fail only because the shipped five-asset universe is too small: no verdict flips on the diversified-10, sector-9, asset-class-8, or GEM-5 universes, and several results get worse.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/second-wave-universe-experiment.md#L38-L59",
+          "version": "repo-lines-v1:sha256:1b975b291db4c45397c64644df98cf0c95c25e8c77510633a9aa033e872415cb:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJjZTgzODFkNTdiN2Y2Y2Y3ZDNmYjY5ZGEyOTliYjEzMWYwOGJkYmFkYmY3MTY5ZDg1YTc4ZmE0YTA1OTk1MDkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5NDA5MDNlNjYzZjllYzUyYzk3NDUyMGQxN2ZhMzFiMTA2YzM3NTE4NDRhYjRjZjYwZmQwNDBjZTkxNjhjNzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjExNzMwMmMyOWRjODNhNjljOTRiNjlhZmU2ODUyZGQwZmJiZDU0MjVmMjFmNGRhYjJmNTgzNGFlMzZmYjAzYWMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6713d33784ab4387a1b2fb4e6eb61449",
+      "statement": "Universe composition matters more than universe size: risk parity scores best on the original five low-correlation assets (+0.35) and degrades on the larger but equity-dominated ten-ETF set (+0.10), so forcing a larger universe onto it would degrade the best configuration available.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/second-wave-universe-experiment.md#L60-L88",
+          "version": "repo-lines-v1:sha256:56b31763067b88036d5a546c758cd91b983d9be4ac51b0e4056f1ba5011e2d3d:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImExNGI5NzMwODIzYjNiNTIxZGEwZDJlNjAyMTZmMmUzOTQ0NTYxMDQ5NWFhMmM4NDQwMDFjNTBlNDM3NDcyZDIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZmYWMzZTQ0NWRkYWQ2ZWRiNzlkN2MzM2Y3ZDZmMzY0MTBjNzhiM2UwZDVmOWM0MDMzYjVlNDRiYWI3NDdhMDIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ5NGE1NjY4N2FmNGZlM2I0NzI3YTI1YmY1YTYwMjhmODhmZmM0NDc1ZmIxYzRjY2M3ZGU3Njk0NjY3NGU0YTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5707c39cbdee47dd8b343fd0c69d35a6",
+      "statement": "The risk-parity near-miss fails the DSR bar because num_trials_in_selection is set to the full library size: sweeping num_trials gives p-values of 0.999 down to 0.963 for 1-13 trials, 0.941 at 22, and 0.896 at 50 — but the note states this calibration question is not what blocks the other eight strategies, which fail on performance.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/second-wave-universe-experiment.md#L89-L107",
+          "version": "repo-lines-v1:sha256:8e22e8189ce95c4f52e13b3e309b5108aebc137f9a34ea5780be2aa9a8db5b4c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJkN2JlYmI4NWIwM2ExOWM5MWNiNzU3ODI1MjEyZjU3M2RhMDFiYjA3ZjZhYTlkYWY3MzE0NWU5NzJkMGFiY2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM3MGJhMWQ4ZTVmNDQ2YzA3Yzc2NTUyODk1NjVjNzk4MDdkNmE2M2Q3MDEwODgyMzY3NzZmNTg4MjYyOWI2NjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE2ZjRhZGY1ZDZmNGZhMGYxZjExMGM1ZTgyYjc5MWNiMjE5YjMxMjkyNjBjMTVhM2RlMmU5MTRiYjY1ZmIyOTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_61322f0b446546e5bb75f7766f25cc1e",
+      "statement": "All three findings notes are point-in-time diagnostics run on 2026-06-11 data that were never written back to fixtures, so they are not a source for a strategy's current pass or fail status.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quant/library-pbo.md#L1-L13",
+          "version": "repo-lines-v1:sha256:449fce24e80a606dedca53712c072ff6f970fd2691ff01a35db4aa464f5ea9fd:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY1Y2U1ZGIxOGNkY2NhYWZmMjI4YWMwYjk4YzMyNWRkYmFhMmYxN2UwYjY2N2NkZGRkNTEyYTE4ZmM4ZTE2M2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4OTlmZDYwMWJhYzFmMTI0OWQ1NjczZWI1ZjJlMWQzOTM0MDM2MTUwNWJlNDE0MWIyMjU3MGRiMmM0YmRlZDcifQ"
+        },
+        {
+          "resource": "repo://docs/quant/second-wave-universe-experiment.md#L1-L12",
+          "version": "repo-lines-v1:sha256:754f5ba031df4476ae00cbb0a82bc075b1907ddebf4e22a66462cd37c09b844b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE5NjYxODFiMzlmYjUxNjAzYWYyMjcwNDNhY2MwYzQ4NzBkNDMyMTk2NzVjYjY0NjE3M2U5ZTM1OTMyNWM0NzkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI0OTZlOTVhMjg0YzE2M2Q2MDI1ZWQ3NmQ1YTc5M2Q5NzI3NmFhYTI0N2RiOGY5OTFjOGRjNzA4NGRmYTAwNGUifQ"
+        },
+        {
+          "resource": "repo://docs/quant/third-wave-retest.md#L1-L9",
+          "version": "repo-lines-v1:sha256:e7bfab1e4eabe22082faf5398d2b7c32b40742dbe664e043ccee572a2997cbaf:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZDFkMTY3YWZlMzA1ODgxYzhiZDRiNzQ2NDAxODdmZjRhMDE0ZGRmYTVlODcxNDI5M2RlMjc4YmZhNjg0OGFhZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDFiYTQ3MTljODBiNmZlOTExYjA5MWE3YzA1MTI0YjY0ZWVlY2U5NjRlMDljMDU4ZWY4Zjk4MDVkYWNhNTQ2YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOTAwZTc2YzEyNDBhYmE1YzJlZDIxMGU2YTdkOTBjODFiODY1ODQzODNlNTE3NzY0YTA3YzEyOGY2MWNkYjA2ZSJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.4.3",
+    "at": "2026-08-31T05:55:43.566Z"
+  }
+}

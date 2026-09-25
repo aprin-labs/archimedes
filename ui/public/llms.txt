@@ -1,9 +1,15 @@
 # Archimedes
 
-> Agentic trading, grounded in research — settled on Arc. Archimedes turns a
-> natural-language investment intent into a research-grounded, rigor-gated portfolio
-> strategy backed by quantitative-finance literature and executed in non-custodial USDC
-> vaults on Arc testnet (chain ID 5042002).
+> Turns a natural-language investment intent into a research-grounded,
+> rigor-gated portfolio strategy on Arc public testnet (chain ID 5042002).
+> Generation is not anchored on-chain. Simulated paper deployments are live:
+> `paper_daily_returns` is the graded track record the rigor gate sees.
+> `paper_agent_trades` (PR #1704, not on main) is not a live path. Neither is
+> on-chain execution proof. Do not round this up into paper trading validating
+> on-chain execution.
+> Executing strategies in non-custodial USDC vaults on Arc is roadmap, not shipped:
+> the contracts are deployed, the journey is gated off every shipped surface, and no
+> user vault has ever been created.
 
 Same journey is driveable over HTTP. Better Auth user is canonical application identity.
 Wallet is optional verified external account and is required only for wallet/on-chain
@@ -30,12 +36,20 @@ operations. Circle wallet passkeys control Circle wallets; they do not log in to
    `pending`, or `degenerate` (real returns exist but are a mathematically
    constant zero-variance series — broken data or a zero-trade backtest, never
    deployable); never infer admission from headline Sharpe alone.
-5. **Paper trade** — live today, simulated (no chain, no funds):
+5. **Paper trade** — live today as simulated deployments
+   (`POST /api/paper/deployments`). The live graded book is `paper_daily_returns`.
+   `paper_agent_trades` is an executor ledger (PR #1704, not on main) and is
+   **not** this step. Neither is on-chain execution proof. Do not round this
+   up into “paper trading validates the vault” — vault execution is roadmap,
+   not shipped.
    `POST /api/paper/deployments` with `{ "strategy_id": "..." }`, then
    `GET /api/paper/deployments/{deployment_id}` to read performance and
    `POST /api/paper/deployments/{deployment_id}/stop` to end it.
-6. **Wallet operations** — first link wallet using proof flow below. Deploy/publish/
-   subscribe remain subject to live contract status advertised by agent manifest.
+6. **Wallet operations** — first link wallet using proof flow below. Publish/subscribe
+   are not a public surface — marketplace is roadmap, not shipped. Deploying into a
+   vault is roadmap, not shipped: `POST /api/vaults/create` resolves and its contracts are
+   deployed, but the journey is gated off every shipped surface and no user vault has ever
+   been created — do not describe it to a user as something they can do today.
 
 ## Account + rigor utilities (account session required)
 
@@ -50,7 +64,12 @@ operations. Circle wallet passkeys control Circle wallets; they do not log in to
   and passed. Since PBO and look-ahead can never run here the verdict is CAPPED and is
   not the strategy passport's gate. Read `legs_evaluated` / `legs_runnable` /
   `legs_total` / `verdict_capped` alongside it; `passes` alone overstates the evidence.
-  `passes` is true only when at least one check was evaluable and none failed.
+  MINIMUM EVALUATION WINDOW: 250 daily bars (one trading year). Under it you get a
+  422 refusal — `detail.reason: "window_too_short"` with `bars_received` and
+  `bars_required` — and never a verdict, so send more history rather than retrying.
+  Dates must be strict `YYYY-MM-DD`, unique and ASCENDING (the walk-forward split is
+  positional; an out-of-order series is refused, never sorted), and every
+  `daily_return` finite with `|r| <= 1.0`.
 
 ## Optional wallet link (EIP-4361)
 
@@ -69,7 +88,7 @@ creates account session and never transfers wallet already linked to another use
 
 ## Funding test wallet
 
-Arc testnet uses USDC as gas. Faucet: **https://faucet.circle.com/**. No real funds.
+Arc testnet uses USDC as gas. Faucet: **https://faucet.circle.com/**. No mainnet money; generation still settles real testnet USDC — read `GET /api/generate/quote`.
 
 ## Machine-readable references
 

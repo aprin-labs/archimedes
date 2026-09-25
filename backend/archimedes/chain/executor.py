@@ -544,28 +544,41 @@ class ChainExecutor:
         account = chain_client.settings.agent_account
         return account.address if account else None
 
-    def backend_signer_address_confirmed(self) -> str | None:
+    async def backend_signer_address_confirmed(self) -> str | None:
         """Like ``backend_signer_address``, but ONLY when the answer is
-        cryptographically certain — never an operator-maintained mirror that
-        can silently drift out of sync with what actually signs (#1403
-        review of #1353's signer pre-check).
+        established from what actually signs — never an operator-maintained
+        mirror that can silently drift out of sync with it (#1403 review of
+        #1353's signer pre-check).
 
         Raw-key path: the address IS the signer, derived straight from
-        ``ARC_AGENT_PRIVATE_KEY`` — always confirmed.
+        ``ARC_AGENT_PRIVATE_KEY`` — always confirmed, no I/O.
 
-        Circle path: signing is keyed on WALLET_ID (circle_signer.py); the
-        EVM address is surfaced separately via a hand-maintained WALLET_ADDRESS
-        env var (.env.example: "WALLET_ID is the Circle wallet UUID,
-        WALLET_ADDRESS is its EVM address") that nothing re-derives from the
-        Circle wallet itself. Returns None here — "can't be confirmed," not
-        "confirmed absent" — because a caller that goes straight to an
-        IRREVERSIBLE terminal state on a mismatch (the reveal reconciliation
-        signer pre-check) must never act on this value: a stale WALLET_ADDRESS
-        while the true signer is unchanged would read as a rotation and
-        permanently terminal a perfectly recoverable dangling reveal.
+        Circle path: signing is keyed on WALLET_ID (circle_signer.py), while
+        the EVM address is *also* surfaced through a hand-maintained
+        WALLET_ADDRESS env var (.env.example: "WALLET_ID is the Circle wallet
+        UUID, WALLET_ADDRESS is its EVM address") that nothing re-derives from
+        the wallet. This method ignores that mirror entirely and asks Circle
+        what WALLET_ID signs with (``CircleSigner.get_wallet_address`` →
+        ``GET /wallets/{WALLET_ID}``), so the answer is bound to the signing
+        identifier rather than to an operator's bookkeeping (#1412).
+
+        Returns None when the answer cannot be established — Circle
+        unreachable, non-200, no address in the payload, or (raw-key path) no
+        configured account. **None means "could not confirm", never
+        "confirmed".** The caller acts IRREVERSIBLY on a mismatch (the reveal
+        reconciliation pre-check goes terminal), so it must skip the check
+        entirely on None rather than treat it as evidence of anything; see
+        CLAUDE.md § fail-soft — a plausible substitute here would permanently
+        kill a recoverable dangling reveal.
+
+        Async because the Circle answer is a bounded network read
+        (``_WALLET_LOOKUP_TIMEOUT``); before #1412 this returned None
+        unconditionally on the Circle path, which made the pre-check a
+        permanent no-op in production (the runner env file refuses to write
+        without Circle credentials, so Circle is the only prod signer).
         """
         if circle_signer.is_configured:
-            return None
+            return await circle_signer.get_wallet_address()
         account = chain_client.settings.agent_account
         return account.address if account else None
 

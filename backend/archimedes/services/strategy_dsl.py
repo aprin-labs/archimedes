@@ -6,6 +6,12 @@ translates validated specs into backtrader.Strategy subclasses at runtime.
 
 No arbitrary code execution — the schema is strictly validated before any
 backtrader objects are instantiated.
+
+The schema declares STRUCTURE only. It carries no field in which the generating
+model grades its own output: the retired ``look_ahead_safe`` boolean is gone
+(from ``REQUIRED_FIELDS``, from :class:`StrategySpec`, and from the generation
+prompt), and the look-ahead verdict is derived from the validated spec by
+``archimedes.services.dsl_lookahead_audit``.
 """
 
 from __future__ import annotations
@@ -43,6 +49,21 @@ POSITION_SIZING_TYPES = frozenset(
         "volatility_target",
     }
 )
+
+# Keys each sizing type accepts, INCLUDING "type". The closed-enum promise this
+# DSL makes is worthless if the dict carrying the enum member is open: a spec
+# saying {"type": "inverse_vol", "reference_vol": 0.30} — the plausible
+# misspelling of reference_vol_annual — used to validate, interpret, backtest and
+# publish at the 0.15 default, with the author's 0.30 silently discarded and
+# nothing anywhere saying so. Unknown keys are rejected by name instead. Adding a
+# key to a sizing type means adding it here in the same commit the interpreter
+# starts reading it.
+POSITION_SIZING_KEYS: dict[str, frozenset[str]] = {
+    "full_invested_when_in_market": frozenset({"type"}),
+    "equal_weight": frozenset({"type"}),
+    "inverse_vol": frozenset({"type", "reference_vol_annual"}),
+    "volatility_target": frozenset({"type", "annual_pct"}),
+}
 
 # ── Errors ────────────────────────────────────────────────────────────
 
@@ -132,15 +153,50 @@ REQUIRED_FIELDS = frozenset(
         "exit",
         "position_sizing",
         "source_arxiv_ids",
-        "look_ahead_safe",
     }
 )
+
+# Keys accepted-and-ignored for back-compat with specs persisted before the
+# field was removed from the schema. See ``_note_legacy_fields``.
+LEGACY_IGNORED_FIELDS = frozenset({"look_ahead_safe"})
+
+
+def _note_legacy_fields(spec: dict[str, Any]) -> None:
+    """Log-and-forget any retired key a persisted spec still carries.
+
+    ``look_ahead_safe`` was a REQUIRED boolean the generating model wrote about
+    its own output; the validator only checked that it was ``True``, so a spec
+    was admitted on its own assertion of innocence. It is removed from the
+    schema, from the prompt, and from :class:`StrategySpec` — the look-ahead
+    verdict is now DERIVED by
+    ``archimedes.services.dsl_lookahead_audit.audit_dsl_strategy`` over the
+    validated spec (ADR ``strategy-dsl-hardening-over-lean4.md`` item 3).
+
+    Specs written before the removal are still in the DB and still arrive here.
+    They must load without crashing, and their declared value must never be
+    read. Both hold without touching anything: the key is simply not in
+    ``REQUIRED_FIELDS`` and is never copied onto the :class:`StrategySpec`, so
+    it cannot reach a consumer. This function deliberately does NOT mutate the
+    caller's dict — a validator that quietly edited its input would surprise
+    every caller holding the same blob — it only records that the key was seen.
+    A legacy ``look_ahead_safe: false`` is ignored exactly like a ``true``: the
+    declaration carried no information in either direction, and re-honouring the
+    ``false`` would be trusting the same slop with the sign flipped.
+    """
+    for key in LEGACY_IGNORED_FIELDS & set(spec.keys()):
+        logger.debug(
+            "ignoring retired DSL field %r (value %r) — the look-ahead verdict is derived, not declared",
+            key,
+            spec[key],
+        )
 
 
 def validate_strategy_spec(spec: dict[str, Any]) -> StrategySpec:
     """Validate a strategy DSL spec. Returns a StrategySpec on success, raises DSLError."""
     if not isinstance(spec, dict):
         raise DSLError("spec must be a JSON object")
+
+    _note_legacy_fields(spec)
 
     missing = REQUIRED_FIELDS - set(spec.keys())
     if missing:
@@ -173,10 +229,23 @@ def validate_strategy_spec(spec: dict[str, Any]) -> StrategySpec:
         raise DSLError("position_sizing must be a dict")
     if ps.get("type") not in POSITION_SIZING_TYPES:
         raise DSLError(f"position_sizing.type must be one of {sorted(POSITION_SIZING_TYPES)}")
+    allowed_keys = POSITION_SIZING_KEYS[ps["type"]]
+    unknown_keys = sorted(set(ps.keys()) - allowed_keys)
+    if unknown_keys:
+        raise DSLError(
+            f"position_sizing['{ps['type']}'] does not accept {unknown_keys}; allowed keys: {sorted(allowed_keys)}"
+        )
     if ps["type"] == "volatility_target":
         target = ps.get("annual_pct")
         if not isinstance(target, (int, float)) or target <= 0:
             raise DSLError("volatility_target requires annual_pct > 0")
+    if ps["type"] == "inverse_vol" and "reference_vol_annual" in ps:
+        # Optional; the interpreter defaults it. But a present-and-nonsensical
+        # value must be rejected rather than silently coerced — a zero or
+        # negative reference makes the inverse-vol scale meaningless.
+        reference = ps["reference_vol_annual"]
+        if not isinstance(reference, (int, float)) or isinstance(reference, bool) or reference <= 0:
+            raise DSLError("inverse_vol reference_vol_annual must be a number > 0 when present")
 
     # source_arxiv_ids
     arxiv_ids = spec["source_arxiv_ids"]
@@ -186,11 +255,11 @@ def validate_strategy_spec(spec: dict[str, Any]) -> StrategySpec:
         if not isinstance(aid, str) or not aid.strip():
             raise DSLError(f"source_arxiv_ids entry must be a non-empty string, got {aid!r}")
 
-    # look_ahead_safe
-    if not isinstance(spec["look_ahead_safe"], bool):
-        raise DSLError("look_ahead_safe must be a boolean")
-    if not spec["look_ahead_safe"]:
-        raise DSLError("spec with look_ahead_safe=false is rejected by the interpreter")
+    # NOTE: there is deliberately no look-ahead check here. The retired
+    # ``look_ahead_safe`` field was the generating model's own assertion about
+    # its own output, and validating it proved nothing. The verdict is derived
+    # downstream from this validated spec by
+    # ``dsl_lookahead_audit.audit_dsl_strategy``.
 
     # parameter_variants (optional)
     pv = spec.get("parameter_variants")
@@ -221,7 +290,6 @@ def validate_strategy_spec(spec: dict[str, Any]) -> StrategySpec:
         exit=spec["exit"],
         position_sizing=ps,
         source_arxiv_ids=arxiv_ids,
-        look_ahead_safe=spec["look_ahead_safe"],
         indicators=sorted(all_indicators),
         parameter_variants=pv,
     )
@@ -232,7 +300,15 @@ def validate_strategy_spec(spec: dict[str, Any]) -> StrategySpec:
 
 @dataclass(frozen=True)
 class StrategySpec:
-    """A validated strategy DSL specification."""
+    """A validated strategy DSL specification.
+
+    Carries no ``look_ahead_safe`` field, by design. The look-ahead verdict is
+    an OUTPUT derived from this object by
+    ``dsl_lookahead_audit.audit_dsl_strategy``, never an input the emitting
+    model declared. Because the attribute does not exist, a consumer cannot
+    accidentally read a declaration back — the mistake is a ``AttributeError``,
+    not a silent false claim.
+    """
 
     name: str
     asset_universe: list[str]
@@ -241,7 +317,6 @@ class StrategySpec:
     exit: dict[str, Any]
     position_sizing: dict[str, Any]
     source_arxiv_ids: list[str]
-    look_ahead_safe: bool
     indicators: list[str] = field(default_factory=list)
     parameter_variants: dict[str, list[int | float]] | None = None
 
@@ -254,7 +329,6 @@ class StrategySpec:
             "exit": self.exit,
             "position_sizing": self.position_sizing,
             "source_arxiv_ids": self.source_arxiv_ids,
-            "look_ahead_safe": self.look_ahead_safe,
         }
         if self.parameter_variants is not None:
             d["parameter_variants"] = self.parameter_variants
@@ -274,7 +348,6 @@ FABER_2007_SPEC: dict[str, Any] = {
     "exit": {"lt": ["close", "sma_200"]},
     "position_sizing": {"type": "full_invested_when_in_market"},
     "source_arxiv_ids": ["0706.1497"],
-    "look_ahead_safe": True,
 }
 
 VOL_MANAGED_SPEC: dict[str, Any] = {
@@ -285,7 +358,6 @@ VOL_MANAGED_SPEC: dict[str, Any] = {
     "exit": {"and": [{"lt": ["close", 0]}, {"lt": ["close", 0]}]},
     "position_sizing": {"type": "volatility_target", "annual_pct": 0.15},
     "source_arxiv_ids": ["1704.03022"],
-    "look_ahead_safe": True,
 }
 
 REFERENCE_EXAMPLES = [FABER_2007_SPEC, VOL_MANAGED_SPEC]

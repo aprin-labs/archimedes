@@ -1,7 +1,7 @@
 {
   "name": "Archimedes",
   "short_name": "Archimedes",
-  "description": "Agentic trading, grounded in research.",
+  "description": "Research-grounded strategy generation with a visible rigor gate.",
   "icons": [
     {
       "src": "/icon-192.png",
@@ -14,8 +14,8 @@
       "type": "image/png"
     }
   ],
-  "theme_color": "#0a0a0b",
-  "background_color": "#0a0a0b",
+  "theme_color": "#15131D",
+  "background_color": "#15131D",
   "display": "standalone",
   "start_url": "/"
 }

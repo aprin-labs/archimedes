@@ -8,7 +8,7 @@
     "tokenURI": null,
     "status": "registration_pending",
     "registrationUri": "https://archimedes-arc.com/.well-known/agent-registration.json",
-    "note": "Not registered on-chain: no register() transaction has been sent, so agentId and tokenURI are null and NO ERC-8004 identity, reputation, or validation claim is made. Publishing a spec-typed registration file at registrationUri is not the same as being registered. Plan the call with scripts/register_erc8004_identity.py --plan."
+    "note": "Not registered on-chain: no register() transaction has been confirmed for this deployment's wallet, so agentId and tokenURI are null and NO ERC-8004 identity, reputation, or validation claim is made. Publishing a spec-typed registration file at registrationUri is not the same as being registered. This status is re-derived from a live registry read on every request; the sibling erc8004_verification block says which reading produced it. Plan the call with scripts/register_erc8004_identity.py --plan."
   },
   "_note": {
     "whatThisIs": "The DOMAIN-OWNERSHIP variant. ERC-8004: 'an agent MAY optionally prove control of an HTTPS endpoint-domain by publishing https://{endpoint-domain}/.well-known/agent-registration.json containing at least a registrations list.' That is the whole file — a registrations list and nothing that needs restating from the primary registration file.",

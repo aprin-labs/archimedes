@@ -96,6 +96,10 @@ test("sign-up form wires the shared rules module, confirm field, and gate", () =
 
 test("sign-in view offers a Forgot password control wired to the reset request", () => {
 	assert.match(authPage, /Forgot password\?/);
+	// The control's styling/affordance is pinned in auth-page-copy.test.js;
+	// this line keeps the two in step, so a restyle that loses the wiring
+	// below fails here rather than only there.
+	assert.match(authPage, /className="auth-quiet-link"/);
 	assert.match(authPage, /requestPasswordReset/);
 	assert.match(authPage, /RESET_REQUESTED_MESSAGE/);
 	// No account-enumeration: the same confirmation copy must be shown

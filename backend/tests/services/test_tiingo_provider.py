@@ -654,13 +654,478 @@ class TestProviderSelectionWiring:
         from archimedes.services.market_data_provider import CachingMarketDataProvider
 
         monkeypatch.setenv("MARKET_DATA_PROVIDER", "tiingo")
-        provider = get_provider()
-        assert isinstance(provider, CachingMarketDataProvider)
-        assert isinstance(provider._inner, TiingoProvider)
-        assert provider._source_name == "tiingo"
+        # Since #1798 this variable selects the DAILY seam's vendor when
+        # MARKET_DATA_DAILY_PROVIDER is unset (back-compat), and never the
+        # intraday seam's — see test_market_data_seams.py.
+        monkeypatch.delenv("MARKET_DATA_DAILY_PROVIDER", raising=False)
+        provider = get_provider(seam="daily")
+        assert isinstance(provider._inner, CachingMarketDataProvider)
+        assert isinstance(provider._inner._inner, TiingoProvider)
+        assert provider._inner._source_name == "tiingo"
 
     def test_market_data_provider_tiingo_without_key_fails_loud(self, monkeypatch):
         monkeypatch.setenv("MARKET_DATA_PROVIDER", "tiingo")
+        monkeypatch.delenv("MARKET_DATA_DAILY_PROVIDER", raising=False)
         monkeypatch.delenv("TIINGO_API_KEY", raising=False)
         with pytest.raises(TiingoAPIKeyMissingError):
-            get_provider()
+            get_provider(seam="daily")
+
+
+# ─── Free-tier politeness: pacing + honest rate-limit surfacing (#1218) ──
+
+
+class TestRequestPacing:
+    """The pacer is tested against an INJECTED clock/sleep, never real time.
+
+    Two reasons this is the right boundary rather than a shortcut: a
+    wall-clock test of a 1.1 s floor costs 1.1 s of suite time per assertion
+    and is flaky under load, and — more importantly — asserting on the
+    *value handed to sleep()* is a stronger claim than observing that some
+    time passed. ``_tiingo_min_request_interval_s`` defaults to 0 under
+    ``TESTING`` so the rest of the hermetic suite never sleeps; these tests
+    set the interval explicitly, so nothing here depends on that default.
+    """
+
+    @staticmethod
+    def _pacer_with_fake_time():
+        """Returns ``(pacer, slept)`` over a clock that only advances when
+        the pacer itself sleeps — so elapsed time is exactly what the pacer
+        asked for, with no wall-clock contribution."""
+        now = {"t": 1000.0}
+        slept: list[float] = []
+
+        def clock():
+            return now["t"]
+
+        def sleep(seconds):
+            slept.append(seconds)
+            now["t"] += seconds
+
+        from archimedes.services.market_data_provider import _RequestPacer
+
+        return _RequestPacer(clock=clock, sleep=sleep), slept
+
+    def test_first_request_is_never_delayed(self):
+        pacer, slept = self._pacer_with_fake_time()
+        assert pacer.wait(1.1) == 0.0
+        assert slept == [], "a cold pacer must not delay the first request"
+
+    def test_second_immediate_request_waits_the_full_interval(self):
+        pacer, slept = self._pacer_with_fake_time()
+        pacer.wait(1.1)
+        waited = pacer.wait(1.1)
+        assert waited == pytest.approx(1.1)
+        assert slept == [pytest.approx(1.1)]
+
+    def test_a_request_after_the_interval_has_elapsed_is_not_delayed(self):
+        """Pacing is a floor, not a fixed tax: work that already took longer
+        than the interval must not be charged again for it."""
+        now = {"t": 0.0}
+        slept: list[float] = []
+        from archimedes.services.market_data_provider import _RequestPacer
+
+        pacer = _RequestPacer(clock=lambda: now["t"], sleep=lambda s: slept.append(s))
+        pacer.wait(1.1)
+        now["t"] += 5.0  # caller spent 5s doing something else
+        assert pacer.wait(1.1) == 0.0
+        assert slept == []
+
+    def test_zero_interval_disables_pacing_entirely(self):
+        pacer, slept = self._pacer_with_fake_time()
+        pacer.wait(0.0)
+        pacer.wait(0.0)
+        pacer.wait(0.0)
+        assert slept == []
+
+    def test_interval_env_override_is_honoured(self, monkeypatch):
+        from archimedes.services.market_data_provider import _tiingo_min_request_interval_s
+
+        monkeypatch.setenv("TIINGO_MIN_REQUEST_INTERVAL_S", "2.5")
+        assert _tiingo_min_request_interval_s() == 2.5
+
+    @pytest.mark.parametrize("bad", ["abc", "-1", ""])
+    def test_unparseable_or_negative_interval_falls_back_to_the_default(self, monkeypatch, bad):
+        from archimedes.services.market_data_provider import _tiingo_min_request_interval_s
+
+        monkeypatch.setenv("TIINGO_MIN_REQUEST_INTERVAL_S", bad)
+        # TESTING is set by conftest, so the default here is 0.0 — the point
+        # of the assertion is that a bad value never becomes the interval.
+        assert _tiingo_min_request_interval_s() == 0.0
+
+    def test_pacing_is_applied_at_the_real_http_boundary(self, monkeypatch):
+        """End-to-end: a real ``TiingoProvider`` fetch goes through the pacer,
+        so the politeness floor covers every endpoint family and both public
+        methods rather than only the code path a unit test picked."""
+        monkeypatch.setenv("TIINGO_MIN_REQUEST_INTERVAL_S", "1.1")
+        pacer, slept = self._pacer_with_fake_time()
+        client = _mock_client({"/tiingo/daily/SPY/prices": EQUITY_FIXTURE})
+        provider = TiingoProvider(client=client, pacer=pacer)
+
+        provider.get_daily_ohlcv("SPY", "2024-01-02", "2024-01-03")
+        assert slept == [], "first request is free"
+        provider.get_daily_ohlcv("SPY", "2024-01-02", "2024-01-03")
+        assert slept == [pytest.approx(1.1)], "the second request must be paced"
+
+    def test_batch_paces_between_symbols(self, monkeypatch):
+        """The #1218 cost driver is a multi-symbol sweep; that is exactly the
+        loop that must not fire N requests back to back."""
+        monkeypatch.setenv("TIINGO_MIN_REQUEST_INTERVAL_S", "1.1")
+        pacer, slept = self._pacer_with_fake_time()
+        client = _mock_client(
+            {
+                "/tiingo/daily/SPY/prices": EQUITY_FIXTURE,
+                "/tiingo/daily/QQQ/prices": EQUITY_FIXTURE,
+                "/tiingo/daily/IWM/prices": EQUITY_FIXTURE,
+            }
+        )
+        provider = TiingoProvider(client=client, pacer=pacer)
+        provider.get_daily_close_batch({"sSPY": "SPY", "sQQQ": "QQQ", "sIWM": "IWM"}, period="1mo")
+        assert slept == [pytest.approx(1.1), pytest.approx(1.1)], "3 symbols = 2 inter-request waits"
+
+
+class TestRateLimitSurfacing:
+    """HTTP 429 is surfaced as its own error type and propagates out of a
+    batch instead of being laundered into a per-symbol skip."""
+
+    @staticmethod
+    def _rate_limited_client(headers: dict | None = None, capture: list | None = None) -> httpx.Client:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if capture is not None:
+                capture.append(request)
+            return httpx.Response(429, json={"detail": "rate limit"}, headers=headers or {}, request=request)
+
+        return httpx.Client(transport=httpx.MockTransport(handler), base_url="https://api.tiingo.com")
+
+    def test_429_raises_the_dedicated_rate_limit_error(self):
+        from archimedes.services.market_data_provider import TiingoRateLimitError
+
+        provider = TiingoProvider(client=self._rate_limited_client())
+        with pytest.raises(TiingoRateLimitError) as exc:
+            provider.get_daily_ohlcv("SPY", "2024-01-02", "2024-01-03")
+        assert "429" in str(exc.value)
+        assert exc.value.retry_after_s is None, "no header sent — must not invent a number"
+
+    def test_retry_after_header_is_surfaced_verbatim(self):
+        from archimedes.services.market_data_provider import TiingoRateLimitError
+
+        provider = TiingoProvider(client=self._rate_limited_client({"Retry-After": "60"}))
+        with pytest.raises(TiingoRateLimitError) as exc:
+            provider.get_daily_ohlcv("SPY", "2024-01-02", "2024-01-03")
+        assert exc.value.retry_after_s == 60.0
+        assert "60" in str(exc.value)
+
+    def test_unparseable_retry_after_is_none_not_a_guess(self):
+        """An HTTP-date Retry-After (RFC 9110 permits it) is a shape we do
+        not parse. ``None`` is the honest answer; a fabricated number wearing
+        the vendor's name is not."""
+        from archimedes.services.market_data_provider import TiingoRateLimitError
+
+        provider = TiingoProvider(client=self._rate_limited_client({"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}))
+        with pytest.raises(TiingoRateLimitError) as exc:
+            provider.get_daily_ohlcv("SPY", "2024-01-02", "2024-01-03")
+        assert exc.value.retry_after_s is None
+
+    def test_rate_limit_is_still_a_tiingo_provider_error_for_existing_callers(self):
+        """Subclassing keeps every existing ``except TiingoProviderError``
+        call site working — this widens the taxonomy, it does not break it."""
+        from archimedes.services.market_data_provider import TiingoRateLimitError
+
+        assert issubclass(TiingoRateLimitError, TiingoProviderError)
+
+    def test_batch_propagates_the_rate_limit_instead_of_skipping_the_symbol(self):
+        """THE REGRESSION GUARD.
+
+        Before this change, 429 raised a bare ``TiingoProviderError``, which
+        ``get_daily_close_batch``'s ``except TiingoProviderError: continue``
+        swallowed per symbol. A universe sweep that hit its quota on symbol 1
+        would therefore log N "skipping" lines, fire N requests at a vendor
+        that had already said stop, and hand the caller a plausible-looking
+        EMPTY dict — indistinguishable from "none of these symbols have
+        data". This asserts the opposite: it raises, and it stops.
+        """
+        from archimedes.services.market_data_provider import TiingoRateLimitError
+
+        seen: list[httpx.Request] = []
+        provider = TiingoProvider(client=self._rate_limited_client(capture=seen))
+        with pytest.raises(TiingoRateLimitError):
+            provider.get_daily_close_batch({"sSPY": "SPY", "sQQQ": "QQQ", "sIWM": "IWM"}, period="1mo")
+        assert len(seen) == 1, "must stop at the first 429, not keep hammering the remaining symbols"
+
+    def test_a_non_429_http_error_is_still_skipped_per_symbol(self):
+        """The batch's per-symbol tolerance must survive: only account-wide
+        conditions escalate. A 500 on one ticker still leaves the others."""
+        calls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request.url.path)
+            if request.url.path == "/tiingo/daily/QQQ/prices":
+                return httpx.Response(500, json={"detail": "boom"}, request=request)
+            return httpx.Response(200, json=EQUITY_FIXTURE, request=request)
+
+        client = httpx.Client(transport=httpx.MockTransport(handler), base_url="https://api.tiingo.com")
+        result = TiingoProvider(client=client).get_daily_close_batch(
+            {"sSPY": "SPY", "sQQQ": "QQQ", "sIWM": "IWM"}, period="1mo"
+        )
+        assert set(result) == {"sSPY", "sIWM"}
+        assert len(calls) == 3, "a per-symbol failure must not abort the sweep"
+
+
+# ─── Cache source pinning: no mixed-vendor panel (#1218) ────────────────
+
+
+class _StubProvider:
+    """A minimal non-Tiingo vendor used to prime the cache as 'yfinance'.
+
+    Not a ``TiingoProvider`` and not a mock of one: the point is to get rows
+    into ``asset_daily_bars`` stamped with a DIFFERENT ``source``, through
+    the real ``CachingMarketDataProvider`` write path, exactly as a
+    production system running on yfinance would already have done.
+    """
+
+    def __init__(self, frame: pd.DataFrame) -> None:
+        self._frame = frame
+        self.calls = 0
+
+    def get_daily_ohlcv(self, ticker: str, start: str, end: str) -> pd.DataFrame:
+        self.calls += 1
+        return self._frame.copy()
+
+    def get_daily_close_batch(self, tickers: dict[str, str], period: str) -> dict[str, pd.Series]:
+        self.calls += 1
+        return {key: self._frame["Close"].rename(key) for key in tickers}
+
+    def get_intraday_quote(self, ticker):  # pragma: no cover - unused here
+        raise NotImplementedError
+
+    def get_intraday_quotes_batch(self, tickers):  # pragma: no cover - unused here
+        raise NotImplementedError
+
+    def get_series(self, ticker, period, interval):  # pragma: no cover - unused here
+        raise NotImplementedError
+
+
+#: Deliberately NOT equal to any adjusted value in EQUITY_FIXTURE, so a
+#: mixed-source read is visible in the numbers rather than only in a count.
+_YFINANCE_LIKE_FRAME = pd.DataFrame(
+    {
+        "Open": [1.0, 2.0],
+        "High": [1.5, 2.5],
+        "Low": [0.5, 1.5],
+        "Close": [111.11, 222.22],
+        "Volume": [10.0, 20.0],
+    },
+    index=pd.to_datetime(["2024-01-02", "2024-01-03"]),
+)
+
+#: ``get_daily_close_batch`` resolves ``period`` to "rows newer than ~N days
+#: ago" AND requires the cache to reach back to the window's start, so the
+#: close-only cache path can only be exercised with recent dates spanning the
+#: whole window. Static 2024 fixtures miss that cache for a coverage reason,
+#: not a source one — which is exactly how the first draft of
+#: ``test_close_batch_is_source_pinned_too`` ended up vacuous.
+_RECENT_DAYS = 40
+
+
+def _recent_dates() -> pd.DatetimeIndex:
+    end = pd.Timestamp.now().normalize() - pd.Timedelta(days=1)
+    return pd.date_range(end=end, periods=_RECENT_DAYS, freq="D")
+
+
+#: Distinct from the yfinance-like closes below, so a mixed-source read shows
+#: up in the VALUES, not only in a request count.
+_TIINGO_RECENT_CLOSES = [400.0 + i for i in range(_RECENT_DAYS)]
+_YFINANCE_RECENT_CLOSES = [900.0 + i for i in range(_RECENT_DAYS)]
+
+
+def _recent_frame() -> pd.DataFrame:
+    """A yfinance-shaped frame over ``_recent_dates()``."""
+    idx = _recent_dates()
+    return pd.DataFrame(
+        {
+            "Open": _YFINANCE_RECENT_CLOSES,
+            "High": [c + 1 for c in _YFINANCE_RECENT_CLOSES],
+            "Low": [c - 1 for c in _YFINANCE_RECENT_CLOSES],
+            "Close": _YFINANCE_RECENT_CLOSES,
+            "Volume": [1000.0] * _RECENT_DAYS,
+        },
+        index=idx,
+    )
+
+
+def _recent_equity_fixture() -> list[dict]:
+    """Tiingo equity rows over the same window, with different closes."""
+    return [
+        {
+            "date": d.strftime("%Y-%m-%dT00:00:00.000Z"),
+            "close": c + 5,
+            "high": c + 6,
+            "low": c + 4,
+            "open": c + 5,
+            "volume": 999,
+            "adjClose": c,
+            "adjHigh": c + 1,
+            "adjLow": c - 1,
+            "adjOpen": c,
+            "adjVolume": 1000,
+        }
+        for d, c in zip(_recent_dates(), _TIINGO_RECENT_CLOSES, strict=True)
+    ]
+
+
+class TestCacheSourcePinning:
+    """A warm cache written by one vendor must never be served to another.
+
+    ``asset_daily_bars`` has always recorded a ``source`` per row, but the
+    reads matched on ``symbol`` alone. That made a provider flip on a system
+    with a populated cache — i.e. production — serve yfinance bars for warm
+    symbols and Tiingo bars for cold ones inside a single backtest panel,
+    silently. These tests pin the fix.
+    """
+
+    def test_a_yfinance_warm_cache_is_a_miss_for_the_tiingo_provider(self, session_factory):
+        from archimedes.services.market_data_provider import CachingMarketDataProvider
+
+        # 1. A system already running on yfinance primes the cache.
+        stub = _StubProvider(_YFINANCE_LIKE_FRAME)
+        yf_side = CachingMarketDataProvider(stub, source_name="yfinance", session_factory=session_factory)
+        primed = yf_side.get_daily_ohlcv("SPY", "2024-01-02", "2024-01-03")
+        assert primed["Close"].tolist() == [111.11, 222.22]
+        assert stub.calls == 1
+        yf_side.get_daily_ohlcv("SPY", "2024-01-02", "2024-01-03")
+        assert stub.calls == 1, "sanity: the yfinance cache IS warm for this symbol/range"
+
+        # 2. MARKET_DATA_PROVIDER flips to tiingo. Same symbol, same range.
+        seen: list[httpx.Request] = []
+        client = _mock_client({"/tiingo/daily/SPY/prices": EQUITY_FIXTURE}, capture=seen)
+        tiingo_side = CachingMarketDataProvider(
+            TiingoProvider(client=client), source_name="tiingo", session_factory=session_factory
+        )
+        after_flip = tiingo_side.get_daily_ohlcv("SPY", "2024-01-02", "2024-01-03")
+
+        # 3. It must have gone to Tiingo, and returned TIINGO's numbers.
+        assert len(seen) == 1, "a foreign-source cache row must not satisfy this read"
+        assert after_flip["Close"].tolist() == [468.20, 464.37], "served yfinance bars under a tiingo provider"
+        assert stub.calls == 1, "the yfinance vendor must not be consulted either"
+
+    def test_close_batch_is_source_pinned_too(self, session_factory):
+        """The close-only read path shares the defect and the fix — the
+        universe sweep is the highest-volume consumer of this cache.
+
+        Dates here are RECENT and span the whole ``period`` window on
+        purpose. A first draft of this test reused the static 2024-01-02/03
+        fixtures and passed with the source filter removed — ``period="1mo"``
+        makes ``_read_cached_series`` ask for rows newer than ~31 days ago,
+        so two-year-old rows missed the cache for a reason that had nothing
+        to do with ``source``. It was a vacuous guard. The revert
+        demonstration in the PR body is run against THIS version.
+        """
+        from archimedes.services.market_data_provider import CachingMarketDataProvider
+
+        # 1. Prime as yfinance, covering the full 1mo window.
+        stub = _StubProvider(_recent_frame())
+        yf_side = CachingMarketDataProvider(stub, source_name="yfinance", session_factory=session_factory)
+        yf_side.get_daily_close_batch({"SPY": "SPY"}, period="1mo")
+        assert stub.calls == 1
+        yf_side.get_daily_close_batch({"SPY": "SPY"}, period="1mo")
+        assert stub.calls == 1, "sanity: the yfinance close cache IS warm for this symbol/period"
+
+        # 2. Flip to tiingo. Same symbol, same period.
+        seen: list[httpx.Request] = []
+        client = _mock_client({"/tiingo/daily/SPY/prices": _recent_equity_fixture()}, capture=seen)
+        tiingo_side = CachingMarketDataProvider(
+            TiingoProvider(client=client), source_name="tiingo", session_factory=session_factory
+        )
+        result = tiingo_side.get_daily_close_batch({"SPY": "SPY"}, period="1mo")
+
+        assert len(seen) == 1, "a foreign-source cache row must not satisfy the batch read either"
+        assert result["SPY"].tolist() == _TIINGO_RECENT_CLOSES, "served yfinance closes under a tiingo provider"
+        assert stub.calls == 1, "the yfinance vendor must not be consulted either"
+
+    def test_close_batch_same_source_still_hits_the_cache(self, session_factory):
+        """Anti-vacuity for the batch path, matching the OHLCV one below."""
+        from archimedes.services.market_data_provider import CachingMarketDataProvider
+
+        seen: list[httpx.Request] = []
+        client = _mock_client({"/tiingo/daily/SPY/prices": _recent_equity_fixture()}, capture=seen)
+        provider = CachingMarketDataProvider(
+            TiingoProvider(client=client), source_name="tiingo", session_factory=session_factory
+        )
+        provider.get_daily_close_batch({"SPY": "SPY"}, period="1mo")
+        provider.get_daily_close_batch({"SPY": "SPY"}, period="1mo")
+        assert len(seen) == 1, "same-source warm batch read must still be served from asset_daily_bars"
+
+    def test_same_source_still_hits_the_cache(self, session_factory):
+        """Anti-vacuity: the guard must reject a FOREIGN source, not defeat
+        caching altogether. Without this, 'always miss' would pass the two
+        tests above while silently removing the cache's whole purpose."""
+        from archimedes.services.market_data_provider import CachingMarketDataProvider
+
+        seen: list[httpx.Request] = []
+        client = _mock_client({"/tiingo/daily/SPY/prices": EQUITY_FIXTURE}, capture=seen)
+        provider = CachingMarketDataProvider(
+            TiingoProvider(client=client), source_name="tiingo", session_factory=session_factory
+        )
+        provider.get_daily_ohlcv("SPY", "2024-01-02", "2024-01-03")
+        provider.get_daily_ohlcv("SPY", "2024-01-02", "2024-01-03")
+        assert len(seen) == 1, "same-source warm read must still be served from asset_daily_bars"
+
+
+# ─── Credential env-var naming (TIINGO_API_TOKEN canonical) ─────────────
+
+
+class TestCredentialEnvVarNaming:
+    def test_canonical_token_var_is_accepted(self, monkeypatch):
+        from archimedes.services.market_data_provider import _tiingo_api_key
+
+        monkeypatch.delenv("TIINGO_API_KEY", raising=False)
+        monkeypatch.setenv("TIINGO_API_TOKEN", "canonical-token")
+        assert _tiingo_api_key() == "canonical-token"
+
+    def test_legacy_key_var_still_works(self, monkeypatch):
+        """Back-compat: the name already merged on ``main`` and already in
+        developers' .env files keeps working."""
+        from archimedes.services.market_data_provider import _tiingo_api_key
+
+        monkeypatch.delenv("TIINGO_API_TOKEN", raising=False)
+        monkeypatch.setenv("TIINGO_API_KEY", "legacy-key")
+        assert _tiingo_api_key() == "legacy-key"
+
+    def test_canonical_wins_when_both_are_set(self, monkeypatch):
+        from archimedes.services.market_data_provider import _tiingo_api_key
+
+        monkeypatch.setenv("TIINGO_API_TOKEN", "canonical-token")
+        monkeypatch.setenv("TIINGO_API_KEY", "legacy-key")
+        assert _tiingo_api_key() == "canonical-token"
+
+    def test_legacy_var_logs_a_rename_hint(self, monkeypatch, caplog):
+        from archimedes.services.market_data_provider import _tiingo_api_key
+
+        monkeypatch.delenv("TIINGO_API_TOKEN", raising=False)
+        monkeypatch.setenv("TIINGO_API_KEY", "legacy-key")
+        with caplog.at_level("WARNING"):
+            _tiingo_api_key()
+        assert "TIINGO_API_TOKEN" in caplog.text
+        assert "legacy-key" not in caplog.text, "a rename hint must never log the credential"
+
+    def test_neither_var_set_fails_loud_and_names_the_canonical_var(self, monkeypatch):
+        from archimedes.services.market_data_provider import _tiingo_api_key
+
+        monkeypatch.delenv("TIINGO_API_TOKEN", raising=False)
+        monkeypatch.delenv("TIINGO_API_KEY", raising=False)
+        with pytest.raises(TiingoAPIKeyMissingError) as exc:
+            _tiingo_api_key()
+        assert "TIINGO_API_TOKEN" in str(exc.value)
+
+    def test_flag_forced_on_with_no_token_refuses_rather_than_falling_back(self, monkeypatch):
+        """The #1218 fail-safe, stated as the owner framed it: with the flag
+        forced ON and no credential, the engine must refuse LOUDLY — never
+        silently serve the yfinance path under a 'tiingo' label."""
+        from archimedes.services.market_data_provider import YFinanceProvider
+
+        monkeypatch.setenv("MARKET_DATA_PROVIDER", "tiingo")
+        monkeypatch.delenv("MARKET_DATA_DAILY_PROVIDER", raising=False)
+        monkeypatch.delenv("TIINGO_API_TOKEN", raising=False)
+        monkeypatch.delenv("TIINGO_API_KEY", raising=False)
+        with pytest.raises(TiingoAPIKeyMissingError):
+            provider = get_provider(seam="daily")
+            assert not isinstance(provider._inner._inner, YFinanceProvider), "silent yfinance fallback"

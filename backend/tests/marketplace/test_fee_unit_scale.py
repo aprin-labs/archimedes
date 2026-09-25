@@ -80,9 +80,11 @@ async def test_real_charge_one_debits_the_literal_fee_from_the_right_wallets():
         patch("archimedes.marketplace.service.payments.charge", fake_charge),
         patch("archimedes.marketplace.service.spend_cap.try_reserve_usdc", fake_reserve),
     ):
-        paid, override = await svc._charge_one(pub, sub, "strat_fee", "tick-1", TickStep.LOAD_STRATEGY, action_count=1)
+        paid, override, charge_suppressed = await svc._charge_one(
+            pub, sub, "strat_fee", "tick-1", TickStep.LOAD_STRATEGY, action_count=1
+        )
 
-    assert paid is True and override is None
+    assert paid is True and override is None and charge_suppressed is False
     assert charged["flat_fee_raw"] == 100  # the literal — not a re-derivation
     assert reserved["amount"] == 100  # reservation and charge must agree on scale
     assert reserved["wallet"] == "0xsubscriber"  # cap is per SIWE wallet, not per sub
@@ -117,7 +119,7 @@ async def test_failed_charge_releases_the_exact_reserved_amount():
         patch("archimedes.marketplace.service.spend_cap.try_reserve_usdc", fake_reserve),
         patch("archimedes.marketplace.service.spend_cap.release_reservation", fake_release),
     ):
-        paid, _ = await svc._charge_one(pub, sub, "strat_fee", "tick-2", TickStep.LOAD_STRATEGY, action_count=1)
+        paid, _, _ = await svc._charge_one(pub, sub, "strat_fee", "tick-2", TickStep.LOAD_STRATEGY, action_count=1)
 
     assert paid is False
     assert released["amount"] == 100

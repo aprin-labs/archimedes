@@ -51,9 +51,21 @@ test("applyTheme does not throw when localStorage.setItem throws, and still appl
 	assert.deepEqual(setAttributeCalls, [["data-theme", "light"]]);
 });
 
-// (c) the normal (unblocked) path is unchanged.
+// (c) the normal (unblocked) path is unchanged — once functional storage has
+// actually been consented to. #1647 made `archimedes.theme` a functional-
+// category key: applyTheme now asks canStore() first, and an undecided or
+// rejecting visitor gets the theme applied to the page WITHOUT it being
+// persisted. Seeding the consent record here is what makes this the
+// "unblocked path" it claims to be; the suppressed path is covered in
+// test/cookie-consent.test.js.
 test("the normal path still round-trips 'light' through localStorage", () => {
-	const store = {};
+	const store = {
+		"archimedes.cookieConsent": JSON.stringify({
+			version: 1,
+			functional: true,
+			analytics: true,
+		}),
+	};
 	globalThis.localStorage = {
 		setItem: (key, value) => {
 			store[key] = value;

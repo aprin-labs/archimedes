@@ -131,19 +131,48 @@ def run_pipeline(
     if str(kb_root) not in sys.path:
         sys.path.insert(0, str(kb_root))
 
-    # The actual functions live in:
-    #   papers_analysis.vectorize.embed_corpus(text_dir) → (np.ndarray, ids)
-    #   papers_analysis.cluster.cluster_embeddings(...) → dict[id, cluster]
-    #   papers_analysis.cluster.bertopic_labels(...)     → dict[cluster, label]
-    #   papers_analysis.knowledge_graph.extract_triples(text_dir) → list
-    #   papers_analysis.graph.aggregate(triples) → {nodes, edges}
+    # Real papers_analysis entry points (verified against the submodule pin;
+    # these are not a drop-in wiring job — see remaining-work notes below):
+    #   papers_analysis.vectorize.run_vectorize(
+    #       cache_dir, metadata_db, embeddings_dir, tfidf, specter2, …
+    #   ) → dict
+    #   papers_analysis.cluster.run_clustering(
+    #       embeddings, docs, sha256s, …
+    #   ) → dict
+    #   papers_analysis.cluster._extract_topic_records(topic_model)
+    #       → dict[int, dict]  # BERTopic labels; called from run_clustering,
+    #                          # not a standalone public API
+    #   papers_analysis.knowledge_graph.run_knowledge_graph(
+    #       db_path, out_dir, …, device="mps"
+    #   ) → None  # writes JSONL/GraphML/TTL to disk; does not return triples
+    #   papers_analysis.knowledge_graph.build_networkx_graph(...)
+    #       → nx.MultiDiGraph
+    #   papers_analysis.knowledge_graph.build_rdf_graph(G) → RDFLib Graph
+    # papers_analysis.graph.run_graph / papers_analysis.graph.build_graph exist
+    # but build a SPECTER2 cosine-similarity graph, not a KG from triples.
     #
-    # The canonical wiring (entry points, atomic-swap semantics, output schema)
-    # is documented in docs/corpus-architecture.md. The full implementation is
-    # gated behind REQUIRE_KB_PIPELINE_RUN because it pulls in ~6 GB of model
+    # Three mismatches remain before this skeleton can call those entry
+    # points (this is remaining work, not a wiring job — see #1090):
+    #   1. Data model. papers_analysis is built around data/metadata.db
+    #      (sqlite) plus data/embeddings/, both resolved relative to the
+    #      submodule. This runner and kb-integration-spec.md assume a
+    #      corpus_text_dir of text files and /srv/corpus-artifact/. There
+    #      is no adapter between them.
+    #   2. Identity. The submodule keys on sha256; Archimedes keys on
+    #      paper id. A mapping layer is required before any output can be
+    #      persisted to kg_entities / kg_relations.
+    #   3. Device. run_knowledge_graph defaults device="mps" and returns
+    #      None, writing to disk. On Fargate that has to be "cpu"
+    #      (infra/variables.tf already records GPU-appropriate compute as
+    #      out of scope there).
+    #
+    # The intended artifact layout (atomic-swap, output schema) is in
+    # docs/specs/kb-integration-spec.md § Pipeline invocation — that spec
+    # names modules and prose steps, not these functions. The real path is
+    # gated behind KB_PIPELINE_ENABLED because it pulls in ~6 GB of model
     # weights (SPECTER2, REBEL, SciSpacy) and runs meaningfully only inside
-    # the dedicated container. Once that container ships, set the flag and this
-    # NotImplementedError will be replaced with the real pipeline invocation.
+    # the dedicated container. Once that container ships, set the flag and
+    # this NotImplementedError will be replaced with the real invocation.
     raise NotImplementedError(
         "KB_PIPELINE_ENABLED set, but the full pipeline invocation is not yet wired. "
         "See docs/specs/kb-integration-spec.md § Pipeline invocation for the canonical shape. "

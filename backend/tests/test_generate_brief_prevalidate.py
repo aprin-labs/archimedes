@@ -20,9 +20,11 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
-
 from archimedes.agents.generation_pipeline import GenerateBrief, _validate_brief, cheap_brief_reject
+from archimedes.services.brief_screen import Surface, screen
+from fastapi.testclient import TestClient
+from pydantic import ValidationError
+
 from tests.auth_helpers import auth_cookies
 
 RECIPIENT = "0x00000000000000000000000000000000000000a1"
@@ -30,6 +32,21 @@ RECIPIENT = "0x00000000000000000000000000000000000000a1"
 # Deliberately unambiguous keyboard-mash: no everyday word, no finance-signal
 # word, not a plausible ticker list (lowercase, >5 chars each).
 _GIBBERISH_BODY = {"brief": {"intent": "zxcvbnm qwiopasd lkjhgfdsa", "risk_appetite": "moderate"}}
+
+
+@pytest.fixture(autouse=True)
+def _paid_tier_only(monkeypatch):
+    """Switch the #1643 free allowance OFF for this whole file.
+
+    The ordering these tests pin is "cheap brief rejection runs BEFORE the
+    payment gate", and the flag-on tests below prove it by showing a valid
+    brief actually reaching the paywall. Under the default free allowance the
+    valid brief would be served free instead and that half of the ordering
+    proof would evaporate. ``FREE_GENERATIONS_PER_ACCOUNT=0`` restores the
+    pre-#1643 gate exactly; the free path is covered in
+    ``test_free_generation_gate.py``.
+    """
+    monkeypatch.setenv("FREE_GENERATIONS_PER_ACCOUNT", "0")
 
 
 def _client() -> TestClient:
@@ -59,15 +76,23 @@ def _harness(store):
 # ── cheap_brief_reject — unit tests ─────────────────────────────────────────
 
 
-def test_empty_intent_is_rejected():
-    result = cheap_brief_reject(GenerateBrief(intent=""))
-    assert result is not None
-    assert "reason" in result and "hint" in result
+def test_empty_intent_cannot_even_be_constructed():
+    """Stronger than the pre-#1801 contract this replaces.
+
+    ``intent`` now carries ``min_length=1``, so an empty brief is refused by
+    the request schema before any handler code runs; ``cheap_brief_reject``
+    never sees one. The screen still owns ``shape.empty`` for whitespace-only
+    text (below) and for callers that build the string themselves.
+    """
+    with pytest.raises(ValidationError):
+        GenerateBrief(intent="")
+    assert screen("", Surface.BRIEF).code == "shape.empty"
 
 
 def test_whitespace_only_intent_is_rejected():
     result = cheap_brief_reject(GenerateBrief(intent="   \t\n  "))
     assert result is not None
+    assert result["code"] == "shape.empty"
 
 
 def test_too_short_intent_is_rejected():

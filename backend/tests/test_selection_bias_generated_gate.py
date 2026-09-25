@@ -37,6 +37,7 @@ import archimedes.db as db
 import numpy as np
 import pytest
 from archimedes.api.auth_siwe import _COOKIE_NAME, _sign_session
+from archimedes.services.rigor_profiles import DSR_P_BADGE_MIN
 from httpx import ASGITransport, AsyncClient
 
 _W_OWNER = "0xAbC1230000000000000000000000000000000A"  # mixed case on purpose
@@ -163,6 +164,42 @@ async def test_generated_strategy_found_and_graded_not_404():
     # Real numbers, not the MISSING/pending shape.
     assert body["gate_details"]["dsr"] != "MISSING (no backtest data)"
     assert body["dsr_p_value"] is not None
+    # A real, non-flat series is not degenerate — the inverse half of the guard
+    # below, so a mutation hard-coding degenerate=True on this path is caught.
+    assert body["degenerate"] is False
+
+
+async def test_generated_strategy_zero_variance_series_reports_degenerate():
+    """#1358 round-3: the generated single-strategy path must carry the same
+    ``degenerate`` discriminator the cohort path does.
+
+    A flat persisted series leaves dsr_p_value and oos_sharpe at None, which
+    trips ``blocked_by_floor`` — so without this field the passport receives a
+    row indistinguishable from a fully-graded correctness failure, and says
+    "fails an always-on correctness floor" about a series no floor measured.
+    ``pending`` cannot carry it: the series is long enough to be scored, it just
+    has no variance to score.
+    """
+    sid = "gen0000000000009"
+    _mk_strategy(sid, owner=_W_OWNER, published=False)
+    _mk_backtest(sid, returns=[0.0] * 300)
+
+    from archimedes.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(f"/api/selection-bias/gate/{sid}", cookies=_siwe_cookies(_W_OWNER))
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["degenerate"] is True, (
+        "a zero-variance persisted series must be reported as degenerate on the generated path too"
+    )
+    assert body["pending"] is False, (
+        "degenerate is not pending — this row has 300 persisted returns, they are merely flat"
+    )
+    # Documents WHY the field is needed: the floor trips mechanically here.
+    assert body["blocked_by_floor"] is True
+    assert body["min_passing_level"] is None
 
 
 async def test_generated_strategy_published_visible_to_anonymous_caller():
@@ -291,9 +328,13 @@ def test_look_ahead_override_flips_blocked_verdict_to_pass():
 
 
 def _flip_sensitive_returns() -> list[float]:
-    """PASSES the DSR gate at num_trials=1 (p≈0.964 ≥ 0.90) and FAILS it at
-    num_trials=25 (p≈0.377 < 0.90) — verified directly against
-    rigor_evaluator.run_rigor_gate with these exact parameters."""
+    """PASSES the DSR gate at num_trials=1 (p≈0.964) and FAILS it at
+    num_trials=25 (p≈0.377) — verified directly against
+    rigor_evaluator.run_rigor_gate with these exact parameters. The series
+    straddles the badge bar at both ends by a wide margin, so it stayed
+    flip-sensitive across #1794's move of the bar; the assertions below compare
+    against ``DSR_P_BADGE_MIN`` rather than a literal so they cannot go stale
+    the next time it moves."""
     return np.random.default_rng(3).normal(0.0006, 0.008, 300).tolist()
 
 
@@ -355,7 +396,7 @@ async def test_dsl_fusion_engine_trusts_stored_search_pool_end_to_end():
     assert resp.status_code == 200
     body = resp.json()
     assert body["num_trials_scope"] == "generated_search_pool"
-    assert body["dsr_p_value"] < 0.90
+    assert body["dsr_p_value"] < DSR_P_BADGE_MIN
     assert body["passes_all"] is False
 
 
@@ -367,11 +408,11 @@ async def test_untracked_engine_num_trials_forced_to_one_not_bare_column_read():
     Before the fix, `_generated_strategy_rigor` did a bare read of the
     column: ``latest.num_trials_in_selection if latest and
     latest.num_trials_in_selection else 1`` — this would have trusted 25 and
-    FAILED the gate (dsr_p≈0.377 < 0.90) on a return series that is
+    FAILED the gate (dsr_p≈0.377, far under the badge bar) on a return series that is
     genuinely fine at its true (self-contained) trial count. The fix
     discriminates on provenance: an untracked engine cannot prove it ran a
     real 25-candidate search, so num_trials is forced to 1 and the gate
-    PASSES (dsr_p≈0.964 ≥ 0.90) — the honest verdict for this strategy.
+    PASSES (dsr_p≈0.964, over the badge bar) — the honest verdict for this strategy.
     """
     sid = "gen0000000000007"
     _mk_strategy(sid, owner=_W_OWNER, published=False)
@@ -385,9 +426,104 @@ async def test_untracked_engine_num_trials_forced_to_one_not_bare_column_read():
     assert resp.status_code == 200
     body = resp.json()
     assert body["num_trials_scope"] == "generated_untracked_default"
-    assert body["dsr_p_value"] >= 0.90, (
+    assert body["dsr_p_value"] >= DSR_P_BADGE_MIN, (
         f"num_trials was not forced to 1 — the bare-column-read bug is back "
         f"(dsr_p_value={body['dsr_p_value']} suggests the untrusted stored "
         f"num_trials=25 was used instead)"
     )
     assert body["passes_all"] is True
+
+
+# ── 7. The SAME num_trials provenance reaches GET /api/strategies/{id} (#1358 A4) ──
+#
+# selection-bias/gate/{id} is not the only surface the Strategy Passport reads
+# num_trials from — StrategyPassport.jsx ternaries on `num_trials_in_selection`
+# from `GET /api/strategies/{id}` (StrategyResponse), a field that did not exist
+# on the schema at all before #1358 (grep -n num_trials backend/archimedes/api/
+# schemas.py had no match). These tests prove the two surfaces agree — the
+# StrategyResponse fields are sourced from the SAME `_num_trials_for_generated_row`
+# discriminator, not a re-derived or bare column read.
+
+
+def _mk_passport_record(sid: str, *, sharpe_ratio: float | None = None):
+    """A minimal StrategyPassportRecord row so GET /api/strategies/{id} resolves
+    through `_passport_to_strategy_response` (needs BOTH a strategy_store row —
+    `_mk_strategy`, for the visibility gate — and a strategy_passports row, for
+    the served content; `get_passport` reads only the latter)."""
+    from archimedes.models.strategy_passport_record import PassportPaperRef, StrategyPassportRecord
+
+    with db.get_session() as session:
+        session.add(
+            StrategyPassportRecord(
+                id=sid,
+                generation_method="fusion",
+                methodology_summary="test methodology",
+                asset_universe="[]",
+                position_sizing="equal_weight",
+                rebalance_frequency="weekly",
+                status="candidate",
+                regime_tag="regime_neutral",
+                passes_rigor_gate=False,
+                sharpe_ratio=sharpe_ratio,
+            )
+        )
+        session.add(PassportPaperRef(passport_id=sid, arxiv_id="2301.00001", title="A Paper", authors="[]"))
+        session.commit()
+
+
+async def test_strategy_response_num_trials_matches_gate_for_search_tracked_engine():
+    sid = "gen0000000000008"
+    _mk_strategy(sid, owner=_W_OWNER, published=False)
+    _mk_passport_record(sid, sharpe_ratio=0.9)
+    _mk_backtest(sid, returns=_flip_sensitive_returns(), num_trials=25, backtest_engine="dsl-fusion")
+
+    from archimedes.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(f"/api/strategies/{sid}", cookies=_siwe_cookies(_W_OWNER))
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["num_trials_in_selection"] == 25
+    assert body["num_trials_scope"] == "generated_search_pool"
+
+
+async def test_strategy_response_num_trials_forced_to_one_for_untracked_engine():
+    sid = "gen0000000000009"
+    _mk_strategy(sid, owner=_W_OWNER, published=False)
+    _mk_passport_record(sid, sharpe_ratio=0.9)
+    _mk_backtest(sid, returns=_flip_sensitive_returns(), num_trials=25, backtest_engine=None)
+
+    from archimedes.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(f"/api/strategies/{sid}", cookies=_siwe_cookies(_W_OWNER))
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["num_trials_in_selection"] == 1
+    assert body["num_trials_scope"] == "generated_untracked_default"
+
+
+async def test_strategy_response_num_trials_unspecified_without_backtest():
+    """#1358: a generated strategy with no persisted backtest at all must not
+    claim ANY num_trials — never a silently-assumed 1. This is the exact
+    passport defect the issue reports: StrategyPassport.jsx's ternary on
+    `num_trials_in_selection` had nothing to read (the field did not exist),
+    so its `else` branch always won and unconditionally asserted num_trials=1
+    for every strategy, graded or not."""
+    sid = "gen0000000000010"
+    _mk_strategy(sid, owner=_W_OWNER, published=False)
+    _mk_passport_record(sid, sharpe_ratio=None)
+    # No BacktestResultRecord at all.
+
+    from archimedes.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(f"/api/strategies/{sid}", cookies=_siwe_cookies(_W_OWNER))
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["num_trials_in_selection"] is None
+    assert body["num_trials_scope"] == "unspecified"
+    assert body["rigor_gate_status"] == "pending"

@@ -1,10 +1,20 @@
-"""Chat message model — per-vault chat for the Archimedes marketplace.
+"""ORM declarative ``Base``, ``VaultMetadata``, and the retired ``ChatMessage``.
 
-Design decisions (hackathon MVP per ecosystem-design-spec.md § 16–17):
-  - Fully open: any connected wallet can read/write in any vault chat
-  - Wallet address = identity (no profiles, DMs, reactions)
-  - AI messages: is_ai=True, triggered by @archimedes mentions or rebalance events
-  - Persistence: SQLite for local dev, Postgres in Docker — both via SQLAlchemy
+Named ``chat.py`` for historical reasons: it began as the per-vault chat model
+and accumulated the shared declarative ``Base`` plus ``VaultMetadata``. Today:
+
+  - ``Base`` — the declarative base EVERY Archimedes ORM model inherits from
+    (see docs/database-architecture.md). Load-bearing.
+  - ``VaultMetadata`` — off-chain vault name/symbol/creator/strategy_ids, read
+    and written by ``api/vaults_routes.py``. Load-bearing.
+  - ``ChatMessage`` — **no live reader or writer.** Per-vault chat (its service,
+    its routes, and its UI panel) was deleted on 2026-08-31; the owner's call
+    was that it does not belong in the product right now and a future version
+    would be rebuilt on the strategy execution engine. The mapping is retained
+    deliberately so ``init_db()`` keeps declaring the table and the existing
+    ``chat_messages`` rows in prod stay readable and un-orphaned. Dropping the
+    table is a migration decision, not a code cleanup — do that on purpose or
+    not at all.
 """
 
 from __future__ import annotations
@@ -91,12 +101,11 @@ class ChatMessage(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     vault_address: Mapped[str] = mapped_column(String(42), nullable=False, index=True)
     # FK retrofit (issue #1028, D1): every chat wallet (human or the AI
-    # persona's agent wallet, actor_class='agent') must be a known identity.
-    # Chat allows unverified attribution (see `verified` below) — the
-    # write-time upsert into wallet_identities for a not-yet-seen wallet is
-    # already implemented: ChatService.post_message() / post_ai_message()
-    # call ensure_wallet_identity() before every insert (services/chat_service.py),
-    # so this FK is load-bearing on Postgres today.
+    # persona's agent wallet, actor_class='agent') had to be a known identity.
+    # The writer that upheld it — ChatService.post_message() / post_ai_message()
+    # calling ensure_wallet_identity() before every insert — was deleted with
+    # the chat surface on 2026-08-31. The constraint still guards the historical
+    # rows; nothing writes new ones.
     wallet_address: Mapped[str] = mapped_column(
         String(42), ForeignKey("wallet_identities.wallet_address"), nullable=False
     )

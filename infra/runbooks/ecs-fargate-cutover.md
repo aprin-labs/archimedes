@@ -395,7 +395,7 @@ ECR_REGISTRY=037613907429.dkr.ecr.us-east-1.amazonaws.com
 aws ecr get-login-password --region us-east-1 | \
   docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
-docker build -t archimedes-backend:manual -f backend/Dockerfile backend
+docker build -t archimedes-backend:manual -f backend/Dockerfile .
 docker tag archimedes-backend:manual "$ECR_REGISTRY/archimedes-backend:latest"
 docker push "$ECR_REGISTRY/archimedes-backend:latest"
 
@@ -466,8 +466,7 @@ Phase 4 until every check here passes.**
    for kv in \
      'LLM_PROVIDER=bedrock_converse' \
      'LLM_BEDROCK_MODEL=amazon.nova-micro-v1:0' \
-     'PRICE_SOURCE=cascade' \
-     'ARCHIMEDES_FUSION_ENABLED=true'; do
+     'PRICE_SOURCE=cascade'; do
      name="${kv%%=*}"; want="${kv#*=}"
      got=$(jq -r --arg n "$name" '.[] | select(.name==$n) | .value' /tmp/backend-env.json)
      [ "$got" = "$want" ] && echo "OK: $name=$got" \
@@ -580,34 +579,108 @@ deliberately, don't just assume the `deployment_minimum_healthy_percent =
 100` / `deployment_maximum_percent = 200` config (in `ecs.tf`) does the right
 thing — measure it.
 
+> **This did not hold in practice — see issue #1309.** A real deploy on
+> 2026-08-20 showed the old target deregistered ~9s after the new task
+> started, ~2.4 minutes before the new target registered healthy — a live
+> violation of this criterion, read off the **ECS service event timeline**
+> (`23:59:04 started 1 tasks` → `23:59:13 deregistered 1 targets`) recorded
+> in the issue, and independently corroborated on 2026-08-30 by a `504` on
+> `/health` at 90.4s during a deploy. It was **not** caught by the
+> copy/paste probe this section used to print, and could not have been: that
+> snippet sent `-H "Host: archimedes-arc.com"` to `https://$ALB_DNS/health`,
+> and a `Host:` header is set *after* the TLS handshake — it changes neither
+> the SNI nor the name the certificate is verified against, both of which
+> come from the URL. Against the ALB's `archimedes-arc.com`-only listener
+> certificate (`aws_acm_certificate.main`, `infra/alb.tf`) every such request
+> fails at the TLS layer and reports `000`, so that loop could only ever have
+> printed a total outage — on a healthy service just the same. The committed
+> script below uses `--connect-to archimedes-arc.com:443:$ALB_DNS:443` so the
+> connection still goes straight to the ALB (bypassing CloudFront) while SNI,
+> certificate verification and `Host` all stay `archimedes-arc.com`, and it
+> takes a preflight probe that must return `200` before it will trigger a
+> deploy — so a probe that cannot reach the ALB fails as a broken
+> measurement instead of as a fake outage.
+>
+> `infra/ecs.tf` gained a Docker `healthCheck` on the `nginx`
+> container (previously the ONLY essential container without one, despite
+> being the actual ALB target) as a defensible hardening — see that file's
+> comment for the reasoning — but this was **not proven against a live
+> deploy** (no AWS credentials in the environment that made the change). Run
+> the script below across a real deploy to confirm the fix, and if it still
+> fails, the next things to check in order: (1) whether the LIVE service's
+> applied `deploymentConfiguration` / target group health-check settings
+> actually match this file's current `infra/ecs.tf` / `infra/alb.tf` (config
+> drift — `deploymentConfiguration` is not in the service's
+> `lifecycle.ignore_changes`, so it only takes effect on the next `terraform
+> apply`, which is a manual, Dan-only step per this runbook's own header);
+> (2) `desiredCount=2` as the acceptance-criteria's own named "blunt
+> alternative" (recurring Fargate cost — an infra spend commitment, Dan's
+> call per `CLAUDE.md` § "When to ask before acting").
+
+**Truth in labeling — this INSTRUMENTS the deploy window, it does not close
+it.** The nginx `healthCheck` (`infra/ecs.tf`) gives the one container that
+is actually the ALB target a health signal it never had, and the script below
+makes the acceptance criterion a runnable measurement instead of prose. That
+is the whole of it. Every knob that actually governs the gap the #1309
+incident measured is **untouched by this change**: the backend target group
+(`aws_lb_target_group.backend`, `infra/alb.tf`) still sets no
+`deregistration_delay`, so it keeps the AWS default of 300s — and that value
+governs how long a *draining* target holds in-flight connections, not when
+deregistration begins, so it was never the lever here anyway;
+`healthy_threshold = 2` × `interval = 30` is unchanged,
+so a replacement target still needs ≥60s of passing checks before the ALB will
+route to it; and `deployment_minimum_healthy_percent = 100` /
+`deployment_maximum_percent = 200` (`infra/ecs.tf`) are unchanged. **Issue
+#1309 stays open.** It closes on a measured, passing run of the script across
+a real deploy — not on this merge.
+
+**And it is INERT until someone applies it.** The `healthCheck` lives in
+`aws_ecs_task_definition.backend`, so merging changes nothing about running
+infrastructure by itself. Two things have to happen, in order: (1) a manual
+`terraform apply` — Dan-only, per this runbook's own header — to register a
+new task-definition revision that contains the check; and only then (2) CI
+carries it forward, because `.github/workflows/deploy.yml`'s `deploy-ecs` job
+clones the **currently registered** task definition (`aws ecs
+describe-task-definition`, `deploy.yml:633`) and rewrites only the three image
+fields — it never re-derives the definition from `infra/ecs.tf`. So a
+merged-but-unapplied `healthCheck` is invisible to every subsequent deploy,
+and a probe run before that apply is measuring the OLD behavior. Do not read
+such a run — pass or fail — as evidence about this change.
+
+**Both health endpoints in play are LIVENESS signals, not readiness signals.**
+`/nginx-health` (`nginx/nginx.conf`) returns a literal `200 "ok"` straight from
+nginx: it proves nginx is listening with a validly-rendered config, and
+nothing whatsoever about backend or auth. `/health` (the chain-disconnected
+branch of the handler in `backend/archimedes/main.py` — grep
+`HEALTH_CHAIN_DISCONNECTED`, cited by name because line numbers drift)
+returns **200 while degraded, by design** — when the Arc RPC is unreachable
+it logs `HEALTH_CHAIN_DISCONNECTED` and still answers 200, deliberately, so a
+transient RPC blip cannot cascade the whole ECS service down (#1039 N2). That
+is a contract, not a bug — but it means a 200 from `/health`, whether observed
+by the container check, the ALB target group, or this script's probe loop,
+does **not** mean "ready to serve correct answers". A green run below proves
+the criterion as written — "the ALB always had something answering 200" — not
+"the service was fully functional throughout". If you need a readiness signal,
+add an endpoint that fails closed; do not tighten these two.
+
 ```bash
-# Terminal 1 — continuous request loop against the ALB directly (bypasses
-# CloudFront caching so you're actually hitting the live target group), left
-# running for the whole rollout:
-while true; do
-  curl -o /dev/null -s -w "%{http_code} %{time_total}s\n" \
-    -H "Host: archimedes-arc.com" "https://$(terraform output -raw alb_dns_name)/health"
-  sleep 1
-done | tee /tmp/rollout-watch.log
-
-# Terminal 2 — trigger a rolling deployment (a force-new-deployment against
-# the current task definition is enough to exercise the rolling-replace path
-# without needing a new image):
-aws ecs update-service \
-  --cluster "$(terraform output -raw ecs_cluster_name)" \
-  --service "$(terraform output -raw ecs_service_name)" \
-  --force-new-deployment
-
-# Watch the deployment reach steady state:
-aws ecs wait services-stable \
-  --cluster "$(terraform output -raw ecs_cluster_name)" \
-  --services "$(terraform output -raw ecs_service_name)"
+cd infra   # requires the S3 backend already initialized, or pass --alb-dns/--cluster/--service explicitly
+./scripts/verify-zero-downtime-deploy.sh
 ```
 
-**Verify:** `grep -v '^200 ' /tmp/rollout-watch.log` returns nothing (every
-line was `200 ...`) for the whole rollout window. Any `5xx` or connection
-error in that log is a real regression against acceptance criterion #2 — do
-not treat it as flaky and move on.
+Takes a preflight probe and refuses to trigger anything unless it is a `200`
+(a probe that cannot reach a healthy ALB would log nothing but non-200s and
+then blame the rollout for them), then runs a 1 req/s probe loop against the
+ALB directly (bypassing CloudFront, so it measures the target group, not the
+CDN cache) for the whole rollout window, triggers a `force-new-deployment`,
+waits for steady state, and exits non-zero with every offending log line if
+any request was not a `200` — see the script's own header comment for flags
+and what it does and does not prove. If `aws ecs wait services-stable` itself
+gives up (the circuit-breaker-rollback case), the run does not die on that
+exit code: it still stops the probe, scores the window, prints the log path,
+and reports `INCONCLUSIVE` — never `PASS`. (This replaces the earlier copy/paste-bash version of this
+procedure — same acceptance check, now a committed, reusable artifact
+instead of prose that only exists if someone remembers to type it out.)
 
 ---
 
@@ -808,6 +881,9 @@ step 1's gate is still red.**
    entirely — the `deploy-ecs` job (issue #1039 C1) has independently
    redeployed Fargate on every push since before Phase 4 ran, so this step is
    purely deleting the now-unreachable EC2 code path, not changing behavior.
+   **Done:** the SSM `deploy` job went in the #1039 fast-follow; the orphaned
+   `EC2_INSTANCE_ID` env — which outlived its instance by twelve days after the
+   2026-08-19 decommission — was deleted 2026-08-31.
    (Separately, once step 1's gate is green, `.github/workflows/deploy-runners.yml`'s
    `push` trigger can be uncommented — see that workflow's header — so runner
    deploys stop being a manual `workflow_dispatch`.)

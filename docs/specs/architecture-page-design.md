@@ -21,7 +21,7 @@
 > `docs/architecture/` if it is to be maintained as the description of the live page, or to
 > `docs/archive/` with an `ARCHIVED` banner if `architecture.md` and the page itself become
 > the authority. Use `git mv` and update
-> [`../README.md`](../README.md) in the same commit.
+> [`../doc-index.md`](../doc-index.md) in the same commit.
 
 > Voice: confident, precise, honest. Claim-integrity is the #1 rule — nothing below claims
 > what the live path doesn't do. Draft copy is final-quality and ready to lift into JSX.
@@ -150,7 +150,7 @@ your own key, or run fully local against Ollama.
 **Body:** Most backtests lie by selection: try enough ideas and one will look brilliant by
 chance. Every strategy's badge is derived from four tests run on its real persisted returns:
 
-- **DSR** — Deflated Sharpe Ratio: the excess Sharpe tested at 90% one-sided confidence
+- **DSR** — Deflated Sharpe Ratio: the excess Sharpe tested at 95% one-sided confidence
   under standard errors robust to non-normality and autocorrelation, and — on the generated
   path only — deflated against that strategy's own candidate pool (Bailey & López de Prado
   2014). On the curated library `num_trials=1`, so DSR runs undeflated; the page states this
@@ -196,8 +196,10 @@ rationales and keep the flattering one. Archimedes anchors **before**:
    on the `ReasoningTraceRegistry`.
 2. **Trade** — the vault's `rebalance()` **reverts unless that commitment exists**. The
    ordering is enforced by the contract, not by our code being well-behaved.
-3. **Reveal** — after settlement, the full trace is published (IPFS-pointed) and the contract
-   itself re-hashes the content to verify it matches the commitment.
+3. **Reveal** — after settlement, the full trace is published off-chain and the contract
+   itself re-hashes the content to verify it matches the commitment. The on-chain keccak256
+   is the integrity anchor; we do not pin traces to IPFS
+   ([ADR](../adr/ipfs-pinning-not-live.md)).
 
 **Verify card:** Open any decision in *Reasoning* and check two things: the content hash
 matches, and commit block < trade block < reveal block. This proves the trace existed before
@@ -224,8 +226,10 @@ unaffected — they are non-custodial today.
 
 **Label:** Where the ideas come from
 
-**Body:** Generation starts from a corpus of quantitative-finance research — a 10,000-paper
-manifest spanning statistical finance, portfolio math, market microstructure, and agentic AI.
+**Body:** Generation starts from a corpus of quantitative-finance research — arXiv
+q-fin preprints spanning statistical finance, portfolio math, market microstructure, and agentic AI.
+Do not freeze a paper count in this spec: live values are `GET /health` `corpus_papers` /
+`corpus_db_count`.
 At generate time, retrieval runs in two stages: a keyword/asset-class filter, then a relevance
 rerank against your brief, computed at request time over each candidate's title and abstract,
 with no vector index behind it. `/health`'s `paper_rag` field says which scorer is running:
@@ -234,8 +238,8 @@ production state today). Retrieved papers are
 embargo-filtered — nothing published after a decision point can inform it — and every citation
 carries its arXiv ID and content hash.
 
-**Honesty card (live-driven):** The corpus is being hydrated: `{ingested}` of the 10,000
-manifest papers are fully ingested and retrievable today *(live count)*. The knowledge-graph
+**Honesty card (live-driven):** The corpus is being hydrated: `{ingested}` of the
+manifest papers are fully ingested and retrievable today *(live count from `/health`)*. The knowledge-graph
 layer (citation graph over the corpus) is built by a pipeline that has not yet produced its
 first production artifact — the Corpus page shows exactly that, rather than a synthesized
 graph. Generation requires at least two relevant papers or it declines to run.
@@ -249,8 +253,9 @@ is unreproducible — run as code in the live path:
 
 - **Outcome Embargo** — decisions only see papers published before the decision time.
 - **Time-Aware Retrieval** — relevance decays with paper age, faster in volatile regimes.
-- **Hierarchy of Truth** — chain state outranks the LLM's narrative; a consistency check
-  (V_check) fails any rebalance where they disagree.
+- **Hierarchy of Truth** — when vault execution ships, chain state will outrank the LLM's
+  narrative; a consistency check (V_check) will fail any rebalance where they disagree.
+  That path is not live.
 - **Source Tracking** — every cited paper carries (arXiv ID, version, content hash), anchored
   with the trace.
 

@@ -14,6 +14,17 @@ on:
   pull_request:
     paths:
       - "contracts/**"
+      # ...but not the cached ABI JSON. `forge config` reports this project's source
+      # set as src + test + script + lib; contracts/abis/ is in none of them, so a
+      # change confined to it cannot alter `forge build` or `forge test` output — the
+      # trigger is a false positive by construction. Nothing is lost by skipping it:
+      # contracts/abis/*.json is consumed by the Python side (chain/contracts.py,
+      # deploy_contracts.py) and guarded there by backend/tests/chain/
+      # test_create_vault_abi_consistency.py + test_commit_reveal_tradeid.py, which
+      # run in the required "Backend — unit tests" check on every PR. Added by #1626,
+      # which adds one ABI JSON and no Solidity, and still spent 3 minutes of runner
+      # time building 74 .sol files it does not touch.
+      - "!contracts/abis/**"
       - ".github/workflows/contracts-test.yml"
 
 # Least-privilege GITHUB_TOKEN: this workflow only reads the repo to build + test
@@ -36,6 +47,14 @@ jobs:
           submodules: recursive
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          # Pinned 2026-08-31. Unpinned, this action tracks latest stable, and the
+          # toolchain moved under us between the last green run (08-20) and today:
+          # the newer forge's lint-on-build pass floods the log and the job died
+          # with SIGTERM/cancellation on three consecutive runs (one after 40
+          # minutes) with zero Solidity changes in the PR. v1.7.1 matches the
+          # version the contracts were last built and tested with locally.
+          version: v1.7.1
       - name: forge build
         working-directory: contracts
         run: forge build

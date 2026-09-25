@@ -53,11 +53,18 @@ T-5:  ReasoningTraceRegistry.reveal(traceId, storagePointer, fullTraceContent)
         - Promotes commitment from pending to revealed
 ```
 
-Note that the reveal call carries both the off-chain `storagePointer` (URL/IPFS/Arweave —
-the canonical place to fetch the content from) and the `fullTraceContent` bytes (so the
+Note that the reveal call carries both the off-chain `storagePointer` (an optional
+locator — URL / CID / empty) and the `fullTraceContent` bytes (so the
 contract itself can recompute the hash and verify the binding without trusting any
 off-chain fetch). The storage pointer is recorded for convenience; the hash verification
 is what enforces the commit.
+
+**Live `storagePointer` is empty.** We do not pin traces to IPFS. The integrity
+anchor is the on-chain keccak256 of the canonical bytes; the full JSON lives in
+the off-chain store. Re-enabling a pin is an owner action (SSM JWT + `ecs.tf`
+`secrets{}` + a rebuilt pin client) — see
+[`../adr/ipfs-pinning-not-live.md`](../adr/ipfs-pinning-not-live.md). Do not read
+an empty pointer as "a CID that failed to resolve."
 
 Between T-2 and T-3, the trace hash is on-chain and **immutable**. The agent cannot
 alter the content without breaking the verification at T-5. The reveal at T-5 publishes
@@ -106,7 +113,7 @@ interface IReasoningTraceRegistry {
 
     function reveal(
         uint256 traceId,
-        string calldata storagePointer,    // URL/IPFS/Arweave
+        string calldata storagePointer,    // empty on the live path (hash-only); optional locator
         bytes calldata fullTraceContent    // For on-chain verification of the hash
     ) external;
 

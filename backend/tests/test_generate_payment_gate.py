@@ -20,6 +20,7 @@ import base64
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -28,6 +29,24 @@ from tests.auth_helpers import auth_cookies
 RECIPIENT = "0x00000000000000000000000000000000000000a1"
 
 _BODY = {"brief": {"intent": "low-vol treasury alternative", "risk_appetite": "moderate"}}
+
+
+@pytest.fixture(autouse=True)
+def _paid_tier_only(monkeypatch):
+    """Switch the #1643 free allowance OFF for this whole file.
+
+    Every assertion here is about the PAID tier — the wallet gate, the 402 —
+    which #1643 explicitly leaves untouched from generation #4 onward. Under
+    the default allowance of 3 the first three calls in each test would be
+    served free, and a ``202`` from the free path is indistinguishable from a
+    ``202`` a payment bought: the tests would not fail loudly so much as stop
+    measuring the thing they name. ``FREE_GENERATIONS_PER_ACCOUNT=0`` is the
+    documented switch that restores the pre-#1643 gate exactly (it also
+    short-circuits before the ledger is touched, so this file stays as
+    DB-free as it was). The free path has its own file:
+    ``test_free_generation_gate.py``.
+    """
+    monkeypatch.setenv("FREE_GENERATIONS_PER_ACCOUNT", "0")
 
 
 def _client() -> TestClient:

@@ -421,10 +421,10 @@ def main() -> None:
     # decouple #2 for the live selection-bias routes) — it was never this
     # candidate's own trial count. Restated at num_trials=1 the verdict is
     # STILL a FAIL at the badge/strictest level (dsr_p_value rises from 0.0198
-    # to 0.5997 — the far more lenient number — but the badge threshold is
-    # 0.90; min_passing_level moves from None to 5, i.e. it only clears the
-    # loosest/Speculative rung, never the strictest one) — the corrected
-    # number changes, the conclusion does not. See
+    # to 0.5997 — the far more lenient number — but it stays under
+    # rigor_profiles.DSR_P_BADGE_MIN; min_passing_level moves from None to 5,
+    # i.e. it only clears the loosest/Speculative rung, never the strictest
+    # one) — the corrected number changes, the conclusion does not. See
     # docs/CURATED-STRATEGY-DECOUPLE-AND-CONSOLIDATE-2026-07-08.md and the
     # 2026-08-03 num_trials-provenance audit for the full restatement.
     CANDIDATE1_NUM_TRIALS = 1

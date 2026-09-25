@@ -1,4 +1,4 @@
-"""Vault endpoints — /api/vaults/* (excluding chat, which lives in chat_routes.py)."""
+"""Vault endpoints — /api/vaults/*."""
 
 from __future__ import annotations
 
@@ -97,20 +97,39 @@ def _strategy_rigor_status(
     """
     strat = strategy_provider().get_strategy(strategy_id)
     if strat is not None:
-        # Use the LIVE verdict, not the provider object's attribute (#1173).
+        # Use a LIVE verdict, not the provider object's attribute (#1173).
         # LocalStrategyProvider sets passes_rigor_gate = False unconditionally on
-        # every curated Strategy (fail-closed by construction, 56cc9bde); the real
-        # verdict is overlaid downstream in _to_strategy_response. Reading the raw
-        # attribute here therefore made EVERY curated strategy undeployable at the
+        # every curated Strategy (fail-closed by construction, 56cc9bde). Reading
+        # the raw attribute here made EVERY curated strategy undeployable at the
         # default strictness with the message "has not passed the rigor gate —
         # server-side rigor enforcement", which is simply false. Perverse symptom:
         # deploying at strictness >= 2 worked, because that path takes the
         # _deployable_levels branch below, which already consults the live gate.
         #
-        # Graded against the FULL library cohort — same cohort the list badge and
-        # the passport use — because the verdict is cohort-dependent (cohort-scoped
-        # PBO/CSCV; a cohort under MIN_LIBRARY_N_FOR_PBO_GATING skips criterion 4).
-        # Grading `strat` alone would let the deploy gate disagree with the badge.
+        # ── AN OPEN SEAM, NAMED (#1746 PR-B, concern 3) ──────────────────────
+        # This used to be the same computation the badge did: both ran the live
+        # gate over the full library cohort per request, so they agreed by
+        # construction. THEY NO LONGER DO. Every badge surface — the Library
+        # list, GET /api/strategies/{id}, the leaderboard, /passports/{id} —
+        # now READS the stored verdict of record
+        # (docs/adr/rigor-verdict-of-record.md), which a gate produced once, at
+        # backtest time. This deploy-admission path still recomputes, live,
+        # against the CURRENT gate.
+        #
+        # So the two can differ in VINTAGE: a strategy graded `pass` last month
+        # under an older gate_version shows a green badge while this check
+        # re-runs today's gate and may refuse the deploy (and, between a deploy
+        # of PR-B and the first `grade_curated` run, every curated badge reads
+        # `pending` while this ladder still answers pass/fail). Whether
+        # admission SHOULD recompute — arguably the one place where grading
+        # against the current gate is the safer answer — is an open owner call,
+        # deliberately not made in PR-B. Do not "fix" the disagreement by
+        # pointing this at the stored row without that call.
+        #
+        # The cohort below is the FULL library, not `strat` alone, because the
+        # verdict is cohort-dependent (cohort-scoped PBO/CSCV; a cohort under
+        # MIN_LIBRARY_N_FOR_PBO_GATING skips criterion 4) — grading one strategy
+        # against itself would answer a different question again.
         from archimedes.services.live_rigor_gate import RigorGateVerdict, verdicts_for_strategies
 
         try:
@@ -389,6 +408,14 @@ async def create_vault(
         meta={"vault_address": vault_address, "strategy_ids": req.strategy_ids},
     )
 
+    # This event is one of the two things that make a vault OWNED, and the trace
+    # read gate memoizes vault ownership (#1573). Drop the memo now so a
+    # "this vault is unowned" answer cached moments ago cannot outlive the fact
+    # — an unowned legacy trace falls to the house-public floor.
+    from archimedes.services.trace_visibility import invalidate_vault_owner
+
+    invalidate_vault_owner(vault_address)
+
     return VaultCreateResponse(vault_address=vault_address, strategy_ids=req.strategy_ids)
 
 
@@ -442,8 +469,9 @@ async def store_vault_metadata(
     user = require_current_user(request)
 
     # Casing fix (issue #1028): the on-chain vault address is EIP-55
-    # checksummed (mixed case); chat_messages.vault_address is always stored
-    # lowercase (chat_service.py), so the two could never join without this.
+    # checksummed (mixed case); chat_messages.vault_address was always stored
+    # lowercase by the (since-deleted) chat service, so the two could never join
+    # without this.
     # Normalize once, use everywhere below — the on-chain call is
     # case-insensitive so this doesn't change chain behavior.
     vault_address = req.vault_address.lower()
@@ -488,6 +516,14 @@ async def store_vault_metadata(
         meta.set_strategy_ids(req.strategy_ids)
         session.commit()
         session.refresh(meta)
+
+        # The other ownership-establishing write — same reason as in
+        # `create_vault`: the trace read gate memoizes vault ownership (#1573)
+        # and a stale "unowned" memo would keep this vault's legacy traces on
+        # the house-public floor for the rest of the TTL.
+        from archimedes.services.trace_visibility import invalidate_vault_owner
+
+        invalidate_vault_owner(vault_address)
 
         # Fire-and-forget on-chain strategy anchoring (best-effort, non-fatal)
         if req.strategy_ids:

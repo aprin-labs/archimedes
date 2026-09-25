@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 
+import { canStore } from '../storage-consent.js'
+
 // Per-user rigor strictness (1 = Conservative/badge … 5 = Speculative). This is
 // a personal DEPLOY preference — it decides what YOU can deploy and how the
 // passport reads for you. It never changes the global "Archimedes Verified 🏆"
@@ -40,7 +42,11 @@ export function useRigorStrictness() {
     const parsed = parseInt(v, 10)
     const n = Math.min(Math.max(Number.isFinite(parsed) ? parsed : BADGE_LEVEL, MIN_LEVEL), MAX_LEVEL)
     try {
-      localStorage.setItem(STORAGE_KEY, String(n))
+      // Functional category (#1647): with functional storage rejected the
+      // level still applies for this session (listeners fire below) but is
+      // not persisted — every new load starts at BADGE_LEVEL, the strictest
+      // setting, which is the fail-safe direction to lose a preference in.
+      if (canStore(STORAGE_KEY)) localStorage.setItem(STORAGE_KEY, String(n))
     } catch {
       /* ignore persistence failure — in-memory state still updates */
     }

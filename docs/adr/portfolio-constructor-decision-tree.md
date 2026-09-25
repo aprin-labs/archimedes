@@ -17,6 +17,20 @@
 >
 > Most have **zero production call sites** today. This spec decides who fires
 > when, and which files become formally retired.
+>
+> **Note added 2026-08-31 (not a rewrite of the decision below).** The
+> "top-level constructor" row for `portfolio_agent.py` describes a tool-calling
+> loop (`MAX_AGENT_ITERATIONS=12`, `AgentPortfolio` with a tool trace) that no
+> longer exists. That loop — `propose_portfolio_with_tools()` and its
+> `get_asset_stats` / `get_correlation` / `stress_test_portfolio` tools — was
+> found to have zero callers and was deleted. What remains in
+> `agents/portfolio_agent.py` (note: `agents/`, not `services/`) is a
+> **single-turn** LLM constructor, `PortfolioAgent.propose_portfolio`, whose only
+> caller is the StockBench benchmark harness; the user-facing Generate flow is
+> owned by the debate society, per
+> [`debate-society-sole-generation-pipeline.md`](debate-society-sole-generation-pipeline.md).
+> The decision recorded below (which constructor is the keeper, which are
+> retired) is unaffected and stands as written.
 
 ## Current call-site reality (verify before editing)
 
@@ -179,3 +193,12 @@ A reviewer can answer each of these from this doc alone:
 3. **Kelly math worth lifting** — is there sizing logic in `kelly_portfolio.py`
    that isn't already in `portfolio_optimizer.py`? Önder to verify before we
    delete.
+
+## Resolution note — 2026-09-01 (audit P1-1)
+
+Open question 1 (**soft-retire vs hard-delete**) is closed: the recommendation was
+followed. Both files moved to `services/_deprecated/` (#131), stayed there for a
+release cycle, and were then deleted. The empty `_deprecated/` package shell was
+removed on 2026-09-01 as part of the dead-module sweep, so `services/_deprecated/`
+no longer exists — the Lifetime column above and the open questions are the
+historical decision record, not the current tree.

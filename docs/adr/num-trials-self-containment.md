@@ -1,10 +1,10 @@
 # ADR: `num_trials` is self-contained — a strategy's trial count depends only on that strategy
 
 > **Audience:** Archimedes team
-> **Status:** **Accepted** — ratified 2026-08-31 by Önder Akkaya (portfolio math), [#1555](https://github.com/a-apin/archimedes/issues/1555) outcome 3; see "Ratification" below
-> **Date:** 2026-07-09 (reversal shipped); spec addendum 2026-07-14; amended 2026-08-19 (fixture-leak class); ratified + four corrections folded in 2026-08-31 (#1555)
+> **Status:** **Accepted** — ratified 2026-08-31 by Önder Akkaya (portfolio math), [#1555](https://github.com/aprin-labs/archimedes/issues/1555) outcome 3; see "Ratification" below
+> **Date:** 2026-07-09 (reversal shipped); spec addendum 2026-07-14; amended 2026-08-19 (fixture-leak class); ratified + four corrections folded in 2026-08-31 (#1555); amended 2026-09-01 (#1654 option 1)
 > **Owner:** Dan Browne (quant reviewer of record: Önder Akkaya)
-> **Supersedes:** the `N + library_size` DSR convention from [#770](https://github.com/a-apin/archimedes/issues/770) / #811 / [#820](https://github.com/a-apin/archimedes/issues/820)
+> **Supersedes:** the `N + library_size` DSR convention from [#770](https://github.com/aprin-labs/archimedes/issues/770) / #811 / [#820](https://github.com/aprin-labs/archimedes/issues/820)
 > **Superseded-by:** —
 > **Question being decided:** What is the multiple-testing trial count `num_trials` that deflates a strategy's Sharpe ratio — does the size of the strategy library enter it?
 > **Related:** [`backend/archimedes/agents/generation_pipeline.py:645-660`](../../backend/archimedes/agents/generation_pipeline.py) (`_society_num_trials`), [`backend/archimedes/api/selection_bias_routes.py:300-315`](../../backend/archimedes/api/selection_bias_routes.py), [`docs/specs/selection-bias-corrections-spec.md` § 1.3](../specs/selection-bias-corrections-spec.md) (addendum #1075), [`rigor-gate-unification.md`](rigor-gate-unification.md).
@@ -32,8 +32,8 @@ The answer drifted three times:
 
 | When | Commit / PR | Convention |
 |---|---|---|
-| 2026-06-29 | `737b3117` ([#770](https://github.com/a-apin/archimedes/issues/770)) | `num_trials = n_candidates + library_size` on the society path — the library treated as a second selection layer |
-| 2026-07-03 | `a47edde` ([#820](https://github.com/a-apin/archimedes/issues/820)) | the same additive formula unified across the live and fusion generation paths |
+| 2026-06-29 | `737b3117` ([#770](https://github.com/aprin-labs/archimedes/issues/770)) | `num_trials = n_candidates + library_size` on the society path — the library treated as a second selection layer |
+| 2026-07-03 | `a47edde` ([#820](https://github.com/aprin-labs/archimedes/issues/820)) | the same additive formula unified across the live and fusion generation paths |
 | — | `dfa8fc1` | DSR deflation made to fire on *every* rigor-gate path (and the PBO floor documented honestly) |
 | **2026-07-09** | **`371a908` + `c8e0436`** | **reversed** — self-contained trial count, core sites then the remaining sites with green tests |
 | 2026-07-14 | `b4481b8` (spec addendum #1075) | the spec addendum superseding the #770 formula, plus a verdict methodology marker |
@@ -103,11 +103,11 @@ That is accepted, not scheduled away: a self-contained PBO is not a thing. This 
 headline claim is "`num_trials` is self-contained," deliberately not "the gate is."
 5. **Correlation enters through the equicorrelated E[max], not an effective trial count**
    *(corrected 2026-08-31).* This item originally recorded `N_eff = N / (1 + (N-1)ρ̄)` as
-   the correlation adjustment. [#1558](https://github.com/a-apin/archimedes/issues/1558)
+   the correlation adjustment. [#1558](https://github.com/aprin-labs/archimedes/issues/1558)
    showed that form is the Kish design effect — the wrong functional form for an
    expectation of a maximum: it saturates in N and under-deflates, admitting pure noise at
    up to ~29% against a nominal 10% under a zero-Sharpe null.
-   [#1559](https://github.com/a-apin/archimedes/pull/1559) (merged 2026-08-31) replaced it
+   [#1559](https://github.com/aprin-labs/archimedes/pull/1559) (merged 2026-08-31) replaced it
    with the exact one-factor result `E[max] = √(1−ρ̄) · E[max of N iid]`. The decision
    boundary is unchanged either way: self-containment decides *what N counts*; how ρ̄
    enters is the DSR implementation's concern, and ratifying this ADR does not bless it
@@ -144,8 +144,9 @@ headline claim is "`num_trials` is self-contained," deliberately not "the gate i
   **exists, is served, and is answering**: a board-level Benjamini–Hochberg FDR
   ([`compute_board_level_fdr`, `rigor_evaluator.py:405`](../../backend/archimedes/services/rigor_evaluator.py))
   ships `board_fdr_significant` / `board_fdr_adjusted_p` / `board_fdr_confidence` per
-  strategy plus `n_tested` / `n_significant` as a top-level key on every
-  `/api/selection-bias/gate` response, with BH the right method under the positive
+  row plus `n_tested` / `n_significant` as a top-level key on every
+  `/api/leaderboard` response (it rode `/api/selection-bias/gate` until #1564 moved it —
+  see below), with BH the right method under the positive
   dependence of strategies sharing a universe. And it **currently disagrees with the
   per-strategy gate on every strategy**: pulled from prod 2026-08-30, the minimum
   `board_fdr_adjusted_p` across the whole board is **0.319** — nothing clears a
@@ -153,23 +154,27 @@ headline claim is "`num_trials` is self-contained," deliberately not "the gate i
   passes the per-strategy gate (adjusted p 0.319 / 0.319 / 0.536, all
   `board_fdr_significant: false`). That is not a contradiction in the math — the gate
   answers "sound on its own evidence," the board FDR answers "distinguishable from the
-  field's multiple testing," and both can be true — but nothing under `ui/src/` reads
-  `board_fdr*`, so the public badge currently stands alone while the served correction
-  that qualifies it stays invisible. **The open item is therefore a product decision, not
-  a spec or a wiring ticket**: decide what the ranking surface says when the board-level
-  correction disqualifies every row the badge approves — and decide it before anything
-  leans on the badge as a public claim.
-  (Evidence: [Önder's prod pull](https://github.com/a-apin/archimedes/issues/1555#issuecomment-5471987448),
+  field's multiple testing," and both can be true. **The product decision is recorded
+  and the wiring has shipped** — option 1 on
+  [#1654](https://github.com/aprin-labs/archimedes/issues/1654) (2026-09-01 amendment below);
+  remaining work is none unless a new ranking surface shows an unqualified badge.
+  (Evidence: [Önder's prod pull](https://github.com/aprin-labs/archimedes/issues/1555#issuecomment-5471987448),
   #1555 thread; no pass count quoted, per the standing rule — the point stands on the
   adjusted p-values, a property of the correction rather than of the return data.)
-  **Placement half decided by the owner (2026-08-31, tracked in
-  [#1564](https://github.com/a-apin/archimedes/issues/1564)):** the passport carries only
-  per-strategy information; the Leaderboard is the one cross-strategy surface. The
-  `board_fdr_*` fields (and, pending #1564's call, `library_pbo`) move off the
-  per-strategy gate response onto the leaderboard, riding its existing cache semantics —
-  which brings the API shape into line with Decision #3 itself. The rendering half (what
-  the board says when the correction disqualifies every row the badge approves) remains
-  open.
+  **Both halves decided by the owner and shipped in
+  [#1564](https://github.com/aprin-labs/archimedes/issues/1564) (2026-08-31).**
+  *Placement:* the passport carries only per-strategy information; the Leaderboard is the
+  one cross-strategy surface. The `board_fdr_*` fields moved off the per-strategy gate
+  response onto `GET /api/leaderboard`, riding its existing cache semantics — which brings
+  the API shape into line with Decision #3 itself. `library_pbo` **stays** on the passport:
+  it is byte-identical across the selection set, so it is a disclosure rather than a
+  per-strategy verdict, and it is the scope label for the `pbo_score` the same response
+  already shows (rationale + guards in
+  [`../specs/selection-bias-corrections-spec.md`](../specs/selection-bias-corrections-spec.md) §6.1).
+  *Rendering:* the board says it plainly — a per-row column plus, while nothing clears,
+  "not yet distinguishable from selection noise at board level". An uncorrected row renders
+  an em-dash, never a verdict. The forward experiment that could eventually clear it is the
+  live paper ledger ([#1563](https://github.com/aprin-labs/archimedes/issues/1563)).
 - **Two conventions exist in the historical record.** Verdicts computed before 2026-07-09
   used formula (A); `num_trials_convention` distinguishes them, but any longitudinal
   comparison of pass rates across that boundary is invalid.
@@ -178,8 +183,8 @@ headline claim is "`num_trials` is self-contained," deliberately not "the gate i
 
 **Önder Akkaya ratified both legs on 2026-08-31** — the society pool-size count and the
 curated `num_trials = 1` — as outcome 3 of
-[#1555](https://github.com/a-apin/archimedes/issues/1555)
-([the review](https://github.com/a-apin/archimedes/issues/1555#issuecomment-5471788506)),
+[#1555](https://github.com/aprin-labs/archimedes/issues/1555)
+([the review](https://github.com/aprin-labs/archimedes/issues/1555#issuecomment-5471788506)),
 after reading the live code rather than this document's description of it. Status is plain
 **Accepted**. The two code comments that named the sign-off as required
 (`generation_pipeline.py`, `selection_bias_routes.py`) were updated in the same commit as
@@ -202,8 +207,8 @@ An earlier revision of this section called the missing sign-off "the single larg
 outstanding rigor risk in the tree." That sentence was removed at the reviewer's request as
 part of the stamp: while it stood, a larger and undocumented error sat in the same
 statistic — the DSR's correlated-trials correction used the wrong functional form
-([#1558](https://github.com/a-apin/archimedes/issues/1558), fixed in
-[#1559](https://github.com/a-apin/archimedes/pull/1559)), admitting noise at up to ~29%
+([#1558](https://github.com/aprin-labs/archimedes/issues/1558), fixed in
+[#1559](https://github.com/aprin-labs/archimedes/pull/1559)), admitting noise at up to ~29%
 against a nominal 10%. The general lesson is recorded here because it is the same class as
 this ADR's 2026-08-19 amendment: **provenance is not correctness, and endpoint tests are
 not a guard** — both the removed `√(1−ρ)` factor and the wrong `N_eff` form satisfied the
@@ -220,7 +225,8 @@ a formula off by 10× from the right one.
   event), but the count is rarely reported and would be a guess. `num_trials = 1` is the
   honest floor; the residual author-side selection bias is a known, unmodelled term.
 - **Keep a portfolio-level correction inside the gate — rejected** as answering the wrong
-  question at the wrong surface; see the open gap above.
+  question at the wrong surface; the ranking-surface disclosure is recorded as option 1
+  of [#1654](https://github.com/aprin-labs/archimedes/issues/1654) (2026-09-01 amendment).
 
 ## Amendment (2026-08-19): the fixture-leak class
 
@@ -235,7 +241,7 @@ predate the 2026-07-09 reversal, so a surface serving them next to a live badge
 touching the marker.
 
 Live instance (audit finding M1, fixed in
-[PR #1272](https://github.com/a-apin/archimedes/pull/1272)): `/api/strategies/advisor`
+[PR #1272](https://github.com/aprin-labs/archimedes/pull/1272)): `/api/strategies/advisor`
 served five fixture statistics — including a fixture-era `num_trials_in_selection` —
 with only the badge live-corrected, so its numbers could disagree with
 `GET /api/selection-bias/gate` for the same strategy at the same moment. The sibling
@@ -267,9 +273,36 @@ out-of-line — and each edit is dated where it lands:
 3. **The Leaderboard/Marketplace "open gap" reframed** (Consequences): board-level BH FDR
    is computed and served — and, per the reviewer's post-ratification prod pull, currently
    disagrees with the per-strategy gate on every strategy (min adjusted p 0.319
-   board-wide). The open item is the product decision on what the ranking surface says,
-   made before the badge is leaned on publicly — not a spec, and no longer merely wiring.
+   board-wide). The open item *as of this stamp* was the product decision on what the
+   ranking surface says, made before the badge is leaned on publicly — not a spec, and no
+   longer merely wiring. *(Closed 2026-09-01: option 1 recorded on #1654; see the
+   amendment below.)*
 4. **Decision #5 rewritten**: it cited the `N_eff` form that #1558 showed to be the wrong
    functional form and #1559 removed. Found during the stamp, not in the review — the
    document claimed the code did something it no longer does. (A matching stale comment in
    `selection_bias_routes.py` was corrected in the same commit.)
+
+## Amendment (2026-09-01): #1654 records option 1 — board FDR on the ranking surface
+
+[#1654](https://github.com/aprin-labs/archimedes/issues/1654) asked what the ranking surface
+shows when board-level Benjamini–Hochberg FDR disagrees with the per-strategy gate on
+every passing strategy. **Option 1 is chosen.** Surface `board_fdr_*` on the ranking
+surface alongside the per-strategy badge, with the two-questions explanation: the gate
+answers "is this strategy statistically sound on its own evidence?"; board FDR answers
+"is this strategy distinguishable from the field's multiple testing?" They can both be
+true. Board FDR is **advisory** and **never flips the badge** (`passes_all`). The
+passport stays out — Decision #3: the passport carries only per-strategy information.
+
+This is not a new call. Owner decision on
+[#1564](https://github.com/aprin-labs/archimedes/issues/1564) (comment 2026-08-31) plus
+[PR #1580](https://github.com/aprin-labs/archimedes/pull/1580) already moved the board FDR
+block onto `GET /api/leaderboard` and rendered it in
+[`ui/src/components/Leaderboard.jsx`](../../ui/src/components/Leaderboard.jsx) with the
+sentence "Not yet distinguishable from selection noise at board level." An uncorrected
+row is an em-dash, never a verdict. `ui/test/leaderboard-board-fdr.test.js` pins that
+copy. The #1654 filing that no `ui/src/` file referenced `board_fdr` is stale against
+that wiring.
+
+**Decision recorded, wiring shipped.** Remaining work is none unless a new ranking
+surface shows an unqualified badge. The BH correction is unchanged; `compute_board_level_fdr`
+is not muted. No curated-library pass rate is quoted.

@@ -133,10 +133,10 @@ For every strategy admitted to the Tier-1 library, the
 [`specs/selection-bias-corrections-spec.md`](specs/selection-bias-corrections-spec.md)
 contract requires:
 
-- **Deflated Sharpe Ratio (DSR)** — excess Sharpe positive at 90% one-sided confidence
+- **Deflated Sharpe Ratio (DSR)** — excess Sharpe positive at 95% one-sided confidence
   under standard errors robust to non-normality and autocorrelation; on the generated path
   additionally deflated against that strategy's own candidate pool (Bailey & López de Prado
-  2014). `dsr_p_value >= 0.90`. On the curated library `num_trials = 1`, so DSR runs
+  2014). `dsr_p_value >= DSR_P_BADGE_MIN` (0.95, defined once in `rigor_profiles.py`). On the curated library `num_trials = 1`, so DSR runs
   **undeflated** — no multiple-testing correction on that path
   ([`adr/num-trials-self-containment.md`](adr/num-trials-self-containment.md)).
 - **Probability of Backtest Overfitting (PBO)** — CSCV-framework probability that the
@@ -181,7 +181,7 @@ Three instances of the same failure were found in one week:
 | Instance | Mechanism | Cost |
 |---|---|---|
 | SSM credentials | `load_ssm_secrets()` catches the IAM denial and boots degraded by design | Marketplace publish never worked in production. 19 days, silent, no alarm. |
-| Leaderboard fixture fallback | Numeric fields fall back to migrated fixture columns when live compute is unavailable | Fabricated statistics presented as measured, on the flagship public page (fixed [#1187](https://github.com/a-apin/archimedes/issues/1187): the four rigor numeric fields now render `None` — not a fixture number — whenever the live gate could not run) |
+| Leaderboard fixture fallback | Numeric fields fall back to migrated fixture columns when live compute is unavailable | Fabricated statistics presented as measured, on the flagship public page (fixed [#1187](https://github.com/aprin-labs/archimedes/issues/1187): the four rigor numeric fields now render `None` — not a fixture number — whenever the live gate could not run) |
 | T-bill / Maillard rows | Persisted return series bound to the wrong asset | The top-ranked strategy graded the null benchmark's returns |
 
 Note what the three have in common: each one was a *deliberate* design choice at the time,

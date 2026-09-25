@@ -72,17 +72,19 @@ ignore = [
 "analytics-engine/scripts/*.py" = ["E402"]
 "backend/archimedes/api/selection_bias_routes.py" = ["E402"]
 # vaults_routes defines a module logger before its import block; stockbench/adapter
-# orders interleaved stdlib + protocol imports beneath explanatory comments; chat_service
-# reads a Circle wallet env var at import time. All three are intentional load-order
-# patterns, same rationale as the entry-point files above.
+# orders interleaved stdlib + protocol imports beneath explanatory comments. Both are
+# intentional load-order patterns, same rationale as the entry-point files above.
+# (A third entry, services/chat_service.py, was dropped when per-vault chat was
+# deleted on 2026-08-31.)
 "backend/archimedes/api/vaults_routes.py" = ["E402"]
 "backend/archimedes/evaluation/stockbench/adapter.py" = ["E402"]
-"backend/archimedes/services/chat_service.py" = ["E402"]
 # Tests legitimately have unused fixture args and routinely access private members;
 # scripts often have unused argparse helpers. Tier-1 expansion 2026-05-24.
 "backend/tests/**" = ["ARG", "SLF"]
 "analytics-engine/tests/**" = ["ARG", "SLF"]
 "tests/**" = ["ARG", "SLF"]
+"cli/tests/**" = ["ARG", "SLF"]
+"mcp-server/tests/**" = ["ARG", "SLF"]
 "backend/archimedes/scripts/**" = ["ARG"]
 "backend/archimedes/evaluation/stockbench/__main__.py" = ["ARG"]
 # marketplace uses ContractLoader._contract (well-known codebase pattern) and

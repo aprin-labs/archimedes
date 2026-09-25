@@ -35,6 +35,14 @@ the critical path. Throttle; run overnight. (Blast radius is narrower than it lo
 
 ## A6 — diagnose first
 
+> **Superseded 2026-09-01 (#1760).** This section describes the in-app refresh scheduler as a
+> live mechanism. It is gone: `services/backtest_scheduler.py`, `BACKTEST_REFRESH_ENABLED` and
+> `BACKTEST_MAX_AGE_HOURS` were deleted, and a curated backtest is now produced only by an
+> explicit operator run ([`../runbooks/curated-backtests.md`](../runbooks/curated-backtests.md),
+> [`../adr/backtests-are-frozen-evidence.md`](../adr/backtests-are-frozen-evidence.md)). The
+> diagnosis below is kept as the historical record of the frozen-board investigation; "what
+> makes the daily scheduler viable" in A5 no longer describes anything that exists.
+
 The diagnostic belongs in [cluster-0](cluster-0-unblock.md), but restate the finding here before
 running. #1203 merged 2026-08-03 and the newest row on the board is `backtest_end 2026-07-01`.
 The scheduler is armed (`main.py:330-338`), `BACKTEST_REFRESH_ENABLED` defaults on,

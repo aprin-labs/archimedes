@@ -7,7 +7,10 @@ Hermetic (tmp-sqlite, no .env / network / Redis). Covers:
   * /api/strategies/generated visibility: anon sees only published; owner also
     sees their own unpublished rows
   * GET /api/strategies/{id}: unpublished non-example rows 404 for non-owners
-  * PATCH /api/strategies/{id}: owner-gated rename, non-example rows only
+  * PATCH /api/strategies/{id}: owner-gated rename, non-example rows only —
+    both ownership tiers (canonical owner_user_id; legacy owner_wallet only on
+    an unstamped row, which self-heals onto the account) and the deny matrix,
+    including the canonical-bypass case a wallet-first ordering would open
   * scripts/purge_orphan_generated.py: dry-run (default) vs --execute
 
 DB fixture copies the `_use_tmp_db` pattern from test_live_gate_returns.py.
@@ -591,6 +594,123 @@ async def test_rename_legacy_wallet_fallback_does_not_touch_vault_metadata_or_pr
 
         profile = session.query(UserProfile).filter_by(wallet_address=_W_OWNER.lower()).first()
         assert profile.owner_user_id is None  # untouched — no PII adoption on a non-fresh-signature lookup
+
+
+async def test_rename_canonical_owner_tier_needs_no_wallet_match():
+    """TIER 1 (#1283). A row already stamped with the caller's canonical
+    ``owner_user_id`` is renamable on that stamp ALONE — the wallet on the row
+    is a stranger's and the caller's linked wallet does not match it.
+
+    Every pre-existing rename test builds rows with ``owner_user_id`` NULL, so
+    they all travel the legacy-wallet fallback; nothing covered the canonical
+    tier this issue migrates onto. It also pins the no-op half of the reclaim:
+    an already-claimed row must not be re-stamped or dragged onto the caller's
+    wallet."""
+    sid = "can00000000000001"
+    _mk_strategy(
+        sid,
+        owner=_W_OTHER,  # someone else's wallet on the row
+        owner_user=f"legacy-test:{_W_OWNER.lower()}",  # but MY account owns it
+        published=False,
+        name="Before",
+    )
+
+    from archimedes.main import app
+    from archimedes.models.strategy_store import StrategyRecord
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.patch(f"/api/strategies/{sid}", json={"name": "After"}, cookies=_siwe_cookies(_W_OWNER))
+    assert resp.status_code == 200
+
+    with db.get_session() as session:
+        row = session.query(StrategyRecord).filter_by(id=sid).first()
+        assert row.strategy_name == "After"
+        assert row.owner_user_id == f"legacy-test:{_W_OWNER.lower()}"  # unchanged
+        assert row.owner_wallet == _W_OTHER.lower()  # the reclaim did NOT re-point provenance
+
+
+async def test_rename_matching_wallet_cannot_hijack_row_stamped_to_another_account():
+    """THE canonical-bypass guard (#1283). The row carries ANOTHER account's
+    ``owner_user_id`` and, at the same time, the caller's own linked wallet in
+    ``owner_wallet`` — the exact row shape a wallet-first ordering would hand
+    over. Tier 2 must be unreachable whenever a user stamp exists, or migrating
+    to canonical identity is a security downgrade: anyone controlling a wallet
+    a row happens to name could rename an account-owned strategy.
+
+    Asserted on the wire (403/404) AND in the database, so the test cannot be
+    satisfied by the request merely erroring for some unrelated reason.
+    """
+    victim_user_id = f"legacy-test:{_W_OTHER.lower()}"
+    private_sid = "byp00000000000001"
+    published_sid = "byp00000000000002"
+    # owner_wallet is the ATTACKER's wallet; owner_user_id is the VICTIM's account.
+    _mk_strategy(private_sid, owner=_W_OWNER, owner_user=victim_user_id, published=False, name="Before")
+    _mk_strategy(published_sid, owner=_W_OWNER, owner_user=victim_user_id, published=True, name="Before")
+
+    from archimedes.main import app
+    from archimedes.models.strategy_store import StrategyRecord
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        private = await client.patch(
+            f"/api/strategies/{private_sid}", json={"name": "Hijacked"}, cookies=_siwe_cookies(_W_OWNER)
+        )
+        published = await client.patch(
+            f"/api/strategies/{published_sid}", json={"name": "Hijacked"}, cookies=_siwe_cookies(_W_OWNER)
+        )
+    assert private.status_code == 404  # existence stays hidden for unpublished rows
+    assert published.status_code == 403  # already visible, so an honest refusal
+
+    with db.get_session() as session:
+        for sid in (private_sid, published_sid):
+            row = session.query(StrategyRecord).filter_by(id=sid).first()
+            assert row.strategy_name == "Before"  # no write landed
+            assert row.owner_user_id == victim_user_id  # ownership not reassigned
+
+
+async def test_rename_denied_for_wrong_user_wrong_wallet_and_anonymous():
+    """The deny matrix on ONE row, so a permissive change cannot pass by
+    flipping only the case a narrower test looks at.
+
+    * anonymous              -> 401 (no session at all)
+    * wrong account          -> 404 (row stamped to me, caller is another user)
+    * wrong wallet, no stamp -> 404 (legacy row, caller's wallet isn't its wallet)
+
+    Each case is re-read from the DB: a 4xx that still wrote the name would be
+    the worst possible outcome and the status code alone would hide it."""
+    stamped_sid = "dny00000000000001"
+    legacy_sid = "dny00000000000002"
+    _mk_strategy(stamped_sid, owner=None, owner_user=f"legacy-test:{_W_OWNER.lower()}", published=False, name="Before")
+    _mk_strategy(legacy_sid, owner=_W_OWNER, published=False, name="Before")  # owner_user_id NULL
+
+    from archimedes.main import app
+    from archimedes.models.strategy_store import StrategyRecord
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        anon = await client.patch(f"/api/strategies/{stamped_sid}", json={"name": "After"})
+        wrong_user = await client.patch(
+            f"/api/strategies/{stamped_sid}", json={"name": "After"}, cookies=_siwe_cookies(_W_OTHER)
+        )
+        wrong_wallet = await client.patch(
+            f"/api/strategies/{legacy_sid}", json={"name": "After"}, cookies=_siwe_cookies(_W_OTHER)
+        )
+        # Positive control: the SAME rows rename fine for the real owner, so
+        # the three refusals above are the gate, not a broken route.
+        owner_stamped = await client.patch(
+            f"/api/strategies/{stamped_sid}", json={"name": "Renamed"}, cookies=_siwe_cookies(_W_OWNER)
+        )
+        owner_legacy = await client.patch(
+            f"/api/strategies/{legacy_sid}", json={"name": "Renamed"}, cookies=_siwe_cookies(_W_OWNER)
+        )
+
+    assert anon.status_code == 401
+    assert wrong_user.status_code == 404
+    assert wrong_wallet.status_code == 404
+    assert owner_stamped.status_code == 200  # tier 1
+    assert owner_legacy.status_code == 200  # tier 2
+
+    with db.get_session() as session:
+        for sid in (stamped_sid, legacy_sid):
+            assert session.query(StrategyRecord).filter_by(id=sid).first().strategy_name == "Renamed"
 
 
 async def test_rename_published_non_owner_403():

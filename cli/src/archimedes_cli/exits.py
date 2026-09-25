@@ -32,12 +32,17 @@ code that raises it."""
 
 INCOMPLETE = 4
 """``verify`` reached the server and got an answer, but not every runnable leg of
-the gate could be evaluated — typically too few bars for the walk-forward OOS
-split (~70) while DSR only needs 4.
+the gate could be evaluated — a leg that could not run on the NUMBERS, such as a
+zero-variance stretch with no Sharpe to compute.
+
+Not a short series: since #1803 the endpoint refuses anything under the 250-bar
+evaluation window, which sits above the ~70 bars the walk-forward split needs.
+That is a rejected body — ``USAGE`` (2) with ``window_too_short`` — and it never
+reaches this code.
 
 A new code rather than ``GATE_FAILED`` on purpose, per this module's own split:
 an incomplete evaluation is not a verdict about the strategy, so collapsing it
-into 1 would report "not enough data" as "strategy rejected" — precisely the
+into 1 would report "a leg could not run" as "strategy rejected" — precisely the
 confusion the header warns about. See #1481."""
 
 NOT_IMPLEMENTED = 3
@@ -45,4 +50,52 @@ NOT_IMPLEMENTED = 3
 release. 0.0.1 returned this for every subcommand; 0.1.0 narrows it to ``backtest``
 and ``verify --local``, which still need the not-yet-published local execution engine."""
 
-__all__ = ["AUTH", "GATE_FAILED", "INCOMPLETE", "NOT_IMPLEMENTED", "OK", "USAGE"]
+PAYMENT_REQUIRED = 5
+"""``generate`` reached the server and the server answered ``402``: this account
+must pay before a generation runs.
+
+New in 0.2.0, and a NEW number rather than a reuse, per this module's own rule.
+The scripted action is unique to it — open a browser, pay, re-run — and it must
+not be confused with either ``USAGE`` (nothing was wrong with the request) or
+``GATE_FAILED`` (no strategy was evaluated at all). The CLI prints the x402
+requirements the server sent and stops; it never signs anything."""
+
+ACCOUNT_ACTION_REQUIRED = 6
+"""``generate`` was refused ``409``: the blocker is account state, not payment
+and not the request.
+
+Kept separate from ``PAYMENT_REQUIRED`` because the fix is different and telling
+a user to pay when the actual unlock is "verify your email" would be a false
+claim. Which unlock applies is whatever the server says — the free-generation
+policy is changing (#1658 and the owner's D1 decision), so the CLI reports the
+server's own reason rather than a policy it assumes."""
+
+JOB_FAILED = 7
+"""The generation job reached a terminal state that is not ``done`` — the server
+asserts it failed, stalled, timed out, or was cancelled.
+
+This IS a real answer about the run (compare ``GATE_FAILED``'s role for
+``verify``), which is why it is not folded into the "command did not complete"
+family. Retrying the same brief may or may not help; the server's own message
+says which."""
+
+STILL_RUNNING = 8
+"""``generate`` stopped waiting before the job reached any terminal state.
+
+Deliberately NOT ``JOB_FAILED``: the job is still running server-side and may
+still succeed. Reporting a client-side wait budget as a failed generation would
+be exactly the false claim this repo's #1 rule forbids. The job id is printed so
+the run can be picked up again."""
+
+__all__ = [
+    "ACCOUNT_ACTION_REQUIRED",
+    "AUTH",
+    "GATE_FAILED",
+    "INCOMPLETE",
+    "JOB_FAILED",
+    "NOT_IMPLEMENTED",
+    "OK",
+    "PAYMENT_REQUIRED",
+    "STILL_RUNNING",
+    "USAGE",
+]

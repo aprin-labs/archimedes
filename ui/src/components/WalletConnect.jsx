@@ -279,7 +279,7 @@ export default function WalletConnect({ address, displayName, onConnect, onDisco
 
   return (
     <>
-      <button className="wallet-chip" onClick={() => setShowModal(true)}>
+      <button type="button" className="wallet-chip" onClick={() => setShowModal(true)}>
         Connect Wallet
       </button>
 
@@ -326,11 +326,11 @@ export default function WalletConnect({ address, displayName, onConnect, onDisco
               Deposits live in your non-custodial vault contract; the agent has rebalance
               authority only, not withdraw-to-platform. Source open at{' '}
               <a
-                href="https://github.com/a-apin/archimedes"
+                href="https://github.com/aprin-labs/archimedes"
                 target="_blank"
                 rel="noreferrer"
               >
-                github.com/a-apin/archimedes
+                github.com/aprin-labs/archimedes
               </a>
               . Testnet only — fake USDC, no value at risk.
             </div>
@@ -356,7 +356,7 @@ export default function WalletConnect({ address, displayName, onConnect, onDisco
                           className="caption"
                           style={{
                             display: 'flex', alignItems: 'center', gap: 8,
-                            margin: '6px 0', color: 'var(--text-4)',
+                            margin: '6px 0', color: 'var(--text-3)',
                             fontSize: '0.7rem', textTransform: 'uppercase',
                             letterSpacing: '0.05em',
                           }}
@@ -418,6 +418,7 @@ export default function WalletConnect({ address, displayName, onConnect, onDisco
                           </div>
                           <div style={{ display: 'flex', gap: 8 }}>
                             <button
+                              type="button"
                               className="btn btn-primary"
                               style={{ flex: 1 }}
                               onClick={() => handleConnect(p.id, { mode: 'login' })}
@@ -426,6 +427,7 @@ export default function WalletConnect({ address, displayName, onConnect, onDisco
                               Open existing wallet
                             </button>
                             <button
+                              type="button"
                               className="btn btn-outline"
                               style={{ flex: 1 }}
                               onClick={() => handleConnect(p.id, { mode: 'register', walletName })}
@@ -434,13 +436,13 @@ export default function WalletConnect({ address, displayName, onConnect, onDisco
                               Create new wallet
                             </button>
                           </div>
-                          <span style={{ fontSize: '0.72rem', color: 'var(--text-4)', lineHeight: 1.4 }}>
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-3)', lineHeight: 1.4 }}>
                             <strong style={{ color: 'var(--text-3)' }}>Open existing wallet</strong> opens your passkey
                             picker — choose the wallet you want. <strong style={{ color: 'var(--text-3)' }}>Create new</strong> mints a fresh wallet under the name above (or an auto-generated one).
                           </span>
                         </div>
                       ) : (
-                        <button className="wallet-option" onClick={() => handleConnect(p.id)} disabled={busy}>
+                        <button type="button" className="wallet-option" onClick={() => handleConnect(p.id)} disabled={busy}>
                           {p.iconDataUri ? (
                             <img src={p.iconDataUri} alt="" width={20} height={20} style={{ borderRadius: 4 }} />
                           ) : (
@@ -455,9 +457,9 @@ export default function WalletConnect({ address, displayName, onConnect, onDisco
               </div>
             )}
 
-            {error && <div className="status mt-3">{error}</div>}
+            {error && <div className="status mt-3" role="alert">{error}</div>}
 
-            <button className="btn btn-outline mt-3 w-full" onClick={() => setShowModal(false)}>Cancel</button>
+            <button type="button" className="btn btn-outline mt-3 w-full" onClick={() => setShowModal(false)}>Cancel</button>
           </div>
         </div>,
         document.body

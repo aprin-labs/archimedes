@@ -2,7 +2,7 @@
 
 > **status:** current
 > **owner:** Dan Browne
-> **updated:** 2026-08-20
+> **updated:** 2026-09-01
 > **superseded-by:** —
 
 The rigor gate and the product claims around it rest on a specific reading of the academic
@@ -20,14 +20,16 @@ Archimedes asserts. Two of the five are cited against us — that is deliberate.
 ## Where else literature is cited
 
 Every Tier-1 strategy passport (`/app/library?tab=examples`) links to the paper that backs
-it. Every reasoning trace anchored on-chain via `ReasoningTraceRegistry` carries a
-`consulted_paper_hashes` field binding the decision to a specific corpus snapshot. The
-implementation is
+it. A reasoning trace that is actually anchored on-chain via `ReasoningTraceRegistry`
+carries a `consulted_paper_hashes` field binding the decision to a specific corpus
+snapshot — **generation traces are not anchored today.** Check `arc_tx_hash` before
+treating a trace as on-chain. The implementation is
 [`backend/archimedes/services/source_tracker.py`](../backend/archimedes/services/source_tracker.py).
 
-The corpus itself is 10,000 arXiv q-fin **preprints** — not peer-reviewed, and not the same
-thing as the five papers above. How it is built, stored, and selected from:
-[`corpus-architecture.md`](corpus-architecture.md).
+The corpus is arXiv q-fin **preprints** — not peer-reviewed, and not the same
+thing as the five papers above. Do not freeze a paper count here: live row counts are
+`GET /health` `corpus_papers` / `corpus_db_count` (the corpus probe can timeout). How it
+is built, stored, and selected from: [`corpus-architecture.md`](corpus-architecture.md).
 
 ## Related
 

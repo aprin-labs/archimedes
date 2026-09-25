@@ -16,6 +16,7 @@ import {
 } from '../config'
 import { isAddress, parseUnits } from 'viem'
 import { executeUserOp, encodeCall } from '../circle-tx-executor'
+import { canStore } from '../storage-consent.js'
 
 const ARCSCAN_TX = 'https://testnet.arcscan.app/tx'
 const STORAGE_PREFIX = 'archimedes_deposit_'
@@ -42,7 +43,11 @@ function loadProgress(vaultAddress) {
 
 function saveProgress(vaultAddress, stepIndex, txHashes) {
   try {
-    localStorage.setItem(`${STORAGE_PREFIX}${vaultAddress}`, JSON.stringify({ stepIndex, txHashes }))
+    // Functional category (#1647): resume-after-reload is convenience, not
+    // correctness. With functional storage rejected the step list restarts on
+    // a reload; transactions already broadcast are untouched either way.
+    const key = `${STORAGE_PREFIX}${vaultAddress}`
+    if (canStore(key)) localStorage.setItem(key, JSON.stringify({ stepIndex, txHashes }))
   } catch { /* storage unavailable */ }
 }
 
@@ -60,7 +65,7 @@ function StatusIcon({ status }) {
   if (status === FAILED) return <span className="i-lucide-x w-[1.1rem] h-[1.1rem]" style={{ color: 'var(--negative, #ef4444)' }} />
   if (status === CONFIRMING) return <span className="spin" style={{ display: 'inline-block', width: 16, height: 16, border: '2px solid var(--text-4)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
   if (status === WAITING) return <span className="i-lucide-hourglass w-[1.1rem] h-[1.1rem]" style={{ color: 'var(--accent)' }} />
-  return <span className="i-lucide-circle w-[1.1rem] h-[1.1rem]" style={{ color: 'var(--text-4)' }} />
+  return <span className="i-lucide-circle w-[1.1rem] h-[1.1rem]" style={{ color: 'var(--text-3)' }} />
 }
 
 // Marker so the catch blocks can tell a bad-input parse failure apart from an
@@ -284,13 +289,13 @@ function EoaDepositFlow({ vaultAddress, depositAmount = '100', strategy, onClose
         style={{ background: 'var(--surface-1)', maxHeight: '90vh', overflowY: 'auto' }}
       >
         {/* Header */}
-        <div className="caption mb-2 uppercase tracking-wider text-[var(--text-4)]">
+        <div className="caption mb-2 uppercase tracking-wider text-[var(--text-3)]">
           {allDone ? 'Deposit complete' : 'Fund your vault'}
         </div>
         <h3 id="deposit-flow-title" className="font-serif text-[1.5rem] mb-1">
           {strategy?.paper_title || 'Strategy Vault'}
         </h3>
-        <p className="caption mb-1 mono text-[var(--text-4)]">
+        <p className="caption mb-1 mono text-[var(--text-3)]">
           Vault: {vaultAddress?.slice(0, 10)}…{vaultAddress?.slice(-6)}
         </p>
         <p className="caption mb-4 leading-relaxed">
@@ -397,7 +402,7 @@ function EoaDepositFlow({ vaultAddress, depositAmount = '100', strategy, onClose
         {/* Allocation detail (collapsible) */}
         {!allDone && currentStep >= 1 && (
           <div className="mt-3 card-flat p-3">
-            <div className="caption mb-1 text-[var(--text-4)]">Target allocation (equal weight)</div>
+            <div className="caption mb-1 text-[var(--text-3)]">Target allocation (equal weight)</div>
             <div className="flex flex-wrap gap-2">
               {defaultAllocations().labels.map((label, i) => (
                 <span key={i} className="tag tag-muted" style={{ fontSize: '0.7rem' }}>{label}</span>
@@ -526,13 +531,13 @@ function PasskeyDepositFlow({ vaultAddress, depositAmount = '100', strategy, onC
         onClick={e => e.stopPropagation()}
         style={{ background: 'var(--surface-1)', maxHeight: '90vh', overflowY: 'auto' }}
       >
-        <div className="caption mb-2 uppercase tracking-wider text-[var(--text-4)]">
+        <div className="caption mb-2 uppercase tracking-wider text-[var(--text-3)]">
           {isDone ? 'Deposit complete' : 'Fund your vault'}
         </div>
         <h3 id="passkey-deposit-title" className="font-serif text-[1.5rem] mb-1">
           {strategy?.paper_title || 'Strategy Vault'}
         </h3>
-        <p className="caption mb-1 mono text-[var(--text-4)]">
+        <p className="caption mb-1 mono text-[var(--text-3)]">
           Vault: {vaultAddress?.slice(0, 10)}…{vaultAddress?.slice(-6)}
         </p>
         <p className="caption mb-4 leading-relaxed">
@@ -561,7 +566,7 @@ function PasskeyDepositFlow({ vaultAddress, depositAmount = '100', strategy, onC
         {/* What this batches — surface honestly so users know what they're signing */}
         {!isDone && (
           <div className="card-flat p-3 mb-3">
-            <div className="caption mb-2 text-[var(--text-4)]">
+            <div className="caption mb-2 text-[var(--text-3)]">
               One passkey signature authorizes:
             </div>
             <ul style={{ paddingLeft: 18, margin: 0 }}>
@@ -575,7 +580,7 @@ function PasskeyDepositFlow({ vaultAddress, depositAmount = '100', strategy, onC
                 Set target allocation across {defaultAllocations().labels.length} synthetics
               </li>
             </ul>
-            <div className="caption mt-2" style={{ color: 'var(--text-4)', fontSize: '0.7rem' }}>
+            <div className="caption mt-2" style={{ color: 'var(--text-3)', fontSize: '0.7rem' }}>
               Gas sponsored by Circle Gas Station — you pay $0.
             </div>
           </div>
@@ -596,7 +601,7 @@ function PasskeyDepositFlow({ vaultAddress, depositAmount = '100', strategy, onC
         {/* Completion */}
         {isDone && result?.txHash && (
           <div className="card-flat p-3 mt-3">
-            <div className="caption mb-1 text-[var(--text-4)]">Confirmed on Arc Testnet</div>
+            <div className="caption mb-1 text-[var(--text-3)]">Confirmed on Arc Testnet</div>
             <a
               href={`${ARCSCAN_TX}/${result.txHash}`}
               target="_blank"

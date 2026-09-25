@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,22 +23,50 @@ from sqlalchemy import func
 from archimedes.db import get_session
 from archimedes.models.corpus_store import CorpusMetaRecord, PaperRecord
 
+# arXiv categories to pull during incremental intake. Imported, never
+# redeclared: `corpus_categories` is the single source of truth (#1635).
+from archimedes.services.corpus_categories import QFIN_CATEGORIES
+
 logger = logging.getLogger(__name__)
 
-CORPUS_MAX = int(os.getenv("CORPUS_MAX", "2000"))
+# Default lifted 2000 → 25000 (#1635) so a cold environment matches prod's env
+# override and has headroom above the ~18.9k responsive q-fin literature.
+# NOTE: there is still **no eviction** at the cap (docs/corpus-architecture.md);
+# raising it defers retention, it does not solve it.
+CORPUS_MAX = int(os.getenv("CORPUS_MAX", "25000"))
 
-# arXiv categories to pull during incremental intake
-QFIN_CATEGORIES = [
-    "q-fin.CP",  # Computational Finance
-    "q-fin.EC",  # Economics
-    "q-fin.GN",  # General Finance
-    "q-fin.MF",  # Mathematical Finance
-    "q-fin.PM",  # Portfolio Management
-    "q-fin.PR",  # Pricing of Securities
-    "q-fin.RM",  # Risk Management
-    "q-fin.ST",  # Statistical Trading
-    "q-fin.TR",  # Trading and Market Microstructure
-]
+_ARXIV_API = "https://export.arxiv.org/api/query"
+_INTAKE_PAGE_SIZE = 200  # arXiv's per-request maximum
+_INTAKE_PAGE_DELAY_SECONDS = 3.0  # arXiv asks for ~1 request / 3s
+# Consecutive all-duplicate pages tolerated before we conclude we are caught up.
+# >1 because the newest page can be entirely known while an older page still
+# holds a paper we missed (a v2 re-submission reorders the feed).
+_INTAKE_MAX_DUPLICATE_PAGES = 2
+# arXiv answers HTTP 500 for start >= 10000 on a single query (measured
+# 2026-08-31). Intake is a newest-first top-up and catches up within a few
+# pages, so it should never approach this; stop loudly if it ever does rather
+# than emit a generic API-failure warning. The *bulk* harvester works around
+# the wall by partitioning per category — see scripts/bulk_ingest_arxiv.py.
+_ARXIV_DEEP_PAGE_LIMIT = 10000
+
+_ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
+
+
+def intake_query_url(start: int, page_size: int) -> str:
+    """Build one page of the incremental-intake arXiv query.
+
+    ``start`` is the pagination offset. Before #1635 it was **absent**, so
+    every call re-requested the same newest ``max_results`` papers and intake
+    could never insert past the first page — the corpus could not grow at all
+    through this path.
+    """
+    cat_query = "+OR+".join(f"cat:{c}" for c in QFIN_CATEGORIES)
+    return (
+        f"{_ARXIV_API}"
+        f"?search_query=({cat_query})"
+        f"&sortBy=submittedDate&sortOrder=descending"
+        f"&start={start}&max_results={page_size}"
+    )
 
 
 def seed_from_manifest(manifest_path: Path | None = None) -> int:
@@ -138,10 +167,70 @@ def _update_meta(session, *, source: str = "unknown") -> None:
     session.flush()
 
 
+def _paper_from_entry(entry, *, now: datetime) -> tuple[str, PaperRecord] | None:
+    """Map one Atom ``<entry>`` to ``(arxiv_id, PaperRecord)``, or None."""
+    id_elem = entry.find("atom:id", _ATOM_NS)
+    if id_elem is None or not id_elem.text:
+        return None
+    # Extract arxiv_id from URL like http://arxiv.org/abs/2605.12345v1
+    arxiv_url = id_elem.text.strip()
+    arxiv_id = arxiv_url.split("/abs/")[-1]
+    # Strip version suffix
+    if "v" in arxiv_id and arxiv_id[-1].isdigit():
+        parts = arxiv_id.rsplit("v", 1)
+        if parts[1].isdigit():
+            arxiv_id = parts[0]
+
+    title_elem = entry.find("atom:title", _ATOM_NS)
+    summary_elem = entry.find("atom:summary", _ATOM_NS)
+    published_elem = entry.find("atom:published", _ATOM_NS)
+    updated_elem = entry.find("atom:updated", _ATOM_NS)
+
+    title = (title_elem.text or "").strip().replace("\n", " ") if title_elem is not None else ""
+    abstract = (summary_elem.text or "").strip().replace("\n", " ") if summary_elem is not None else ""
+    published = published_elem.text.strip()[:10] if published_elem is not None and published_elem.text else ""
+    updated = updated_elem.text.strip()[:10] if updated_elem is not None and updated_elem.text else ""
+
+    categories = []
+    for cat_elem in entry.findall("atom:category", _ATOM_NS):
+        term = cat_elem.get("term", "")
+        if term:
+            categories.append(term)
+    primary_category = categories[0] if categories else ""
+    # arxiv:primary_category lives in the arXiv extension namespace
+    for pc in entry.findall("{http://arxiv.org/schemas/atom}primary_category"):
+        primary_category = pc.get("term", primary_category)
+
+    authors = []
+    for author_elem in entry.findall("atom:author", _ATOM_NS):
+        name_elem = author_elem.find("atom:name", _ATOM_NS)
+        if name_elem is not None and name_elem.text:
+            authors.append(name_elem.text.strip())
+
+    return arxiv_id, PaperRecord(
+        arxiv_id=arxiv_id,
+        title=title,
+        authors=json.dumps(authors),
+        abstract=abstract,
+        primary_category=primary_category,
+        categories=json.dumps(categories),
+        published=published,
+        updated=updated,
+        pdf_url=arxiv_url.replace("/abs/", "/pdf/") + ".pdf",
+        source="arxiv_api",
+        ingested_at=now,
+    )
+
+
 def intake_from_arxiv(max_results: int | None = None) -> int:
     """Pull new q-fin papers from the arXiv API, dedup, upsert.
 
-    Uses the arXiv Atom API (no key required, rate-limit polite).
+    Uses the arXiv Atom API (no key required, rate-limit polite) and **pages
+    with ``start=``**. Before #1635 the URL carried only ``max_results``, so
+    every call re-requested the same newest page and intake inserted ~0 after
+    the first run — the corpus could not grow through this path at all, and
+    raising ``CORPUS_MAX`` silently no-op'd.
+
     Returns the number of new papers inserted.
     """
     import httpx
@@ -151,116 +240,130 @@ def intake_from_arxiv(max_results: int | None = None) -> int:
         logger.info("corpus: at CORPUS_MAX (%d), skipping intake", CORPUS_MAX)
         return 0
 
-    # Build query for q-fin categories
-    cat_query = "+OR+".join(f"cat:{c}" for c in QFIN_CATEGORIES)
-    url = (
-        f"https://export.arxiv.org/api/query"
-        f"?search_query=({cat_query})"
-        f"&sortBy=submittedDate&sortOrder=descending"
-        f"&max_results={min(cap, 200)}"
-    )
-
-    try:
-        resp = httpx.get(url, timeout=30.0)
-        resp.raise_for_status()
-    except Exception as exc:
-        logger.warning("corpus: arxiv API failed: %s", exc)
-        return 0
-
-    # Parse Atom feed
-    ns = {"atom": "http://www.w3.org/2005/Atom"}
-    try:
-        root = ET.fromstring(resp.text)
-    except ET.ParseError as exc:
-        logger.warning("corpus: arxiv XML parse failed: %s", exc)
-        return 0
-
-    entries = root.findall("atom:entry", ns)
-    if not entries:
-        return 0
-
-    now = datetime.now(UTC)
-    inserted = 0
     with get_session() as session:
         existing = {r[0] for r in session.query(PaperRecord.arxiv_id).all()}
-        for entry in entries:
-            id_elem = entry.find("atom:id", ns)
-            if id_elem is None or not id_elem.text:
-                continue
-            # Extract arxiv_id from URL like http://arxiv.org/abs/2605.12345v1
-            arxiv_url = id_elem.text.strip()
-            arxiv_id = arxiv_url.split("/abs/")[-1]
-            # Strip version suffix
-            if "v" in arxiv_id and arxiv_id[-1].isdigit():
-                parts = arxiv_id.rsplit("v", 1)
-                if parts[1].isdigit():
-                    arxiv_id = parts[0]
 
+    now = datetime.now(UTC)
+    pending: list[PaperRecord] = []
+    start = 0
+    pages = 0
+    duplicate_pages = 0
+
+    # Fetch outside the write session: paging is polite-delayed, and holding a
+    # transaction open across those sleeps would pin a connection for minutes.
+    while len(pending) < cap:
+        if start >= _ARXIV_DEEP_PAGE_LIMIT:
+            logger.error(
+                "corpus: intake INCOMPLETE — arXiv refuses start>=%d; %d of %d wanted papers unreachable "
+                "through this path. Re-seed from a bulk harvest instead.",
+                _ARXIV_DEEP_PAGE_LIMIT,
+                cap - len(pending),
+                cap,
+            )
+            break
+        page_size = min(_INTAKE_PAGE_SIZE, cap - len(pending))
+        url = intake_query_url(start, page_size)
+        try:
+            resp = httpx.get(url, timeout=30.0)
+            resp.raise_for_status()
+        except Exception as exc:
+            logger.warning("corpus: arxiv API failed at start=%d: %s", start, exc)
+            break
+
+        try:
+            root = ET.fromstring(resp.text)
+        except ET.ParseError as exc:
+            logger.warning("corpus: arxiv XML parse failed at start=%d: %s", start, exc)
+            break
+
+        entries = root.findall("atom:entry", _ATOM_NS)
+        pages += 1
+        if not entries:
+            logger.info("corpus: arxiv feed exhausted at start=%d", start)
+            break
+
+        page_new = 0
+        for entry in entries:
+            parsed = _paper_from_entry(entry, now=now)
+            if parsed is None:
+                continue
+            arxiv_id, record = parsed
             if arxiv_id in existing:
                 continue
-
-            title_elem = entry.find("atom:title", ns)
-            summary_elem = entry.find("atom:summary", ns)
-            published_elem = entry.find("atom:published", ns)
-            updated_elem = entry.find("atom:updated", ns)
-
-            title = (title_elem.text or "").strip().replace("\n", " ") if title_elem is not None else ""
-            abstract = (summary_elem.text or "").strip().replace("\n", " ") if summary_elem is not None else ""
-            published = published_elem.text.strip()[:10] if published_elem is not None and published_elem.text else ""
-            updated = updated_elem.text.strip()[:10] if updated_elem is not None and updated_elem.text else ""
-
-            # Extract categories
-            categories = []
-            primary_category = ""
-            for cat_elem in entry.findall("atom:category", ns):
-                term = cat_elem.get("term", "")
-                if term:
-                    categories.append(term)
-            for _pc_elem in entry.findall("atom:primary_category", ns):
-                # arXiv uses a non-namespaced primary_category attribute in some feeds
-                pass
-            primary_category = categories[0] if categories else ""
-            # Also check arxiv:primary_category
-            for pc in entry.findall("{http://arxiv.org/schemas/atom}primary_category"):
-                primary_category = pc.get("term", primary_category)
-
-            # Authors
-            authors = []
-            for author_elem in entry.findall("atom:author", ns):
-                name_elem = author_elem.find("atom:name", ns)
-                if name_elem is not None and name_elem.text:
-                    authors.append(name_elem.text.strip())
-
-            pdf_url = arxiv_url.replace("/abs/", "/pdf/") + ".pdf"
-
-            record = PaperRecord(
-                arxiv_id=arxiv_id,
-                title=title,
-                authors=json.dumps(authors),
-                abstract=abstract,
-                primary_category=primary_category,
-                categories=json.dumps(categories),
-                published=published,
-                updated=updated,
-                pdf_url=pdf_url,
-                source="arxiv_api",
-                ingested_at=now,
-            )
-            session.add(record)
             existing.add(arxiv_id)
-            inserted += 1
+            pending.append(record)
+            page_new += 1
+            if len(pending) >= cap:
+                break
 
+        start += len(entries)
+        if page_new == 0:
+            duplicate_pages += 1
+            if duplicate_pages >= _INTAKE_MAX_DUPLICATE_PAGES:
+                logger.info("corpus: %d consecutive pages with no new papers — caught up", duplicate_pages)
+                break
+        else:
+            duplicate_pages = 0
+
+        if len(pending) < cap:
+            time.sleep(_INTAKE_PAGE_DELAY_SECONDS)
+
+    if pages == 0:
+        # Nothing was successfully fetched — do not stamp a fresh intake time.
+        return 0
+
+    with get_session() as session:
+        for record in pending:
+            session.add(record)
         session.commit()
         _update_meta(session, source="arxiv_api")
-        logger.info("corpus: intake inserted %d new papers (total %d)", inserted, len(existing))
+    logger.info(
+        "corpus: intake inserted %d new papers over %d page(s)",
+        len(pending),
+        pages,
+    )
 
-    return inserted
+    return len(pending)
 
 
 def get_paper_count() -> int:
     """Return current paper count in the DB."""
     with get_session() as session:
         return session.query(func.count(PaperRecord.arxiv_id)).scalar() or 0
+
+
+def count_corpus_papers(*, embargo_days: int = 30) -> int:
+    """ORM-free count of the papers ``load_corpus`` would load — for /health.
+
+    Mirrors ``apply_outcome_embargo``'s rule in SQL. That rule keeps a paper
+    whose date is *at most* ``embargo_days`` old (``pub <= cutoff``), and the
+    column holds either ``YYYY-MM-DD`` or a full ISO timestamp, so the SQL
+    form is ``published < day-after-cutoff`` (a timestamp on the cutoff day
+    sorts after the bare date but before the next day); empty ``published``
+    is excluded. The Python filter also drops *unparseable* dates, which SQL
+    cannot check — so the only permitted disagreement is this count reading
+    high by the unparseable rows, never a fabricated low. Both edges and that
+    delta are pinned by ``test_corpus_load_race_1632.py`` against a real table.
+
+    Exists because the /health corpus probe used to call ``load_corpus`` — a
+    full 18k-row ORM materialization per uncached check. On a cold task the
+    probe blows its budget, is abandoned-but-running, and the next checks pile
+    more loads into the executor until two race in SQLAlchemy session teardown
+    and abort the interpreter (#1632, prod rev 214). A scalar COUNT holds no
+    ORM state to race and returns in milliseconds.
+    """
+    from datetime import date, timedelta
+
+    # apply_outcome_embargo keeps pub <= today - embargo_days; as a string
+    # bound over "YYYY-MM-DD[Thh:mm:ssZ]" values that is `< the following day`.
+    first_excluded_day = (date.today() - timedelta(days=embargo_days - 1)).isoformat()
+    with get_session() as session:
+        return (
+            session.query(func.count(PaperRecord.arxiv_id))
+            .filter(PaperRecord.published != "", PaperRecord.published < first_excluded_day)
+            .scalar()
+            or 0
+        )
 
 
 def get_corpus_meta() -> dict | None:

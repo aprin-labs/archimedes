@@ -32,30 +32,38 @@ from sqlalchemy.orm import sessionmaker
 
 
 class TestProviderSelection:
+    """Selection on the ``intraday`` seam — ``MARKET_DATA_PROVIDER``, the
+    variable that existed before #1798 split the seams. The ``daily`` seam's
+    own variable and the routing between the two are covered in
+    ``test_market_data_seams.py``."""
+
     def test_default_is_yfinance(self, monkeypatch):
         monkeypatch.delenv("MARKET_DATA_PROVIDER", raising=False)
-        assert provider_name() == "yfinance"
+        assert provider_name("intraday") == "yfinance"
 
     def test_explicit_yfinance(self, monkeypatch):
         monkeypatch.setenv("MARKET_DATA_PROVIDER", "yfinance")
-        assert provider_name() == "yfinance"
+        assert provider_name("intraday") == "yfinance"
 
     def test_unknown_value_falls_back_to_yfinance(self, monkeypatch, caplog):
         import logging
 
         monkeypatch.setenv("MARKET_DATA_PROVIDER", "some_unreleased_vendor")
         with caplog.at_level(logging.WARNING):
-            assert provider_name() == "yfinance"
+            assert provider_name("intraday") == "yfinance"
         assert any("some_unreleased_vendor" in rec.message for rec in caplog.records)
 
     def test_case_and_whitespace_insensitive(self, monkeypatch):
         monkeypatch.setenv("MARKET_DATA_PROVIDER", "  YFinance  ")
-        assert provider_name() == "yfinance"
+        assert provider_name("intraday") == "yfinance"
 
     def test_get_provider_wraps_vendor_in_caching_provider(self):
-        assert isinstance(get_provider(), CachingMarketDataProvider)
+        # Nesting since #1798: SeamRoutedProvider → CachingMarketDataProvider
+        # → vendor. The cache layer is still there, one level in.
+        provider = get_provider(seam="intraday")
+        assert isinstance(provider._inner, CachingMarketDataProvider)
         # The inner vendor is the default (yfinance) implementation.
-        assert isinstance(get_provider()._inner, YFinanceProvider)
+        assert isinstance(provider._inner._inner, YFinanceProvider)
 
 
 # ─── Cache read-through / miss ──────────────────────────────────────────
@@ -87,7 +95,7 @@ class _FakeVendor(MarketDataProvider):
     def get_intraday_quote(self, ticker: str) -> tuple[float, datetime] | None:
         raise AssertionError("get_intraday_quote must never be called by the caching wrapper's own logic")
 
-    def get_intraday_quotes_batch(self, tickers: dict[str, str]) -> dict[str, float]:
+    def get_intraday_quotes_batch(self, tickers: dict[str, str]) -> dict[str, tuple[float, datetime]]:
         raise AssertionError("get_intraday_quotes_batch must never be called by the caching wrapper's own logic")
 
     def get_series(self, ticker: str, period: str, interval: str) -> pd.Series:
@@ -131,7 +139,7 @@ class _FakeOhlcvVendor(MarketDataProvider):
     def get_intraday_quote(self, ticker: str) -> tuple[float, datetime] | None:
         raise AssertionError("not exercised in TestDailyOhlcvCache")
 
-    def get_intraday_quotes_batch(self, tickers: dict[str, str]) -> dict[str, float]:
+    def get_intraday_quotes_batch(self, tickers: dict[str, str]) -> dict[str, tuple[float, datetime]]:
         raise AssertionError("not exercised in TestDailyOhlcvCache")
 
     def get_series(self, ticker: str, period: str, interval: str) -> pd.Series:
@@ -254,7 +262,7 @@ class TestUncachedPassthrough:
     def test_intraday_quotes_batch_never_touches_the_cache(self, session_factory):
         vendor = _FakeVendorPassthroughSpy()
         provider = CachingMarketDataProvider(vendor, source_name="yfinance", session_factory=session_factory)
-        assert provider.get_intraday_quotes_batch({"sSPY": "SPY"}) == {"sSPY": 123.0}
+        assert provider.get_intraday_quotes_batch({"sSPY": "SPY"}) == {"sSPY": (123.0, vendor.ts)}
         assert vendor.batch_calls == [{"sSPY": "SPY"}]
 
     def test_get_series_never_touches_the_cache(self, session_factory):
@@ -279,9 +287,9 @@ class _FakeVendorPassthroughSpy(MarketDataProvider):
         self.quote_calls.append(ticker)
         return (123.0, self.ts)
 
-    def get_intraday_quotes_batch(self, tickers: dict[str, str]) -> dict[str, float]:
+    def get_intraday_quotes_batch(self, tickers: dict[str, str]) -> dict[str, tuple[float, datetime]]:
         self.batch_calls.append(dict(tickers))
-        return dict.fromkeys(tickers, 123.0)
+        return dict.fromkeys(tickers, (123.0, self.ts))
 
     def get_series(self, ticker: str, period: str, interval: str) -> pd.Series:
         self.series_calls.append((ticker, period, interval))
@@ -441,6 +449,81 @@ class TestDailyOhlcvCache:
         finally:
             session.close()
 
+    def test_cross_vendor_close_write_clears_the_old_vendors_ohlv(self, session_factory):
+        """A close-only write by a DIFFERENT vendor must not leave the previous
+        vendor's open/high/low/volume in place under the new vendor's
+        ``source`` label (#1798).
+
+        ``asset_daily_bars`` is unique on ``(symbol, trade_date)``, so the
+        close-only writer lands ON the warm row rather than beside it. Assigning
+        just ``close`` + ``source`` there produces a bar whose Close is one
+        vendor's and whose OHLV is another's — and ``_read_cached_ohlcv``'s
+        ``source`` filter cannot catch it, because the row now claims to BE the
+        vendor being asked for. Clearing OHLV makes it the partial bar it
+        actually is, which the existing partial-bar guard treats as a miss."""
+        from archimedes.models.asset_daily_bars import AssetDailyBar
+        from archimedes.services.market_data_provider import _write_cached_ohlcv, _write_cached_series
+
+        frame = _ohlcv_frame(30)
+        session = session_factory()
+        try:
+            _write_cached_ohlcv(session, "SPY", frame, "yfinance")
+            session.commit()
+        finally:
+            session.close()
+
+        other_closes = pd.Series(frame["Close"].to_numpy() + 500.0, index=frame.index, name="SPY")
+        session = session_factory()
+        try:
+            _write_cached_series(session, "SPY", other_closes, "tiingo")
+            session.commit()
+        finally:
+            session.close()
+
+        session = session_factory()
+        try:
+            rows = session.query(AssetDailyBar).filter(AssetDailyBar.symbol == "SPY").all()
+        finally:
+            session.close()
+
+        assert len(rows) == 30  # updated in place, not duplicated (unique constraint)
+        for row in rows:
+            assert row.source == "tiingo"
+            assert row.close in set(other_closes.to_numpy())
+            assert (row.open, row.high, row.low, row.volume) == (None, None, None, None)
+
+        # And the consequence that matters: the OHLCV read is now a MISS, so
+        # the new vendor is asked for the full bars instead of the blend.
+        tiingo_frame = _ohlcv_frame(30, start_price=600.0)
+        vendor = _FakeOhlcvVendor({"SPY": tiingo_frame})
+        provider = CachingMarketDataProvider(vendor, source_name="tiingo", session_factory=session_factory)
+        start = frame.index[0].date().isoformat()
+        end = frame.index[-1].date().isoformat()
+
+        result = provider.get_daily_ohlcv("SPY", start, end)
+
+        assert vendor.ohlcv_calls == [("SPY", start, end)]
+        assert result["Open"].tolist() == tiingo_frame["Open"].tolist()
+
+    def test_same_vendor_close_write_leaves_the_bar_intact(self, session_factory):
+        """Anti-vacuity for the guard above: the clearing is scoped to a vendor
+        CHANGE. The routine same-vendor close refresh must NOT evict OHLV, or
+        every universe sweep would cold-start the OHLCV cache."""
+        from archimedes.models.asset_daily_bars import AssetDailyBar
+        from archimedes.services.market_data_provider import _write_cached_ohlcv, _write_cached_series
+
+        frame = _ohlcv_frame(30)
+        session = session_factory()
+        try:
+            _write_cached_ohlcv(session, "SPY", frame, "yfinance")
+            _write_cached_series(session, "SPY", frame["Close"], "yfinance")
+            session.commit()
+            rows = session.query(AssetDailyBar).filter(AssetDailyBar.symbol == "SPY").all()
+            assert len(rows) == 30
+            assert all(r.open is not None and r.volume is not None for r in rows)
+        finally:
+            session.close()
+
     def test_vendor_error_propagates_uncaught(self, session_factory):
         """get_daily_ohlcv's contract is to RAISE on a genuinely unfetchable
         symbol (matching fetch_ohlcv's contract) — the caching wrapper must
@@ -549,3 +632,405 @@ class TestConcurrentPrimeRace:
         finally:
             check.close()
         assert len(rows) == len(series)  # winner's rows stand; no duplicates
+
+
+# ─── The widened batch-quote contract (intraday design §2 item 0) ──────
+#
+# ``get_intraday_quotes_batch`` used to return ``dict[str, float]``. Two
+# consumers cannot be honest on a bare float: the on-chain push staleness gate
+# (``oracle_updater._validate_for_push``, which reads ``AssetPrice.timestamp``)
+# and the paper-marks loop (which stores the upstream observation time and
+# refuses to write a row from a stale bar). The signature is now
+# ``dict[str, tuple[float, datetime]]`` — the same shape the single-ticker
+# sibling has always returned.
+
+
+class _FakeYFModule:
+    """Stand-in for the ``yfinance`` module: ``download`` returns a caller-
+    supplied frame. Installed via ``patch.dict(sys.modules, ...)`` so the
+    provider's own lazy ``import yfinance as yf`` picks it up — no network."""
+
+    def __init__(self, frame: pd.DataFrame) -> None:
+        self.frame = frame
+        self.calls: list[str] = []
+
+    def download(self, tickers, **kwargs):
+        self.calls.append(tickers)
+        return self.frame
+
+
+def _intraday_index(n: int, *, end: str = "2026-08-30 20:00", tz: str | None = "UTC") -> pd.DatetimeIndex:
+    return pd.date_range(end=pd.Timestamp(end, tz=tz), periods=n, freq="15min")
+
+
+def _multi_close_frame(cols: dict[str, list[float]], index: pd.DatetimeIndex) -> pd.DataFrame:
+    """A multi-ticker yfinance frame: ``data["Close"]`` is a DataFrame whose
+    columns are vendor tickers (the shape ``yf.download`` returns for >1
+    ticker)."""
+    return pd.DataFrame({("Close", t): v for t, v in cols.items()}, index=index)
+
+
+class TestIntradayBatchCarriesBarTimestamps:
+    def test_batch_returns_price_and_utc_bar_timestamp_per_key(self):
+        import sys
+
+        idx = _intraday_index(3)
+        frame = _multi_close_frame({"SPY": [510.0, 511.0, 512.5], "QQQ": [430.0, 431.0, 432.5]}, idx)
+        fake = _FakeYFModule(frame)
+        provider = YFinanceProvider()
+
+        with patch.dict(sys.modules, {"yfinance": fake}):
+            out = provider.get_intraday_quotes_batch({"sSPY": "SPY", "sQQQ": "QQQ"})
+
+        assert set(out) == {"sSPY", "sQQQ"}
+        for key, expected_price in (("sSPY", 512.5), ("sQQQ", 432.5)):
+            price, bar_ts = out[key]
+            assert price == pytest.approx(expected_price)
+            assert isinstance(bar_ts, datetime)
+            assert bar_ts.tzinfo is not None, "a bar timestamp with no tz is unusable to a staleness gate"
+            assert bar_ts == idx[-1].to_pydatetime()
+
+    def test_a_frozen_leg_keeps_its_own_older_bar_time_not_the_live_legs(self):
+        """THE adversarial case for this widening, and the reason the bar time
+        is read per symbol rather than once off the frame index.
+
+        A mixed universe outside US market hours: the crypto leg keeps
+        printing 15-minute bars while the equity leg's column is NaN across
+        the tail. Both legs live in ONE frame, so ``data.index[-1]`` is the
+        CRYPTO leg's time. Stamping that on the equity price is precisely
+        "a stale price wearing a fresh timestamp" — the defect §2.4 rule 1
+        exists to prevent, and it would sail past every staleness gate
+        downstream.
+
+        Demonstrated to reject: reverting the per-symbol
+        ``close.dropna().index[-1]`` to the frame-level ``data.index[-1]``
+        makes this test fail (both legs report the crypto bar time) while
+        every other test in this class still passes.
+        """
+        import sys
+
+        idx = _intraday_index(4)
+        frame = _multi_close_frame(
+            {
+                "SPY": [510.0, 512.5, float("nan"), float("nan")],  # session closed two bars ago
+                "BTC-USD": [61000.0, 61100.0, 61200.0, 61250.0],  # 24/7, still printing
+            },
+            idx,
+        )
+        fake = _FakeYFModule(frame)
+        provider = YFinanceProvider()
+
+        with patch.dict(sys.modules, {"yfinance": fake}):
+            out = provider.get_intraday_quotes_batch({"sSPY": "SPY", "sBTC": "BTC-USD"})
+
+        spy_price, spy_ts = out["sSPY"]
+        btc_price, btc_ts = out["sBTC"]
+        assert spy_price == pytest.approx(512.5)  # the last REAL equity print
+        assert btc_price == pytest.approx(61250.0)
+        assert btc_ts == idx[-1].to_pydatetime()
+        assert spy_ts == idx[-3].to_pydatetime()
+        assert spy_ts < btc_ts, "the frozen leg must not inherit the live leg's bar time"
+
+    def test_single_ticker_path_also_carries_its_bar_time(self):
+        import sys
+
+        idx = _intraday_index(3)
+        frame = pd.DataFrame({"Close": [510.0, 511.0, 512.5]}, index=idx)
+        fake = _FakeYFModule(frame)
+        provider = YFinanceProvider()
+
+        with patch.dict(sys.modules, {"yfinance": fake}):
+            out = provider.get_intraday_quotes_batch({"sSPY": "SPY"})
+
+        assert out["sSPY"][0] == pytest.approx(512.5)
+        assert out["sSPY"][1] == idx[-1].to_pydatetime()
+
+    def test_a_naive_bar_index_is_localized_to_utc_not_left_naive(self):
+        import sys
+
+        idx = _intraday_index(3, tz=None)
+        frame = pd.DataFrame({"Close": [1.0, 2.0, 3.0]}, index=idx)
+        provider = YFinanceProvider()
+
+        with patch.dict(sys.modules, {"yfinance": _FakeYFModule(frame)}):
+            _price, bar_ts = provider.get_intraday_quotes_batch({"sX": "X"})["sX"]
+
+        assert bar_ts.tzinfo is not None
+        assert bar_ts == idx[-1].tz_localize("UTC").to_pydatetime()
+
+    def test_an_all_nan_column_is_omitted_rather_than_reported_with_a_wrong_time(self):
+        """A symbol the vendor returned nothing usable for is ABSENT from the
+        result (the long-standing contract), never present with a fabricated
+        price or a borrowed timestamp."""
+        import sys
+
+        idx = _intraday_index(3)
+        frame = _multi_close_frame(
+            {"SPY": [510.0, 511.0, 512.5], "DEAD": [float("nan")] * 3},
+            idx,
+        )
+        provider = YFinanceProvider()
+
+        with patch.dict(sys.modules, {"yfinance": _FakeYFModule(frame)}):
+            out = provider.get_intraday_quotes_batch({"sSPY": "SPY", "sDEAD": "DEAD"})
+
+        assert set(out) == {"sSPY"}
+
+
+class TestIntradayDelayedDeclaration:
+    def test_yfinance_declares_its_intraday_feed_delayed(self, monkeypatch):
+        from archimedes.services.market_data_provider import intraday_is_delayed
+
+        monkeypatch.setenv("MARKET_DATA_PROVIDER", "yfinance")
+        assert intraday_is_delayed() is True
+
+    def test_an_undeclared_provider_fails_toward_delayed(self, monkeypatch):
+        """Fail-honest: an unknown vendor is assumed DELAYED. Claiming
+        real-time for a feed nobody verified is the dishonest direction."""
+        from archimedes.services import market_data_provider as mdp
+
+        monkeypatch.setattr(mdp, "provider_name", lambda _seam: "some-unlisted-vendor")
+        assert mdp.intraday_is_delayed() is True
+
+
+# ─── #1632: the OHLCV cache-write mitigation ───────────────────────────
+
+
+class TestOhlcvWriteChunking:
+    """The OHLCV cache write must not hand psycopg2 one unbounded batch.
+
+    What is PROVEN: the faulthandler traceback on #1632 shows a container
+    dying with ``Fatal Python error: Aborted`` inside psycopg2's
+    ``do_executemany``, on this exact commit, reached from the paper replay.
+    What is NOT proven is the mechanism — see ``_OHLCV_CACHE_WRITE_LOCK``'s
+    comment. These tests pin the mitigation's OBSERVABLE properties (batch
+    size is bounded, the transaction is still all-or-nothing, failures fall
+    through unchanged), which are true regardless of which hypothesis holds.
+    """
+
+    def test_writes_are_flushed_in_bounded_batches(self, session_factory, monkeypatch):
+        """With the bound set to 10 and 25 rows to write, the writer must
+        flush twice mid-loop (at 10 and 20) and leave the final partial batch
+        of 5 to the caller's commit.
+
+        MUTATION CHECK: with the chunking removed, ``flush`` is called zero
+        times mid-loop and this fails on ``len(batch_sizes) == 2``.
+        """
+        from archimedes.services import market_data_provider as mdp
+
+        monkeypatch.setattr(mdp, "_OHLCV_WRITE_CHUNK_ROWS", 10)
+
+        frame = _ohlcv_frame(25)
+        vendor = _FakeOhlcvVendor({"SPY": frame})
+
+        batch_sizes: list[int] = []
+
+        def spying_factory():
+            session = session_factory()
+            real_flush = session.flush
+
+            def flush_with_spy(*args, **kwargs):
+                # Size of the batch about to become one executemany. SQLAlchemy
+                # also autoflushes on every query (including the writer's own
+                # `existing` lookup), and those carry no pending work — count
+                # only flushes that actually have rows to send.
+                size = len(session.new) + len(session.dirty)
+                if size:
+                    batch_sizes.append(size)
+                return real_flush(*args, **kwargs)
+
+            session.flush = flush_with_spy
+            return session
+
+        provider = CachingMarketDataProvider(vendor, source_name="yfinance", session_factory=spying_factory)
+        start = frame.index[0].date().isoformat()
+        end = frame.index[-1].date().isoformat()
+
+        result = provider.get_daily_ohlcv("SPY", start, end)
+
+        # Two mid-loop chunks of 10, then commit flushes the remaining 5.
+        assert batch_sizes == [10, 10, 5], f"expected batches of 10/10/5 at a bound of 10, saw {batch_sizes}"
+        # THE load-bearing assertion, and the mutation-sensitive one: no single
+        # batch may exceed the bound. Remove the chunking and this reads [25].
+        assert all(size <= 10 for size in batch_sizes), f"a batch exceeded the bound: {batch_sizes}"
+        # The data still lands in full — chunking changes batch size, not content.
+        from archimedes.models.asset_daily_bars import AssetDailyBar
+
+        session = session_factory()
+        try:
+            assert session.query(AssetDailyBar).filter(AssetDailyBar.symbol == "SPY").count() == 25
+        finally:
+            session.close()
+        # Anti-goal: the returned frame is still the vendor's, untouched.
+        pd.testing.assert_frame_equal(result, frame)
+
+    def test_a_frame_under_the_bound_needs_no_mid_loop_flush(self, session_factory, monkeypatch):
+        """No behaviour change for the common case — the overwhelming majority
+        of frames are one batch, exactly as before."""
+        from archimedes.services import market_data_provider as mdp
+
+        monkeypatch.setattr(mdp, "_OHLCV_WRITE_CHUNK_ROWS", 500)
+
+        frame = _ohlcv_frame(30)
+        vendor = _FakeOhlcvVendor({"SPY": frame})
+        flushes: list[int] = []
+
+        def spying_factory():
+            session = session_factory()
+            real_flush = session.flush
+
+            def flush_with_spy(*args, **kwargs):
+                # Same autoflush filter as the test above.
+                size = len(session.new) + len(session.dirty)
+                if size:
+                    flushes.append(size)
+                return real_flush(*args, **kwargs)
+
+            session.flush = flush_with_spy
+            return session
+
+        provider = CachingMarketDataProvider(vendor, source_name="yfinance", session_factory=spying_factory)
+        provider.get_daily_ohlcv("SPY", frame.index[0].date().isoformat(), frame.index[-1].date().isoformat())
+
+        # Exactly one batch, carrying every row — i.e. commit's own flush and
+        # nothing else. Byte-for-byte the pre-#1632 write shape.
+        assert flushes == [30], f"a 30-row frame under a 500-row bound must be one batch, saw {flushes}"
+
+
+class TestOhlcvWriteSerializationGuard:
+    """The module-level lock around write+commit (#1632 mitigation).
+
+    Honest framing, repeated here because a test name can be read as a claim:
+    this lock is NOT known to fix the abort. It removes in-process write
+    concurrency as a variable. These tests assert only that it is actually
+    held over the write path and — the part that matters more — that it can
+    never be left held.
+    """
+
+    def test_the_lock_is_held_across_the_write_and_commit(self, session_factory):
+        """MUTATION CHECK: delete the ``with`` statement and ``locked()`` reads
+        False here."""
+        from archimedes.services import market_data_provider as mdp
+
+        frame = _ohlcv_frame(5)
+        vendor = _FakeOhlcvVendor({"SPY": frame})
+        observed: list[bool] = []
+
+        real_write = mdp._write_cached_ohlcv
+
+        def write_observing_lock(session, ticker, df, source):
+            observed.append(mdp._OHLCV_CACHE_WRITE_LOCK.locked())
+            return real_write(session, ticker, df, source)
+
+        with patch.object(mdp, "_write_cached_ohlcv", write_observing_lock):
+            provider = CachingMarketDataProvider(vendor, source_name="yfinance", session_factory=session_factory)
+            provider.get_daily_ohlcv("SPY", frame.index[0].date().isoformat(), frame.index[-1].date().isoformat())
+
+        assert observed == [True], "the cache write did not run under the serialization lock"
+
+    def test_the_lock_is_released_after_a_failed_write(self, session_factory):
+        """The one way this mitigation could be WORSE than the bug.
+
+        A lock left held by an error path would wedge every subsequent OHLCV
+        fetch in the process — a deadlocked fleet instead of a cycling one. So:
+        force the write to fail, then prove the lock is free and the next call
+        still works.
+        """
+        from archimedes.services import market_data_provider as mdp
+        from sqlalchemy.exc import SQLAlchemyError
+
+        frame = _ohlcv_frame(5)
+        vendor = _FakeOhlcvVendor({"SPY": frame})
+        provider = CachingMarketDataProvider(vendor, source_name="yfinance", session_factory=session_factory)
+        start = frame.index[0].date().isoformat()
+        end = frame.index[-1].date().isoformat()
+
+        def boom(session, ticker, df, source):
+            raise SQLAlchemyError("simulated cache-write failure")
+
+        with patch.object(mdp, "_write_cached_ohlcv", boom):
+            result = provider.get_daily_ohlcv("SPY", start, end)
+
+        assert not mdp._OHLCV_CACHE_WRITE_LOCK.locked(), "the lock was left held after a failed write"
+        # The fetch still succeeded and was served — unchanged fail-soft contract.
+        pd.testing.assert_frame_equal(result, frame)
+        # And the path is not wedged: a second call goes straight through.
+        vendor.ohlcv_calls.clear()
+        again = provider.get_daily_ohlcv("SPY", start, end)
+        pd.testing.assert_frame_equal(again, frame)
+
+
+class TestOhlcvWriteFailureFallthroughUnchanged:
+    """Anti-goal enforcement: the mitigation must not change which exceptions
+    are caught, nor which are allowed to propagate."""
+
+    def test_an_integrity_error_mid_chunk_still_serves_the_fetch(self, session_factory, monkeypatch):
+        """A chunked flush can now raise where only ``commit`` used to. It must
+        land in the SAME ``except IntegrityError`` arm, roll back, and serve
+        the fetched frame."""
+        from archimedes.models.asset_daily_bars import AssetDailyBar
+        from archimedes.services import market_data_provider as mdp
+        from sqlalchemy.exc import IntegrityError
+
+        monkeypatch.setattr(mdp, "_OHLCV_WRITE_CHUNK_ROWS", 10)
+
+        frame = _ohlcv_frame(25)
+        vendor = _FakeOhlcvVendor({"SPY": frame})
+        rolled_back: list[int] = []
+
+        def failing_factory():
+            session = session_factory()
+            real_flush = session.flush
+            real_rollback = session.rollback
+
+            def flush_that_fails(*args, **kwargs):
+                # Fail only on a REAL chunk flush — one carrying pending rows.
+                # SQLAlchemy autoflushes on every query, including the cache
+                # READ that happens before (and outside) the guarded write; a
+                # stub that failed there would be testing the wrong seam.
+                if len(session.new) + len(session.dirty):
+                    raise IntegrityError("INSERT ...", {}, Exception("uq_asset_daily_bars_symbol_trade_date"))
+                return real_flush(*args, **kwargs)
+
+            def rollback_spy(*args, **kwargs):
+                rolled_back.append(1)
+                return real_rollback(*args, **kwargs)
+
+            session.flush = flush_that_fails
+            session.rollback = rollback_spy
+            return session
+
+        provider = CachingMarketDataProvider(vendor, source_name="yfinance", session_factory=failing_factory)
+        result = provider.get_daily_ohlcv("SPY", frame.index[0].date().isoformat(), frame.index[-1].date().isoformat())
+
+        pd.testing.assert_frame_equal(result, frame)  # fetch still served
+        assert rolled_back, "the mid-chunk IntegrityError did not reach the rollback arm"
+        # All-or-nothing preserved: no partially-cached window was committed.
+        session = session_factory()
+        try:
+            assert session.query(AssetDailyBar).filter(AssetDailyBar.symbol == "SPY").count() == 0
+        finally:
+            session.close()
+
+    def test_a_non_sqlalchemy_error_still_propagates(self, session_factory):
+        """ANTI-GOAL: 'do not swallow new exception classes silently.'
+
+        The lock is a ``with``, not an ``except``. A ``RuntimeError`` from the
+        write path escaped before this change and must still escape — if the
+        mitigation had widened the arms to ``except Exception``, this test is
+        what catches it.
+        """
+        from archimedes.services import market_data_provider as mdp
+
+        frame = _ohlcv_frame(5)
+        vendor = _FakeOhlcvVendor({"SPY": frame})
+        provider = CachingMarketDataProvider(vendor, source_name="yfinance", session_factory=session_factory)
+
+        def boom(session, ticker, df, source):
+            raise RuntimeError("not a DB error — must not be caught here")
+
+        with patch.object(mdp, "_write_cached_ohlcv", boom), pytest.raises(RuntimeError):
+            provider.get_daily_ohlcv("SPY", frame.index[0].date().isoformat(), frame.index[-1].date().isoformat())
+
+        # ...and even on the propagating path the lock is not left held.
+        assert not mdp._OHLCV_CACHE_WRITE_LOCK.locked()

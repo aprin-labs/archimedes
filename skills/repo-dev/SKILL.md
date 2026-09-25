@@ -57,7 +57,7 @@ useful when you don't have the docker-compose stack up.
 ### Hermetic-test discipline (codified 2026-05-27) — read before writing any new test
 
 "CI green ≠ local green" is itself treated as a bug here. The rules
-(`CLAUDE.md`:229-291, "Testing conventions"):
+(`docs/testing-conventions.md`, extracted from `CLAUDE.md` on 2026-08-31):
 
 - **No `.env` dependence, no live Redis/Postgres/Anthropic/Arc RPC.** A test
   that only passes with `.env` loaded, or only fails without it, is a real bug
@@ -189,7 +189,7 @@ contracts/           ← Solidity, Foundry layout
 ui/                  ← React 19 + Vite 8 + viem
 scripts/              ← operational scripts, incl. agent_journey.py (reference account-auth + generate client)
 cli/                  ← archimedes CLI — 0.0.1 stub, every subcommand exits NOT_IMPLEMENTED (see skills/verdict-api)
-docs/                 ← specs, ADRs, design docs; docs/README.md is its own map
+docs/                 ← specs, ADRs, design docs; docs/doc-index.md is its own map
 ```
 
 ## Verify (re-run these before trusting this document)

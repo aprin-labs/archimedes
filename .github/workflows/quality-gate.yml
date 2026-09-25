@@ -124,15 +124,26 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      - name: Install libpq headers (source-built psycopg2, #1632)
+        # requirements-base.txt asks for `psycopg2`, not `psycopg2-binary`, so pip
+        # COMPILES it here and needs `pg_config` + the libpq headers. The runner
+        # image ships libpq5 but not reliably the -dev package, and without it the
+        # install below fails with "pg_config executable not found". gcc is already
+        # on the runner. (The swap exists because the binary wheel vendors a second
+        # OpenSSL — see backend/requirements-base.txt.)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libpq-dev
+
       - name: Install
         # Unit tests never load the embedding model — paper_rag.py lazy-imports
         # torch/sentence-transformers and falls back to TF-IDF on ImportError, and
         # test_paper_rag.py mocks sentence_transformers. Skipping them here keeps the
         # required check off the pytorch wheel CDN (an SSL-flaky external dependency)
         # and cuts ~2.5GB + minutes off every run. They stay in the prod Docker image.
+        # requirements-base.txt IS that set: it is backend/requirements.txt minus
+        # the index URL and the two torch packages (issue #1522), so CI installs
+        # it directly instead of grepping the exclusions back out at runtime.
         run: |
-          grep -vE '^(--extra-index-url https://download\.pytorch\.org|torch[ >=<~!]|sentence-transformers[ >=<~!])' backend/requirements.txt > /tmp/req-ci.txt
-          pip install --quiet -r /tmp/req-ci.txt "pytest>=8.3" "pytest-asyncio>=0.24" "pytest-cov>=5.0" "fakeredis[lua]>=2.26.0"
+          pip install --quiet -r backend/requirements-base.txt "pytest>=8.3" "pytest-asyncio>=0.24" "pytest-cov>=5.0" "fakeredis[lua]>=2.26.0" "pathspec>=0.12"
       - name: Test
         run: pytest -m "not integration" --tb=short -q
       - name: CLI tests
@@ -142,6 +153,14 @@ jobs:
         run: |
           pip install --quiet -e ./cli
           python -m pytest cli/tests --tb=short -q
+      - name: MCP server tests
+        # archimedes-mcp is a second small distribution (mcp SDK + httpx, mocked at the
+        # same boundary, no network). Same reason as the CLI step above: its claims —
+        # notably "the credential never appears in any output" — must be CI-backed.
+        # Installed AFTER ./cli because it depends on it for the session-cache loader.
+        run: |
+          pip install --quiet -e ./cli -e ./mcp-server
+          python -m pytest mcp-server/tests --tb=short -q
 
   frontend-and-auth:
     name: Frontend + Better Auth
@@ -308,10 +327,14 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      # Same torch/sentence-transformers skip as the unit-test job above (CDN-independent).
+      # libpq headers for the source-built psycopg2 (#1632) — same reason as the
+      # unit-test job above: the binary wheel vendored a second OpenSSL, so pip
+      # now compiles psycopg2 and needs pg_config.
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libpq-dev
+      # Same torch/sentence-transformers skip as the unit-test job above
+      # (CDN-independent) — requirements-base.txt is exactly that set (#1522).
       - run: |
-          grep -vE '^(--extra-index-url https://download\.pytorch\.org|torch[ >=<~!]|sentence-transformers[ >=<~!])' backend/requirements.txt > /tmp/req-ci.txt
-          pip install --quiet -r /tmp/req-ci.txt "pytest>=8.3" "pytest-asyncio>=0.24" "pytest-cov>=5.0"
+          pip install --quiet -r backend/requirements-base.txt "pytest>=8.3" "pytest-asyncio>=0.24" "pytest-cov>=5.0" "pathspec>=0.12"
       - run: pytest -m "not integration" --cov=archimedes --cov-fail-under=60 --tb=short -q
 
   supply-chain:
@@ -355,9 +378,13 @@ jobs:
         run: |
           pip install --quiet pip-audit==2.10.1
           # Current Vyper already contains both fixes; advisory ranges falsely
-          # include 0.4.3. See backend/requirements.txt for full rationale.
+          # include 0.4.3. PYSEC-2026-3609 / PYSEC-2026-3654 (pymdown-extensions,
+          # also via titanoboa) are unreachable and the fix version is
+          # unsatisfiable against titanoboa's exact mkdocs-material pin. See
+          # backend/requirements-base.txt for full rationale on both pairs.
           pip-audit -r backend/requirements.txt --format json --progress-spinner=off \
             --ignore-vuln PYSEC-2023-142 --ignore-vuln PYSEC-2025-33 \
+            --ignore-vuln PYSEC-2026-3609 --ignore-vuln PYSEC-2026-3654 \
             > /tmp/pip_audit.json || true
           python3 - <<'EOF'
           import json, os

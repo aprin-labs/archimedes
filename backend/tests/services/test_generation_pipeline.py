@@ -20,6 +20,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from archimedes.agents.generation_pipeline import run_generation
 from archimedes.api.generate_schemas import GenerateBrief
+from archimedes.services.dsl_lookahead_audit import PASS as LOOK_AHEAD_PASS
+from archimedes.services.dsl_lookahead_audit import DslLookAheadAudit
 
 
 @pytest.fixture(autouse=True)
@@ -804,8 +806,14 @@ _DEBATE_SPEC = {
     "entry": {"gt": ["sma_50", 0]},
     "exit": {"lt": ["close", "sma_200"]},
     "position_sizing": {"type": "full_invested_when_in_market"},
-    "look_ahead_safe": True,
 }
+
+#: A real look-ahead audit in its clean state — see test_debate_engine.
+_CLEAN_LOOK_AHEAD = DslLookAheadAudit(
+    status=LOOK_AHEAD_PASS,
+    interpreter_verified=True,
+    broker_cheat_check=True,
+)
 
 
 def _make_fake_proposal(name: str, ids: list[str]) -> SimpleNamespace:
@@ -828,8 +836,13 @@ def _fake_eval_result(*, num_trials: int | None = None) -> SimpleNamespace:
         pbo_score=0.1,
         oos_sharpe=1.2,
         in_sample_sharpe=1.3,
-        look_ahead_clean=True,
-        look_ahead_label="clean",
+        # See test_debate_engine._fake_ev: mirrors a verdict that cleared the
+        # real structural look-ahead audit, with the fields read off an actual
+        # DslLookAheadAudit so the double cannot drift from the real vocabulary.
+        look_ahead_clean=_CLEAN_LOOK_AHEAD.passed,
+        look_ahead_status=_CLEAN_LOOK_AHEAD.status,
+        look_ahead_label=_CLEAN_LOOK_AHEAD.label,
+        look_ahead_reason=_CLEAN_LOOK_AHEAD.reason,
         num_trials=num_trials,
         passing=True,
         data_source="synthetic",
@@ -848,13 +861,30 @@ def _fake_eval_result(*, num_trials: int | None = None) -> SimpleNamespace:
     return SimpleNamespace(rigor=rigor, backtest=bt, success=True, admissible=False, error=None, spec={})
 
 
+def _fake_evidence_by_id(proposals):
+    """The `{arxiv_id: {"title", "published"}}` map `_propose_pool` returns
+    alongside the pool (#1636) — the debate's attribution whitelist.
+
+    A double for `_propose_pool` must stub its FULL surface, not just the half
+    the branch under test reads (CLAUDE.md § "a boundary mock must stub the
+    shared function's full surface"). Derived from what the fake proposals
+    cite, so it is a plausible surface rather than an empty dict that would
+    make every debate claim read as unattributed.
+    """
+    return {
+        arxiv_id: {"title": f"Fixture paper {arxiv_id}", "published": "2024-01-01"}
+        for prop in proposals
+        for arxiv_id in (getattr(prop, "source_arxiv_ids", None) or [])
+    }
+
+
 def _setup_debate_hermetic(monkeypatch, *, gp, de, sf, fe, fake_proposals, fake_corpus):
     """Apply the standard debate-path hermetic stubs.
 
     Monkeypatches:
     - gp._llm_available → True (live path)
     - de._debate_can_run → True (bypass flag + corpus size check)
-    - de._propose_pool → returns fake_proposals (no LLM call)
+    - de._propose_pool → returns (fake_proposals, evidence_by_id) (no LLM call)
     - sf.load_corpus → returns fake_corpus (no DB/disk read)
     - fe.evaluate_fusion_spec → returns _fake_eval_result (no backtest)
     - de._debate_round → no-op (best-effort transcript, never gates)
@@ -863,7 +893,7 @@ def _setup_debate_hermetic(monkeypatch, *, gp, de, sf, fe, fake_proposals, fake_
     monkeypatch.setattr(de, "_debate_can_run", lambda brief: True)
 
     async def _fake_pool(*a, **k):
-        return list(fake_proposals)
+        return list(fake_proposals), _fake_evidence_by_id(fake_proposals)
 
     monkeypatch.setattr(de, "_propose_pool", _fake_pool)
     monkeypatch.setattr(sf, "load_corpus", lambda *a, **k: list(fake_corpus))
@@ -1041,7 +1071,7 @@ async def test_run_generation_threads_user_model_to_debate_proposer_and_agent(tm
 
     async def _spy_pool(brief, model, corpus):
         proposer_calls.append(model)
-        return list(fake_proposals)
+        return list(fake_proposals), _fake_evidence_by_id(fake_proposals)
 
     monkeypatch.setattr(gp, "_llm_available", lambda: True)
     monkeypatch.setattr(de, "_debate_can_run", lambda brief: True)
@@ -1192,7 +1222,7 @@ async def test_debate_critic_rigor_num_trials_matches_society_formula(tmp_path, 
     monkeypatch.setattr(de, "_debate_can_run", lambda brief: True)
 
     async def _fake_pool(*a, **k):
-        return list(fake_proposals)
+        return list(fake_proposals), _fake_evidence_by_id(fake_proposals)
 
     monkeypatch.setattr(de, "_propose_pool", _fake_pool)
     monkeypatch.setattr(sf, "load_corpus", lambda *a, **k: list(fake_corpus))

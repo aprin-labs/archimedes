@@ -10,7 +10,9 @@ deliberately broken variant through the SAME assertion and shows it fails —
 so a future regression that silently drops the regime tilt or falls back to
 equal-weighting cannot pass this suite by accident. This mirrors the gap the
 2026-08-18 test audit found in `strategy_guardrail`'s tests (floor assertions
-that passed vacuously because every floor was 0.0) — every assertion here
+that passed vacuously because every floor was 0.0; that module and its tests
+have since been deleted as a zero-caller surface, so this is a record of the
+lesson, not a live pointer) — every assertion here
 compares against a concrete, nonzero, hand-computed expected value.
 """
 

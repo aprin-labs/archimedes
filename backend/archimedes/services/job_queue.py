@@ -22,6 +22,12 @@ logger = logging.getLogger(__name__)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 KEY_PREFIX = "archimedes:job:"
 EVENT_LOG_SUFFIX = ":events"
+# Cross-process cancellation flag (#1667). Redis is the ONLY surface every
+# task/worker shares, so a cancel request has to live here rather than in a
+# process-local dict — with MinCapacity=2 the POST lands on the task that
+# started the job barely half the time, and any offload lane has no in-process
+# task registry at all.
+CANCEL_SUFFIX = ":cancel"
 JOB_TTL = 3600  # 1 hour
 EVENT_LOG_TTL = 900  # 15 minutes after terminal state — spec 0.5 § Reconnection
 
@@ -162,6 +168,45 @@ class JobStore:
         await r.hset(key, "heartbeat_at", now)
         await r.expire(key, JOB_TTL)
         return True
+
+    # ── Cross-process cancellation (#1667) ────────────────────────────────
+
+    async def request_cancel(self, job_id: str) -> bool:
+        """Durably record a cancellation request. Returns True only if CONFIRMED.
+
+        The flag is a separate key (`archimedes:job:{id}:cancel`) rather than a
+        field on the job hash so it survives independently of the status write
+        and can be set on a job whose hash is being rewritten concurrently by
+        the running pipeline.
+
+        The write is read back before returning: a caller may only tell a user
+        "cancelled" once the request is provably visible to whichever task is
+        actually running the pipeline. An unconfirmed write returns False —
+        never "assume it landed" (`runner_lease.py`'s fail-closed discipline).
+        Redis errors propagate; the caller decides what to report.
+        """
+        r = await self._get_redis()
+        key = f"{KEY_PREFIX}{job_id}{CANCEL_SUFFIX}"
+        await r.set(key, datetime.now(UTC).isoformat(), ex=JOB_TTL)
+        confirmed = bool(await r.exists(key))
+        if confirmed:
+            logger.info("job: cancel requested for %s", sanitize_log_value(job_id))
+        else:
+            logger.error(
+                "job: cancel flag for %s did not survive read-back — NOT reporting cancelled",
+                sanitize_log_value(job_id),
+            )
+        return confirmed
+
+    async def is_cancel_requested(self, job_id: str) -> bool:
+        """True once a cancel has been durably requested for this job.
+
+        Polled by the pipeline at its stage boundaries, from whatever task
+        happens to be running it — that is the whole point: the request is
+        shared state, not a reference held by one process.
+        """
+        r = await self._get_redis()
+        return bool(await r.exists(f"{KEY_PREFIX}{job_id}{CANCEL_SUFFIX}"))
 
     async def update_terminal_status(
         self,

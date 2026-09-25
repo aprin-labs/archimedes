@@ -67,7 +67,7 @@ picks strategies that underperform the OOS median — the hallmark of fitting no
 At the single-strategy level, the **Deflated Sharpe Ratio** (`compute_dsr`) widens the
 Sharpe's standard error for non-normality and autocorrelation, and — **where a candidate
 pool exists** — additionally deflates by the expected best-of-`N`, so a Sharpe that only
-looks good because many variants were tried gets pushed below the `p ≥ 0.90` bar. On the
+looks good because many variants were tried gets pushed below the `p ≥ 0.95` bar. On the
 curated library `num_trials = 1`: no deflation, no multiple-testing correction.
 
 ### 3. The unrealistically smooth equity curve / no slippage
@@ -129,8 +129,9 @@ illusion.
 
 **What detects it.** `compute_average_pairwise_correlation(...)` computes the mean
 off-diagonal correlation across a set of return series, and it feeds the DSR's
-**effective-N** correction (`N_eff = N / (1 + (N−1)·ρ̄)`): if the "trials" are
-highly correlated, the deflation correctly counts them as *fewer independent tests*.
+correlated-trials correction, which scales the expected best-of-N null Sharpe by
+`√(1−ρ̄)` (#1559): if the "trials" are highly correlated, the deflation correctly
+prices them as fewer distinct chances to get lucky.
 On the construction side, `correlation_pairs(...)` lists the top correlation pairs,
 and the Ledoit–Wolf shrinkage (`ledoit_wolf_shrinkage(...)`) keeps a
 near-singular correlation matrix from blowing up the optimizer.
@@ -161,8 +162,12 @@ of red-flag #2.
 **What supports it.** A low PBO from `compute_pbo(...)` is the formal version: if the
 strategy keeps winning across `C(16,8)` different IS/OOS partitions, it is not
 sensitive to which slice of history it was tuned on. A high DSR p-value
-(`compute_dsr → dsr_p_value ≥ 0.95`) confirms the Sharpe survives multiple-testing
-deflation.
+(`compute_dsr → dsr_p_value ≥ 0.95` at the strictest level) confirms the Sharpe survives
+multiple-testing deflation. **Corrected 2026-09-03 (#1794):** this doc's two DSR thresholds
+disagreed with each other, and then with the code, twice. The bar is now defined once, as
+`DSR_P_BADGE_MIN` in
+[`rigor_profiles.py`](../../backend/archimedes/services/rigor_profiles.py), and the
+level-1 profile row is that constant.
 
 ### 3. Realistic transaction costs
 
@@ -217,7 +222,7 @@ When you open a strategy passport, scan in this order:
 1. **`gate_details`** — are all four gates `PASS`? Any `FAIL` tells you *which*
    failure mode tripped; any `MISSING` tells you a check could not be computed
    (usually too little data, or CPCV without a combinatorial matrix).
-2. **DSR p-value** — is it `≥ 0.90`? If not, the excess Sharpe is not positive at 90%
+2. **DSR p-value** — is it `≥ 0.95`? If not, the excess Sharpe is not positive at 95%
    one-sided confidence under robust standard errors; treat the headline Sharpe as
    unproven. Note what this does *not* say on the curated path: `num_trials = 1` there,
    so no multiple-testing deflation was applied.

@@ -1,0 +1,306 @@
+# Terraform drift gate — does `infra/` still describe production? (issue #1799)
+#
+# `infra-gate.yml` runs `fmt -check` + `validate`. Those catch a file that does
+# not parse; they cannot catch a file that parses perfectly and describes an
+# account that moved on. #1799 is exactly the second shape: terraform's state
+# held task-definition revision 213 while the deploy pipeline had walked the
+# live family to 233, and nothing in CI could see it. It surfaced when a human
+# happened to run a plan for an unrelated WAF change and had to `-target` his
+# way around it.
+#
+# ── THIS DELIBERATELY CROSSES infra-gate.yml's ANTI-GOAL. READ BOTH. ────────
+# infra-gate.yml is boxed with "WHY fmt + validate AND NOT plan": a plan needs
+# AWS credentials and reads a state file that holds `tls_private_key.deploy`'s
+# private key, and paying that price to catch syntax errors is a bad trade.
+# That reasoning is still correct — and it is a statement about what SYNTAX
+# CHECKING is worth, not about what DRIFT DETECTION is worth. Drift cannot be
+# detected without a plan; there is no cheaper instrument. So the two live in
+# separate files with separate credentials:
+#
+#   infra-gate.yml     no credentials, no state, no network. Blocking-grade
+#                      cheap. Runs on every infra PR. UNCHANGED by #1799.
+#   this workflow      assumes a SEPARATE read-only role, plans, and reports.
+#                      Off by default (see TF_DRIFT_ENABLED below).
+#
+# The exposure is bounded on purpose:
+#   * A dedicated role (`archimedes-github-plan`) that can only read. It is NOT
+#     `archimedes-github-deploy` — see "AWS AUTH" below for why reusing that
+#     one would have been a security regression, not a shortcut.
+#   * `-lock=false`, so the role needs no write on the state bucket at all.
+#   * The uploaded artifact is the HUMAN-READABLE plan, never the `-out`
+#     planfile. A binary planfile carries the full prior state — including
+#     every value the text rendering prints as `(sensitive value)`. Uploading
+#     one would hand the private key to anyone with repo read access. The
+#     JSON rendering has the same problem and is deleted in the same step it
+#     is consumed.
+#
+# ── AWS AUTH ────────────────────────────────────────────────────────────────
+# `archimedes-github-deploy` (infra/scripts/setup-github-oidc.sh) cannot be
+# used here, for two independent reasons, and neither is fixable by adding a
+# policy statement:
+#
+#   1. TRUST. Its trust policy pins `:ref:refs/heads/main`. A `pull_request`
+#      run mints `...:pull_request` as the OIDC subject, which that policy
+#      cannot match. Widening it to accept pull requests would let any PR
+#      branch assume a role that can push to ECR and `ssm:SendCommand` into
+#      production. That is a bigger hole than the one #1799 describes.
+#   2. PERMISSIONS. Its inline policy grants ECR push, SSM SendCommand,
+#      `ec2:DescribeInstances`, and the docs-site S3/CloudFront pair. A plan of
+#      this root refreshes ~25 services and reads
+#      s3://archimedes-tfstate-037613907429. It has none of that.
+#
+# So a second, read-only role exists: `infra/scripts/setup-github-plan-role.sh`
+# (dry-run by default, same shape and same subject-resolution logic as
+# setup-github-oidc.sh). Neither the role nor this workflow can write anything.
+#
+# ── WHAT THE OPERATOR MUST SET (nothing here is hardcoded) ──────────────────
+#   vars.TF_DRIFT_ENABLED   "true" to arm this workflow. Until it is set, every
+#                           job below is skipped — same self-activating
+#                           convention as deploy.yml's DEPLOY_ENABLED, and the
+#                           reason this PR can merge before the role exists.
+#   vars.TF_PLAN_ROLE_ARN   arn:aws:iam::037613907429:role/archimedes-github-plan
+#                           A role ARN is not a secret (setup-github-oidc.sh
+#                           says so in its own epilogue) — a repo VARIABLE.
+#   secrets.TF_VAR_ALARM_EMAIL
+#                           The address subscribed to the CloudWatch alarm SNS
+#                           topic. MEASURED, not guessed: with this unset,
+#                           `aws_sns_topic_subscription.alerts_email[0]` plans
+#                           as a DESTROY (cloudwatch.tf gates it on
+#                           `var.alarm_email == ""`) and the gate reports a
+#                           deletion that is not real. A secret rather than a
+#                           variable because it is a personal address.
+#
+# NOT needed, and this is a consequence of #1799 worth knowing: the other four
+# operational variables in infra/terraform.tfvars.example
+# (google_oauth_enabled, github_oauth_enabled, platform_admin_wallets,
+# archimedes_treasury_wallet) are read ONLY inside the backend task
+# definition's `container_definitions`, which infra/ecs.tf now ignores. Left at
+# their variables.tf defaults they produce no diff. Verified 2026-09-03 by
+# planning with all four at their defaults and diffing the result against a
+# plan carrying the real production values: identical, to the resource.
+#
+# `aurora_master_password` is read from SSM by the job itself, exactly as
+# infra/README.md documents for a human operator, so no database password is
+# ever stored in GitHub. It has no bearing on `aws_rds_cluster.main` (that
+# resource ignores `master_password`), but the `database_url` output
+# interpolates it, and a wrong value there is an output diff — i.e. a false
+# drift report.
+#
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │ DO NOT MARK THIS A REQUIRED STATUS CHECK.                               │
+# │                                                                         │
+# │ Same trap boxed in infra-gate.yml and docs-gate.yml: this workflow is   │
+# │ path-filtered, and a required path-filtered check is "pending" forever  │
+# │ on every PR that misses the filter. On top of that, THIS one can go red │
+# │ for a reason no PR author caused — production drifting while they were  │
+# │ writing a docs change — which is precisely the signal it exists to      │
+# │ produce and precisely the wrong thing to block a merge on.              │
+# │                                                                         │
+# │ And the mirror image, which is just as important to know before arming: │
+# │ a PR that DELIBERATELY changes infra/** plans its own new resources as  │
+# │ `create`, and the classifier fails on every planned change except one   │
+# │ exemption. On the pull_request arm this gate would therefore be red BY  │
+# │ CONSTRUCTION on exactly the PRs that are doing the right thing. That is │
+# │ why the classify step is `continue-on-error` on that arm only (see the  │
+# │ comment on the step). Consequence to internalise: on a PR, a green tick │
+# │ does NOT mean "no infra change here" — read plan.txt.                   │
+# └─────────────────────────────────────────────────────────────────────────┘
+
+name: terraform-drift
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform-drift.yml"
+      - ".github/scripts/tf_drift_gate.py"
+  push:
+    branches:
+      - main
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform-drift.yml"
+      - ".github/scripts/tf_drift_gate.py"
+  # Drift is mostly not caused by commits — it is caused by the pipeline, by
+  # console edits, and by AWS changing defaults under us. A schedule is the
+  # only trigger that sees any of that. Monday 07:17 UTC: early in the week so
+  # a finding has five working days on it, and off the hour because GitHub's
+  # scheduler queues cron-on-the-hour jobs behind everyone else's.
+  schedule:
+    - cron: "17 7 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  # `github.event_name` is in the key on purpose. Without it a push to `main`
+  # and the Monday schedule both resolve to the same group — `github.ref` is
+  # refs/heads/main for both — and with an unconditional cancel-in-progress a
+  # push touching infra/** silently kills the scheduled run. That is the one
+  # trigger that exists to catch drift nobody committed (the deploy pipeline,
+  # console edits, AWS changing defaults under us), so cancelling it is exactly
+  # backwards.
+  #
+  # Cancellation is then narrowed to the only trigger that genuinely races
+  # itself: a force-push to a PR branch makes the older plan worthless. A
+  # second push to `main`, a dispatch, or a schedule QUEUES behind its
+  # predecessor rather than replacing it, so no drift verdict is discarded.
+  group: terraform-drift-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  id-token: write # OIDC only. Nothing here writes to the repo.
+
+env:
+  TF_IN_AUTOMATION: "1"
+  AWS_REGION: us-east-1
+  # Must match infra-gate.yml. A drift gate that plans on a different terraform
+  # than the one the tree is fmt-checked against is comparing two things.
+  TERRAFORM_VERSION: "1.15.8"
+
+jobs:
+  drift:
+    name: Infra — terraform plan drift (advisory)
+    # Self-activating, same convention as deploy.yml's deploy-ecs job: dormant
+    # until the operator has run setup-github-plan-role.sh and set the repo
+    # variables. Without this the job would be red on every infra PR from the
+    # moment it merges until the role exists, and a gate that is red before it
+    # is wired teaches everyone to ignore it.
+    if: ${{ vars.TF_DRIFT_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # No `submodules:` — no .tf file references a submodule path.
+      - uses: actions/checkout@v7
+
+      # Fail with a sentence somebody can act on, rather than letting
+      # configure-aws-credentials fail on an empty `role-to-assume` with a
+      # message about ARN syntax.
+      - name: Preflight — the operator inputs are present
+        env:
+          TF_PLAN_ROLE_ARN: ${{ vars.TF_PLAN_ROLE_ARN }}
+          TF_VAR_ALARM_EMAIL: ${{ secrets.TF_VAR_ALARM_EMAIL }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -n "$TF_PLAN_ROLE_ARN" ]   || missing+=("repository variable TF_PLAN_ROLE_ARN")
+          [ -n "$TF_VAR_ALARM_EMAIL" ] || missing+=("repository secret TF_VAR_ALARM_EMAIL")
+          if [ ${#missing[@]} -gt 0 ]; then
+            printf '::error::TF_DRIFT_ENABLED is true but %s is unset. See the header of this workflow and infra/scripts/setup-github-plan-role.sh.\n' "${missing[*]}"
+            exit 1
+          fi
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          # The wrapper mangles exit codes in multi-line run blocks, and this
+          # job's whole verdict is an exit code.
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials (OIDC, read-only plan role)
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.TF_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Same source a human operator uses (infra/README.md). Masked before it
+      # can reach a log: `add-mask` covers this step's remaining output and
+      # every later step in the job.
+      - name: Read the Aurora master password from SSM (masked)
+        run: |
+          set -euo pipefail
+          PW="$(aws ssm get-parameter \
+                  --name /archimedes/prod/AURORA_MASTER_PASSWORD \
+                  --with-decryption --query Parameter.Value --output text)"
+          if [ -z "$PW" ] || [ "$PW" = "None" ]; then
+            echo "::error::/archimedes/prod/AURORA_MASTER_PASSWORD is empty or unreadable — the plan role is missing ssm:GetParameter/kms:Decrypt on it (infra/scripts/setup-github-plan-role.sh)."
+            exit 1
+          fi
+          echo "::add-mask::$PW"
+          echo "TF_VAR_aurora_master_password=$PW" >> "$GITHUB_ENV"
+
+      - name: terraform init
+        run: terraform -chdir=infra init -input=false -no-color
+
+      # `-lock=false`: a plan never writes state, and the backend uses S3-native
+      # locking (infra/main.tf `use_lockfile = true`), so skipping the lock is
+      # what keeps the plan role free of every s3:Put*/s3:Delete* grant. It also
+      # means a scheduled run can never wedge an operator's concurrent apply.
+      #
+      # `-out` is written so the JSON rendering below describes EXACTLY the plan
+      # that was printed. Both files are deleted before anything is uploaded.
+      - name: terraform plan (-detailed-exitcode)
+        id: plan
+        env:
+          TF_VAR_alarm_email: ${{ secrets.TF_VAR_ALARM_EMAIL }}
+        run: |
+          # GitHub invokes `run:` blocks as `bash -e -o pipefail`. `-e` would
+          # abort on exit code 2 — the exact code this step exists to read — so
+          # it is turned off for the pipeline and back on immediately after.
+          set +e
+          terraform -chdir=infra plan \
+            -detailed-exitcode -input=false -lock=false -no-color \
+            -out=tfplan.binary | tee plan.txt
+          code=${PIPESTATUS[0]}
+          set -e
+          echo "exitcode=$code" >> "$GITHUB_OUTPUT"
+          case "$code" in
+            0) echo "terraform plan: no changes." ;;
+            2) echo "terraform plan: changes present — classifying." ;;
+            *) echo "::error::terraform plan failed (exit $code) — this is a broken plan, not drift."; exit "$code" ;;
+          esac
+
+      # Runs even when the plan is clean, so the artifact exists on every run
+      # and "no artifact" unambiguously means "the job did not get this far".
+      # Only plan.txt is uploaded: see the header on why the binary and JSON
+      # renderings must not leave the runner.
+      - name: Upload the plan (human-readable only)
+        if: always() && steps.plan.outcome != 'skipped'
+        uses: actions/upload-artifact@v5
+        with:
+          name: terraform-plan-${{ github.run_id }}
+          path: plan.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+      - uses: actions/setup-python@v7
+        if: steps.plan.outputs.exitcode == '2'
+        with:
+          python-version: "3.12"
+
+      # tf_drift_gate.py is stdlib-only and hermetic — no pip install, and it
+      # runs identically on a laptop:
+      #   terraform -chdir=infra show -json tfplan.binary > plan.json
+      #   python3 .github/scripts/tf_drift_gate.py plan.json
+      - name: Classify the plan (fails on drift, advisory on pull requests)
+        if: steps.plan.outputs.exitcode == '2'
+        # Blocking on push/schedule/workflow_dispatch, advisory on pull
+        # requests. On those three arms a planned change means production and
+        # `infra/` genuinely disagree, which is the whole point of the gate. On
+        # a PR it usually means the opposite: the author is CHANGING infra/**,
+        # so their new resources plan as `create` and the classifier fails on
+        # them. Left blocking, this arm would be red on every intentional infra
+        # PR — the "a gate that is red teaches everyone to ignore it" failure
+        # the TF_DRIFT_ENABLED note below is written to avoid, aimed at the
+        # people the gate most needs to keep reading it.
+        #
+        # Nothing is hidden by this: the verdict is still printed in this
+        # step's log, the step is still annotated as failed, and plan.txt is
+        # still uploaded by the step above (which runs `if: always()`), so a
+        # reviewer reads the same plan either way. And a BROKEN plan still
+        # fails everywhere, on every arm — that is the `plan` step above, which
+        # carries no continue-on-error.
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
+        run: |
+          set -euo pipefail
+          trap 'rm -f plan.json' EXIT
+          terraform -chdir=infra show -json tfplan.binary > plan.json
+          python3 .github/scripts/tf_drift_gate.py plan.json
+
+      # The `-out` planfile embeds the FULL prior state, sensitive values and
+      # all. Nothing uploads it, and the runner is destroyed either way, but a
+      # file like that should not outlive the step that needed it.
+      - name: Shred the planfile
+        if: always()
+        run: rm -f infra/tfplan.binary plan.json

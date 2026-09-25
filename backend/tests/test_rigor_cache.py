@@ -39,8 +39,8 @@ from archimedes.services.rigor_evaluator import (
 def _use_tmp_db(tmp_path, monkeypatch):
     """Redirect DATABASE_URL to a per-test temp SQLite file.
 
-    ``_live_rigor_results_for_strategies`` calls ``init_db()`` before the (here
-    monkeypatched) DB read, so a real, isolated DB backs every test.
+    The grading job and the library route both open a real session before the
+    (here monkeypatched) DB read, so a real, isolated DB backs every test.
     """
     from archimedes.db import init_db
 
@@ -76,30 +76,14 @@ def _series(seed: int, n: int = 300) -> list[float]:
 
 class _FakeStrategy:
     """Minimal duck-typed stand-in for ``models.strategy.Strategy`` — only the
-    attributes ``_live_rigor_results_for_strategies`` / ``_load_strategy_code_safe_local``
+    attributes ``curated_grading.grade_cohort`` / ``_load_strategy_code_safe``
     actually touch."""
 
     def __init__(self, id_: str, paper_claimed_sharpe: float | None = None, strategy_code_hash: str | None = None):
         self.id = id_
         self.paper_claimed_sharpe = paper_claimed_sharpe
-        self.strategy_code_path = None  # None -> _load_strategy_code_safe_local short-circuits, no file I/O
+        self.strategy_code_path = None  # None -> _load_strategy_code_safe short-circuits, no file I/O
         self.strategy_code_hash = strategy_code_hash  # cheap code-version token folded into cohort_key
-
-
-def _spy_run_rigor_gate(monkeypatch, calls: list):
-    """Patch archimedes.services.rigor_evaluator.run_rigor_gate with a counting
-    wrapper that still delegates to the real implementation — same technique
-    test_strategies_routes.py::TestDefaultNumTrials uses. The batch compute
-    closure in strategies_routes imports run_rigor_gate locally (function-local
-    import), so patching the source module's attribute is what makes this work:
-    the local import re-reads the module namespace on every call.
-    """
-
-    def _spy(*args, **kwargs):
-        calls.append((args, kwargs))
-        return run_rigor_gate(*args, **kwargs)
-
-    monkeypatch.setattr("archimedes.services.rigor_evaluator.run_rigor_gate", _spy)
 
 
 def _assert_close(actual, expected) -> None:
@@ -115,9 +99,10 @@ def _assert_close(actual, expected) -> None:
 def _expected_result(sid: str, returns_by_strategy: dict[str, list[float]]):
     """Independently reproduce what the (uncached) live gate should compute for
     ``sid`` given ``returns_by_strategy`` — the same cohort-context derivation
-    ``_live_rigor_results_for_strategies`` performs, used to assert the cache
-    never changes the served numbers. num_trials is self-contained (1, decouple
-    #2) — it does NOT come from this cohort; only PBO/avg_correlation do."""
+    ``curated_grading.grade_cohort`` performs, used to assert that moving that
+    computation to the write side did not change it. num_trials is
+    self-contained (1, decouple #2) — it does NOT come from this cohort; only
+    PBO/avg_correlation do."""
     valid = {k: v for k, v in returns_by_strategy.items() if len(v) >= 10 and float(np.ptp(np.asarray(v))) > 0.0}
     pbo_scores = compute_pbo(valid) if len(valid) >= 2 else {}
     num_trials = 1
@@ -133,136 +118,80 @@ def _expected_result(sid: str, returns_by_strategy: dict[str, list[float]]):
     )
 
 
-# ── (a) unchanged data -> cache hit, identical results, one live call each ──
+# ── The library route's cache consumer is GONE (#1746 / PR-B) ───────────────
+#
+# ``strategies_routes._live_rigor_results_for_strategies`` — a cohort gate run
+# memoized here under a ``strategies_list:`` key — was this module's second
+# consumer. The curated verdict is now graded once, when a backtest runs
+# (``services.curated_grading``), and every read surface serves the stored row,
+# so there is no per-request cohort computation left on that path to memoize.
+# The route-level cache tests that lived here went with it; the cache's own
+# contract (hit/miss, key derivation, fail-open, single-flight, cache_if,
+# bounded store) is proven directly below, and ``GET /api/selection-bias/gate``
+# — the deploy ladder, which deliberately still recomputes live — remains a real
+# consumer.
 
 
-def test_second_call_with_unchanged_data_is_a_cache_hit(monkeypatch):
-    from archimedes.api import strategies_routes as sr
+def test_the_library_route_writes_no_rigor_cache_entry(monkeypatch):
+    """GUARD: nothing on the library read path may memoize a gate run again.
+
+    A cached verdict is the wrong shape for a stored one — it is an answer with
+    a TTL, and #1746 is what a second answer costs. If someone reintroduces a
+    read-time cohort compute, the fastest way to make it affordable is this
+    cache, and this test is what refuses.
+
+    MUTATION: restore ``rigor_results = get_or_compute("strategies_list:" + …)``
+    in ``_list_strategies_sync``. The store gains the key and this reddens.
+    """
+    import asyncio
+
+    from archimedes.main import app
+    from httpx import ASGITransport, AsyncClient
+
+    monkeypatch.setattr(
+        "archimedes.services.backtest_repository.get_all_daily_returns",
+        lambda session, ids: {sid: _series(i) for i, sid in enumerate(ids)},
+    )
+
+    async def _go():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            return await client.get("/api/strategies/?limit=5")
+
+    resp = asyncio.run(_go())
+    assert resp.status_code == 200
+    assert not [k for k in rigor_cache._store if str(k).startswith("strategies_list:")], (
+        "the library route memoized a cohort gate run; the verdict is stored, not cached"
+    )
+
+
+def test_grade_cohort_matches_an_independently_computed_gate(monkeypatch):
+    """The cohort computation that MOVED to the write side still computes what
+    it used to: same cohort filter, same self-contained ``num_trials``, same
+    cohort PBO / average correlation.
+
+    MUTATION: drop the zero-variance filter from ``valid_returns`` in
+    ``grade_cohort``. The cohort context changes and the numbers stop matching
+    the independently-derived expectation.
+    """
+    from archimedes.services import curated_grading
 
     returns = {"s0": _series(0), "s1": _series(1)}
     monkeypatch.setattr(
         "archimedes.services.backtest_repository.get_all_daily_returns",
         lambda session, ids: dict(returns),
     )
-    monkeypatch.setattr(sr, "_load_strategy_code_safe_local", lambda s: _CLEAN_CODE)
+    monkeypatch.setattr(curated_grading, "_load_strategy_code_safe", lambda s: _CLEAN_CODE)
 
-    calls: list = []
-    _spy_run_rigor_gate(monkeypatch, calls)
+    graded = curated_grading.grade_cohort([_FakeStrategy("s0"), _FakeStrategy("s1")])
+    assert set(graded.results) == {"s0", "s1"}
+    assert graded.cohort_n == 2, "both series are non-degenerate, so both supply the cohort context"
 
-    strategies = [_FakeStrategy("s0"), _FakeStrategy("s1")]
-
-    first = sr._live_rigor_results_for_strategies(strategies)
-    assert len(calls) == 2, "first call must run the live gate once per strategy"
-
-    second = sr._live_rigor_results_for_strategies(strategies)
-    assert len(calls) == 2, "second call with unchanged data must be a pure cache hit — no new run_rigor_gate calls"
-
-    assert set(first) == set(second) == {"s0", "s1"}
-    for sid in first:
-        assert second[sid] is first[sid], f"cache hit for {sid} should return the SAME cached object"
-        assert second[sid].deflated_sharpe == first[sid].deflated_sharpe
-        assert second[sid].pbo_score == first[sid].pbo_score
-        assert second[sid].oos_sharpe == first[sid].oos_sharpe
-        assert second[sid].passes_all == first[sid].passes_all
-
-
-# ── (b) changed returns -> different key -> live gate runs again ───────────
-
-
-def test_changed_returns_invalidate_the_cache_and_recompute(monkeypatch):
-    from archimedes.api import strategies_routes as sr
-
-    returns = {"s0": _series(0), "s1": _series(1)}
-    get_all = {"value": dict(returns)}
-    monkeypatch.setattr(
-        "archimedes.services.backtest_repository.get_all_daily_returns",
-        lambda session, ids: dict(get_all["value"]),
-    )
-    monkeypatch.setattr(sr, "_load_strategy_code_safe_local", lambda s: _CLEAN_CODE)
-
-    calls: list = []
-    _spy_run_rigor_gate(monkeypatch, calls)
-
-    strategies = [_FakeStrategy("s0"), _FakeStrategy("s1")]
-
-    first = sr._live_rigor_results_for_strategies(strategies)
-    assert len(calls) == 2
-
-    # s0's persisted returns change (e.g. a fresh backtest was written) — a
-    # DIFFERENT series than the one the first call was keyed on.
-    new_returns = {"s0": _series(123), "s1": _series(1)}
-    get_all["value"] = new_returns
-
-    second = sr._live_rigor_results_for_strategies(strategies)
-    assert len(calls) == 4, "changed cohort data must bust the cache key -> the live gate reruns for both strategies"
-
-    expected_s0 = _expected_result("s0", new_returns)
-    _assert_close(second["s0"].deflated_sharpe, expected_s0.deflated_sharpe)
-    _assert_close(second["s0"].oos_sharpe, expected_s0.oos_sharpe)
-    assert second["s0"].passes_all == expected_s0.passes_all
-
-    # s1's series is unchanged, but it still shares a cohort with s0 (its cache
-    # key includes both strategies' fingerprints), so it recomputes too — and
-    # must still reflect the SAME live numbers as before, since ITS data didn't
-    # change (only the pbo/correlation cohort context could shift with s0's new
-    # series, so we recompute the "expected" for s1 with the new cohort too).
-    expected_s1 = _expected_result("s1", new_returns)
-    _assert_close(second["s1"].deflated_sharpe, expected_s1.deflated_sharpe)
-
-    # And critically: results actually differ from the first call's stale cache
-    # entry (proving this isn't accidentally still serving the old value).
-    assert (
-        first["s0"].deflated_sharpe != second["s0"].deflated_sharpe
-        or first["s0"].oos_sharpe != second["s0"].oos_sharpe
-        or first["s0"].pbo_score != second["s0"].pbo_score
-    ), "second call must reflect the new data, not the first call's cached result"
-
-
-# ── (d) code change with UNCHANGED returns -> different key -> live gate reruns
-# (Copilot review, PR #1040): cohort_key previously fingerprinted only persisted
-# returns, but run_rigor_gate's look-ahead audit also depends on strategy_code —
-# so editing a strategy's code and reloading served a STALE cached look-ahead
-# verdict/passes_all for up to the TTL even though returns never changed. Proven
-# below at both the cohort_key unit level and the route level. ─────────────────
-
-
-def test_code_hash_change_with_unchanged_returns_busts_cache_and_recomputes(monkeypatch):
-    """Route-level proof: only strategy_code_hash changes between the two calls
-    (persisted returns are byte-identical) — this alone must bust the cache key
-    and rerun run_rigor_gate, closing the stale-look-ahead-verdict gap."""
-    from archimedes.api import strategies_routes as sr
-
-    returns = {"s0": _series(0), "s1": _series(1)}
-    monkeypatch.setattr(
-        "archimedes.services.backtest_repository.get_all_daily_returns",
-        lambda session, ids: dict(returns),
-    )
-    monkeypatch.setattr(sr, "_load_strategy_code_safe_local", lambda s: _CLEAN_CODE)
-
-    calls: list = []
-    _spy_run_rigor_gate(monkeypatch, calls)
-
-    strategies = [_FakeStrategy("s0", strategy_code_hash="hash-v1"), _FakeStrategy("s1", strategy_code_hash="hash-v1")]
-
-    first = sr._live_rigor_results_for_strategies(strategies)
-    assert len(calls) == 2
-
-    # Same object, same returns — pure cache hit.
-    second = sr._live_rigor_results_for_strategies(strategies)
-    assert len(calls) == 2, "unchanged returns AND unchanged code must still be a cache hit"
-    for sid in first:
-        assert second[sid] is first[sid]
-
-    # Simulate a code edit on s0 ONLY — its persisted returns are untouched.
-    strategies[0].strategy_code_hash = "hash-v2-edited"
-
-    third = sr._live_rigor_results_for_strategies(strategies)
-    assert len(calls) == 4, (
-        "a strategy's code_hash changing (with byte-identical returns) must bust "
-        "the cache key and rerun run_rigor_gate for the whole cohort — a code "
-        "edit must never keep serving the pre-edit look-ahead verdict"
-    )
-    assert set(third) == {"s0", "s1"}
+    for sid in ("s0", "s1"):
+        expected = _expected_result(sid, returns)
+        _assert_close(graded.results[sid].deflated_sharpe, expected.deflated_sharpe)
+        _assert_close(graded.results[sid].pbo_score, expected.pbo_score)
+        _assert_close(graded.results[sid].oos_sharpe, expected.oos_sharpe)
+        assert graded.results[sid].passes_all == expected.passes_all
 
 
 def test_cohort_key_changes_when_a_code_version_changes_but_returns_do_not():
@@ -337,32 +266,6 @@ def test_get_or_compute_fails_open_on_store_error(monkeypatch):
     sentinel = object()
     result = rigor_cache.get_or_compute("some-key", lambda: sentinel)
     assert result is sentinel
-
-
-def test_live_rigor_results_survive_a_broken_cache(monkeypatch):
-    """Route-level proof of the same guarantee: with the cache store patched to
-    raise on lookup, ``_live_rigor_results_for_strategies`` must still return the
-    exact same numbers a healthy cache would have — the cache is fully
-    bypassable without breaking or staling the served rigor numbers."""
-    from archimedes.api import strategies_routes as sr
-
-    returns = {"s0": _series(0), "s1": _series(1)}
-    monkeypatch.setattr(
-        "archimedes.services.backtest_repository.get_all_daily_returns",
-        lambda session, ids: dict(returns),
-    )
-    monkeypatch.setattr(sr, "_load_strategy_code_safe_local", lambda s: _CLEAN_CODE)
-    monkeypatch.setattr(rigor_cache, "_store", _BoomOnGet())
-
-    strategies = [_FakeStrategy("s0"), _FakeStrategy("s1")]
-    result = sr._live_rigor_results_for_strategies(strategies)
-
-    expected_s0 = _expected_result("s0", returns)
-    expected_s1 = _expected_result("s1", returns)
-    _assert_close(result["s0"].deflated_sharpe, expected_s0.deflated_sharpe)
-    assert result["s0"].passes_all == expected_s0.passes_all
-    _assert_close(result["s1"].deflated_sharpe, expected_s1.deflated_sharpe)
-    assert result["s1"].passes_all == expected_s1.passes_all
 
 
 # ── single-flight: thundering-herd fix (Copilot review, PR #1040) ──────────
@@ -564,26 +467,31 @@ def test_get_or_compute_cache_if_predicate_error_falls_back_to_not_caching():
     assert "k-cache-if-boom" not in rigor_cache._store
 
 
-def test_transient_cohort_failure_is_not_sticky_across_calls(monkeypatch):
-    """Route-level proof of the concrete bug this closes: the FIRST call's
-    cohort-context compute fails (-> {} degraded response, per the existing
-    fail-closed contract), and the SECOND call — even with the exact same
-    cache key (unchanged returns/code) — must recompute live and return the
-    real result, not replay the cached {} from the failed first call."""
-    from archimedes.api import strategies_routes as sr
+def test_a_transient_cohort_failure_degrades_to_empty_and_never_persists(monkeypatch):
+    """The concrete bug this closed, restated on the write side: a cohort-context
+    compute that fails must degrade to ``{}`` (the fail-closed contract — nothing
+    is graded, nothing is claimed) and must not stick.
+
+    It cannot stick any more, because nothing memoizes it: the second call runs
+    live. That is the property, asserted rather than assumed — a future edit that
+    reintroduces a memo around ``grade_cohort`` would make a transient failure
+    strand the whole library on ``pending``, which is the same defect wearing the
+    write side's clothes.
+
+    MUTATION: wrap ``grade_cohort``'s body in ``get_or_compute(key, …)`` with no
+    ``cache_if``. The second call replays the cached ``{}`` and this reddens.
+    """
+    from archimedes.services import curated_grading
 
     returns = {"s0": _series(0), "s1": _series(1)}
     monkeypatch.setattr(
         "archimedes.services.backtest_repository.get_all_daily_returns",
         lambda session, ids: dict(returns),
     )
-    monkeypatch.setattr(sr, "_load_strategy_code_safe_local", lambda s: _CLEAN_CODE)
+    monkeypatch.setattr(curated_grading, "_load_strategy_code_safe", lambda s: _CLEAN_CODE)
 
     strategies = [_FakeStrategy("s0"), _FakeStrategy("s1")]
 
-    # First call: force the cohort-context compute (PBO) to blow up on ITS
-    # FIRST invocation only, simulating a transient failure (e.g. a momentary
-    # numerical/DB hiccup) that has cleared by the time the next request lands.
     from archimedes.services.rigor_evaluator import compute_pbo as _real_compute_pbo
 
     pbo_call_count = {"n": 0}
@@ -596,19 +504,14 @@ def test_transient_cohort_failure_is_not_sticky_across_calls(monkeypatch):
 
     monkeypatch.setattr("archimedes.services.rigor_evaluator.compute_pbo", _flaky_pbo)
 
-    first = sr._live_rigor_results_for_strategies(strategies)
-    assert first == {}, "a cohort-compute failure must degrade to {} (existing fail-closed contract)"
+    first = curated_grading.grade_cohort(strategies)
+    assert first.results == {}, "a cohort-compute failure must degrade to no results (fail-closed)"
 
-    # Second call: same cache key as the first (unchanged returns AND code) —
-    # the transient failure has cleared, so this must recompute live and NOT
-    # replay the cached {} from the failed first call.
-    second = sr._live_rigor_results_for_strategies(strategies)
-    assert second != {}, (
-        "the {} from the first (failed) call must never have been cached — a "
-        "transient failure must not strand every strategy on stale fallback "
-        "fields for the full TTL"
+    second = curated_grading.grade_cohort(strategies)
+    assert set(second.results) == {"s0", "s1"}, (
+        "the failed run must not have been memoized — a transient failure must not "
+        "strand the whole library on `pending`"
     )
-    assert set(second) == {"s0", "s1"}
 
 
 # ── cohort_key unit properties ──────────────────────────────────────────────

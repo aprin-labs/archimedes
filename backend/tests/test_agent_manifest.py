@@ -16,9 +16,20 @@ async def test_agent_manifest_returns_200_with_expected_top_level_keys():
 
     assert resp.status_code == 200
     data = resp.json()
-    # "erc8004" joined this set in #1527 — the on-chain identity leg. Its own shape,
-    # and the honesty invariants around it, live in test_erc8004_identity.py.
-    assert set(data.keys()) == {"name", "blurb", "docs", "auth", "endpoints", "faucet", "erc8004"}
+    # "erc8004" joined this set in #1527 — the on-chain identity leg — and
+    # "erc8004_verification" joined it with the live registry read that decides what the
+    # first one may say. Their shapes, and the honesty invariants tying the claim to the
+    # reading, live in test_erc8004_identity.py.
+    assert set(data.keys()) == {
+        "name",
+        "blurb",
+        "docs",
+        "auth",
+        "endpoints",
+        "faucet",
+        "erc8004",
+        "erc8004_verification",
+    }
     assert data["name"] == "Archimedes"
 
 
@@ -127,11 +138,11 @@ async def test_agent_manifest_endpoint_groups_present():
 
 
 @pytest.mark.asyncio
-async def test_agent_manifest_deploy_and_marketplace_marked_live_post_t32():
-    """Deploy / marketplace / monitor are honestly marked live now that the T3.2
-    redeploy landed (#588 closed 2026-07-14) — they must NOT still claim to be
-    pending a redeploy that has already shipped. Every group, including these
-    three, is "live"."""
+async def test_agent_manifest_shipped_groups_are_live_and_roadmap_groups_are_not():
+    """Generate / rigor / paper are live. Deploy, marketplace, and monitor are
+    not a public surface: marketplace is not shipped, and no user vault has
+    ever been created. They must not still claim to be pending a T3.2 redeploy
+    (#588 closed 2026-07-14), and they must not advertise ``live``."""
     from archimedes.main import app
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -146,13 +157,15 @@ async def test_agent_manifest_deploy_and_marketplace_marked_live_post_t32():
         "account",
         "rigor",
         "paper",
-        "deploy",
-        "marketplace",
-        "monitor",
     ):
         assert endpoints[group]["status"] == "live", f"{group} status is {endpoints[group]['status']!r}, not 'live'"
-        # The regression this test guards: a stale "pending #588" claim must not
-        # reappear now that the redeploy this issue tracked has shipped.
+        assert "#588" not in endpoints[group]["status"]
+        assert "pending" not in endpoints[group]["status"].lower()
+    for group in ("deploy", "marketplace", "monitor"):
+        assert endpoints[group]["status"] == "roadmap", (
+            f"{group} status is {endpoints[group]['status']!r}, not 'roadmap' — "
+            "marketplace is not a public surface and vault execute/monitor is not shipped"
+        )
         assert "#588" not in endpoints[group]["status"]
         assert "pending" not in endpoints[group]["status"].lower()
 

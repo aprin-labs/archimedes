@@ -36,6 +36,15 @@ logger = logging.getLogger(__name__)
 
 _EULER_MASCHERONI = 0.5772156649
 _ANNUALIZATION = 252
+
+# The DSR's minimum sample, named because an API boundary has to reject against
+# THIS number rather than pick a second one (#1803). Below four bars the skew
+# and raw kurtosis the Bailey-LdP (2014) denominator is defined on are not
+# estimable, so every DSR entry point below returns ``None`` instead of a
+# number. `POST /api/rigor/verify` imports it to refuse a shorter series at the
+# schema, with a message that says the DSR could not have run anyway — the
+# alternative is a 200 whose every leg is `not_evaluable`.
+DSR_MIN_BARS = 4
 # GATE-side rf convention: the DSR deflates an EXCESS-return Sharpe, because
 # Bailey-LdP (2014) is defined on excess returns. This deliberately differs from
 # the passport DISPLAY Sharpe, which uses rf=0 (raw) — see fusion_evaluator.py's
@@ -134,7 +143,7 @@ def _sharpe_influence_lrv(
     the z-statistic), or ``None`` when the series is too short / degenerate.
     """
     T = len(arr)
-    if T < 4 or sigma <= 0.0:
+    if T < DSR_MIN_BARS or sigma <= 0.0:
         return None
     z = (arr - mean) / sigma
     influence = z - 0.5 * SR_hat * (z * z - 1.0)
@@ -179,7 +188,7 @@ def _sharpe_dsr_inputs(
     """
     arr = np.asarray(daily_returns, dtype=float)
     T = len(arr)
-    if T < 4:
+    if T < DSR_MIN_BARS:
         return None
     # numpy std(ddof=1) can be a tiny non-zero float for identical values due to
     # floating-point cancellation; check range first to catch constant series.
@@ -257,9 +266,9 @@ def compute_dsr(
             expected best-of-N null. Positive means the strategy clears
             the multiple-testing bar.
           - dsr_p_value: P(true SR > 0 | observed SR, N trials, T bars).
-            The badge (level-1/Conservative) gate threshold is 0.90 per
-            rigor_profiles; looser levels accept down to the 0.50 always-on
-            floor. See RigorGateResult.passes_at_level / min_passing_level.
+            The badge (level-1/Conservative) gate threshold is
+            ``rigor_profiles.DSR_P_BADGE_MIN`` — the one definition of the bar;
+            looser levels accept down to the 0.50 always-on floor. See RigorGateResult.passes_at_level / min_passing_level.
         Both are None if data is insufficient (T < 4) or degenerate.
     """
     if num_trials < 1:
@@ -354,7 +363,7 @@ def _dsr_from_stats(
     Returns:
         (deflated_sharpe_annualized, dsr_p_value) or (None, None).
     """
-    if T < 4:
+    if T < DSR_MIN_BARS:
         return None, None
 
     N = max(1, N)
@@ -696,13 +705,19 @@ def compute_average_pairwise_correlation(
 ) -> float:
     """Average off-diagonal Pearson correlation across a set of return series.
 
-    Feeds the Deflated Sharpe Ratio's effective-number-of-trials correction:
-    the expected best-of-N null Sharpe is computed at the effective trial count
-    ``N_eff = N / (1 + (N-1)*rho_bar)`` (the equicorrelated effective number of
-    independent tests) when the N trials are correlated, because correlated
-    trials carry fewer *independent* bets than their nominal count. The caller
+    Feeds the Deflated Sharpe Ratio's correlated-trials correction: the
+    expected best-of-N null Sharpe is the independent-trial ``E[max]`` scaled by
+    ``sqrt(1 - rho_bar)``, because under equicorrelation the factor common to
+    every trial passes straight through the maximum (see ``_dsr_from_stats``
+    for the one-factor derivation). Correlated trials offer fewer distinct
+    chances to get lucky, so the expected best-of-N null is lower. The caller
     that holds the selection set (the strategy library, or a parameter-variant
     grid) computes this and passes it into ``compute_dsr`` / ``run_rigor_gate``.
+
+    #1558/#1559: this previously fed an effective trial count
+    ``N_eff = N / (1 + (N-1)*rho_bar)``. That is the Kish design effect, not an
+    expectation-of-maximum, and it under-deflated by 2x-10x; do not reintroduce
+    it here or in the callers.
 
     Args:
         returns: Either ``{id: series}`` or a 2-D array/list (rows = trials,

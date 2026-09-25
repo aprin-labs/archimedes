@@ -8,7 +8,7 @@ Per-surface HTTP API reference for the FastAPI backend (and the colocated
 Better Auth Node sidecar). Each doc below covers one capability area: what
 each route does, its exact auth requirement, request/response shapes, every
 error it can raise and why, and a runnable `curl` example. This index is the
-entry point [`docs/README.md`](../README.md) links to — every file here must
+entry point [`docs/doc-index.md`](../doc-index.md) links to — every file here must
 be reachable from the table below, per the repo's index rule.
 
 ## Live interactive docs (Swagger / `/docs`)
@@ -30,9 +30,9 @@ these five levels:
 | Level | Requirement | Failure mode |
 |---|---|---|
 | `anonymous` | Nothing. No cookie, no header. | N/A — never 401s on auth grounds. |
-| `account-session` | A live Better Auth session — the `better-auth.session_token` cookie, verified by FastAPI against the colocated Better Auth sidecar's `GET /api/auth/get-session` on every request. | `401` with no/expired session. |
+| `account-session` | An authenticated account, established by **either** credential: the `better-auth.session_token` cookie (verified by FastAPI against the colocated Better Auth sidecar's `GET /api/auth/get-session` on every request), **or** an `Authorization: Bearer archim_…` API key (see [`api-keys.md`](api-keys.md)). Both resolve to the same canonical user at the same chokepoint, so no route distinguishes them — a key is a credential, never a bypass. The three key-management routes are the sole exception and require the cookie specifically. | `401` with no/expired session and no valid key. |
 | `linked-wallet` | An `account-session`, **plus** a wallet verified-linked to that account (`require_linked_wallet`). | `401` with no session; `403` with a session but no linked wallet. |
-| `platform-admin` | A `linked-wallet`, **plus** that wallet listed in the `PLATFORM_ADMIN_WALLETS` env allowlist. Grants **no fund/custody/treasury authority** — it is a read gate on the internal cost/ops dashboard, nothing more. | `401` no session; `403` linked-but-non-admin wallet. |
+| `platform-admin` | A signed-in account that is a platform admin — listed in `PLATFORM_ADMIN_ACCOUNTS` (canonical `auth_users.id`/email), **or** holding a linked wallet listed in `PLATFORM_ADMIN_WALLETS`. Keyed on the account, never on the request's `X-Wallet-Address` header (#1648). Grants **no fund/custody/treasury authority** — it is a read gate on the internal cost/ops dashboard, nothing more. | `401` no session; `403` signed-in non-admin. |
 | `internal-key` | A matching `X-Internal-Agent-Key` header, compared with `hmac.compare_digest` against `INTERNAL_AGENT_API_KEY`. Fails closed (rejects everyone) if that env var is unset. Used only by internal services (the agent runner) — never reachable from the browser UI. | `403` on any missing/wrong key. |
 
 Each level nests into the one above it (`linked-wallet` implies
@@ -46,6 +46,7 @@ Each level nests into the one above it (`linked-wallet` implies
 | Doc | Covers |
 |---|---|
 | [`auth-and-accounts.md`](auth-and-accounts.md) | The Better Auth sidecar (`/api/auth/*`): email/password + OAuth sign-up/sign-in, session lookup, email verification. |
+| [`api-keys.md`](api-keys.md) | `/api/account/keys/*` — mint, list, and revoke the bearer API keys that let a machine caller authenticate as an account without a cookie jar. |
 | [`wallets.md`](wallets.md) | `/api/wallets/*` — EIP-4361 wallet-link challenge/verify, linking a wallet to an already-signed-in account. |
 
 ### Generation & rigor
@@ -61,7 +62,6 @@ Each level nests into the one above it (`linked-wallet` implies
 |---|---|
 | [`paper-trading.md`](paper-trading.md) | `/api/paper/*` — deploy a strategy to an append-only, never-rewritten forward-return ledger. |
 | [`vaults-and-chain.md`](vaults-and-chain.md) | `/api/vaults/*`, `/api/traces/*`, `/api/swap/*`, `/api/config/contracts`, and the health/root endpoints — vault creation and metadata, reasoning-trace publish/verify, the AMM swap preview, contract addresses. |
-| [`chat.md`](chat.md) | `/api/vaults/{address}/chat*` — per-vault chat, public reads, linked-wallet writes, internal-only system events. |
 
 ### Platform metrics
 

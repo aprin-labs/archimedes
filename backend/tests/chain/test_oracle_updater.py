@@ -19,7 +19,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from archimedes.chain.oracle_updater import (
     DEFAULT_MAX_DEVIATION_BPS,
+    DEFAULT_MAX_RESEED_DEVIATION_BPS,
     DEFAULT_MAX_UPSTREAM_STALENESS_SECONDS,
+    DEFAULT_STALE_RESEED_AFTER_SECONDS,
     OracleUpdater,
 )
 from archimedes.models.asset import AssetPrice
@@ -471,6 +473,106 @@ class TestSubmissionResponseParsing:
         assert any("Circle API error" in m for m in error_messages), error_messages
 
 
+# ── Dedup-hit COMPLETE must skip the re-poll entirely (#1711) ──────────────
+
+
+@pytest.mark.usefixtures("circle_creds")
+class TestDedupHitCompleteSkipsRepoll:
+    """#1525 fixed the create-transaction response's OWN grading (200/COMPLETE
+    is a success, not an error). But the confirmation phase then unconditionally
+    re-polled every submission via `_poll_circle_tx`, which only inspects the
+    most recent 50 transactions account-wide — so a dedup-hit tx that actually
+    completed several cycles ago (unchanged price, e.g. an equity synth over a
+    weekend keeps reproducing the same idempotency key) can have scrolled off
+    that window by the time the poll runs. The captured production symptom
+    (issue #1711): `Circle API error for sSPY (200): {'data': {'id':
+    'c94fa26b-...', 'state': 'COMPLETE'}}` re-logged every cycle for a push
+    that had already succeeded — and, left unbounded, the false TIMEOUT this
+    produced would feed the wedge tracker into abandoning a perfectly good tx
+    and submitting a genuinely NEW on-chain transaction, burning gas for a
+    price already pushed. The fix: a submit-time terminal-success state is
+    already authoritative, so it must never be re-derived from that narrower,
+    staler view."""
+
+    def _updater_with_dedup_hit(self, tx_id: str, state: str = "COMPLETE"):
+        updater = OracleUpdater()
+        updater._circle_public_key = "cached-pem"
+        resp = MagicMock(status=200)
+        resp.json = AsyncMock(return_value={"data": {"id": tx_id, "state": state}})
+        return updater, _mock_aiohttp_session(post_response=resp)
+
+    async def test_exact_captured_payload_skips_repoll_and_logs_info(self, caplog):
+        # The exact shape from the issue's live log line: HTTP 200, a
+        # dedup-hit tx id, state already COMPLETE.
+        tx_id = "c94fa26b-1234-5678-9abc-def012345678"
+        updater, (session_cm, _session) = self._updater_with_dedup_hit(tx_id)
+        good = _price(symbol="sSPY", usd=110.0)
+        with (
+            patch("archimedes.chain.oracle_updater.aiohttp.ClientSession", return_value=session_cm),
+            patch("archimedes.chain.oracle_updater._encrypt_entity_secret", return_value="ciphertext"),
+            patch.object(updater, "_get_reference_price_int", AsyncMock(return_value=(_int6(100.0), True))),
+            # If the fix regresses and this gets called, make the regression
+            # loud: TIMEOUT is exactly what a scrolled-off-the-window poll
+            # would return for an already-complete tx in production.
+            patch.object(updater, "_poll_circle_tx", AsyncMock(return_value="TIMEOUT")) as poll,
+            caplog.at_level(logging.INFO, logger="archimedes.chain.oracle_updater"),
+        ):
+            result = await updater.push_prices_on_chain([good])
+
+        assert result == tx_id
+        assert updater._last_pushed_price_int["sSPY"] == _int6(110.0)
+        poll.assert_not_called()  # submit-time COMPLETE is authoritative — no re-poll
+        assert "sSPY" not in updater._wedge_tracking
+        error_messages = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+        assert not error_messages, error_messages
+        info_messages = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+        assert any(tx_id in m and "COMPLETE" in m for m in info_messages), info_messages
+
+    async def test_repeated_dedup_hits_never_trigger_wedge_retry(self):
+        # Gas-waste guard: an unchanged weekend price reproduces the identical
+        # idempotency key every cycle, so Circle keeps returning the SAME
+        # dedup-hit 200/COMPLETE for MANY consecutive cycles — well past
+        # ORACLE_TX_MAX_REPOLLS. None of that may ever be misread as a wedge:
+        # a real retry here is a real on-chain forceless setPrice tx, i.e. real
+        # gas spent on a price that was already pushed.
+        tx_id = "c94fa26b-1234-5678-9abc-def012345678"
+        updater, (session_cm, _session) = self._updater_with_dedup_hit(tx_id)
+        updater._tx_max_repolls = 10
+        good = _price(symbol="sSPY", usd=110.0)
+        with (
+            patch("archimedes.chain.oracle_updater.aiohttp.ClientSession", return_value=session_cm),
+            patch("archimedes.chain.oracle_updater._encrypt_entity_secret", return_value="ciphertext"),
+            patch.object(updater, "_get_reference_price_int", AsyncMock(return_value=(_int6(100.0), True))),
+            patch.object(updater, "_poll_circle_tx", AsyncMock(return_value="TIMEOUT")) as poll,
+        ):
+            for _ in range(25):  # well past the 10-cycle abandonment threshold
+                result = await updater.push_prices_on_chain([good])
+                assert result == tx_id
+
+        poll.assert_not_called()
+        assert updater._wedge_tracking == {}
+        assert updater._tx_retry_salt.get("sSPY", 0) == 0  # no retry ever fired
+
+    async def test_non_terminal_submission_still_polls_normally(self, caplog):
+        # Regression guard: this fix must not swallow the normal path — a
+        # submission that is genuinely still in flight (no terminal state yet)
+        # must still go through the real confirmation poll.
+        tx_id = "tx-in-flight"
+        updater, (session_cm, _session) = self._updater_with_dedup_hit(tx_id, state="PENDING")
+        good = _price(symbol="sSPY", usd=110.0)
+        with (
+            patch("archimedes.chain.oracle_updater.aiohttp.ClientSession", return_value=session_cm),
+            patch("archimedes.chain.oracle_updater._encrypt_entity_secret", return_value="ciphertext"),
+            patch.object(updater, "_get_reference_price_int", AsyncMock(return_value=(_int6(100.0), True))),
+            patch.object(updater, "_poll_circle_tx", AsyncMock(return_value="COMPLETE")) as poll,
+        ):
+            result = await updater.push_prices_on_chain([good])
+
+        assert result == tx_id
+        poll.assert_called_once()
+        assert updater._last_pushed_price_int["sSPY"] == _int6(110.0)
+
+
 # ── Wedged-tx abandonment (#1525) ──────────────────────────────────────────
 
 
@@ -548,3 +650,286 @@ class TestWedgedTxAbandonment:
 
         await self._push_once(updater, session_cm, "tx-b", "TIMEOUT")
         assert updater._wedge_tracking["sSPY"] == ("tx-b", 1)
+
+
+# ── Staleness-aware re-seed escape (#1341) ────────────────────────────────
+
+
+_DAY_S = 86_400
+
+
+@pytest.mark.usefixtures("circle_creds")
+class TestStaleReseedEscape:
+    """After the 2026-08-07→08-20 runner outage the deviation guard deadlocked:
+    every price had moved past the 2000 bps band vs a 13-day-stale on-chain
+    baseline, so every push was refused — and only a push could refresh the
+    baseline. The escape must unfreeze that case WITHOUT weakening the band for
+    a fresh baseline, and must re-tighten as soon as the re-seed lands.
+
+    Numbers are the issue's real ones: sBTC 104500.00 → 69583 is 3341 bps.
+    """
+
+    STALE_REF = _int6(104500.0)
+    RECOVERY_USD = 69583.0
+
+    def _updater(self, tx_id: str = "tx-reseed"):
+        updater = OracleUpdater()
+        updater._circle_public_key = "cached-pem"
+        resp = MagicMock(status=201)
+        resp.json = AsyncMock(return_value={"data": {"id": tx_id}})
+        return updater, _mock_aiohttp_session(post_response=resp)
+
+    async def _push(self, updater, session_cm, *, usd: float, reference_int: int, age_s: float | None):
+        price = _price(symbol="sBTC", usd=usd)
+        with (
+            patch("archimedes.chain.oracle_updater.aiohttp.ClientSession", return_value=session_cm),
+            patch("archimedes.chain.oracle_updater._encrypt_entity_secret", return_value="ciphertext"),
+            patch.object(updater, "_get_reference_price_int", AsyncMock(return_value=(reference_int, True))),
+            patch.object(updater, "_reference_age_seconds", AsyncMock(return_value=age_s)),
+            patch.object(updater, "_poll_circle_tx", AsyncMock(return_value="COMPLETE")),
+        ):
+            return await updater.push_prices_on_chain([price])
+
+    # ── the deadlock itself ────────────────────────────────────────
+
+    async def test_stale_baseline_pushes_exactly_once_via_force_set_price(self, caplog):
+        # THE regression test for #1341. 13-day-stale baseline + a 3341 bps gap:
+        # the pre-fix code refuses this forever (no POST at all).
+        updater, (session_cm, session) = self._updater()
+        with caplog.at_level(logging.WARNING, logger="archimedes.chain.oracle_updater"):
+            result = await self._push(
+                updater, session_cm, usd=self.RECOVERY_USD, reference_int=self.STALE_REF, age_s=13 * _DAY_S
+            )
+
+        assert result == "tx-reseed"
+        # Exactly one submission — the recovery replaces the normal push, it is
+        # not an extra tx alongside it.
+        session.post.assert_called_once()
+        payload = session.post.call_args.kwargs["json"]
+        assert payload["abiFunctionSignature"] == "forceSetPrice(uint256)"
+        assert payload["abiParameters"] == [str(_int6(self.RECOVERY_USD))]
+        assert updater._last_pushed_price_int["sBTC"] == _int6(self.RECOVERY_USD)
+
+        # LOUD log naming old price, new price, staleness (the issue's ask).
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        reseed = [m for m in warnings if "STALE-RESEED for sBTC" in m]
+        assert reseed, warnings
+        assert "104500.000000" in reseed[0] and "69583.000000" in reseed[0]
+        assert "312.0h old" in reseed[0] and "3341 bps" in reseed[0]
+        assert any("STALE-RESEED COMPLETE for sBTC" in m for m in warnings), warnings
+
+    async def test_band_retightens_after_the_reseed(self):
+        # Cycle 1 re-seeds off the stale baseline; cycle 2's baseline is the
+        # freshly written price (age 0) and the SAME class of move is refused
+        # again — the escape does not leave a widened band behind.
+        updater, (session_cm, session) = self._updater()
+        assert await self._push(
+            updater, session_cm, usd=self.RECOVERY_USD, reference_int=self.STALE_REF, age_s=13 * _DAY_S
+        )
+        assert session.post.call_count == 1
+        assert updater._pending_reseed == set()  # mark cleared by the confirmation
+
+        result = await self._push(
+            updater, session_cm, usd=self.RECOVERY_USD * 1.3, reference_int=_int6(self.RECOVERY_USD), age_s=0.0
+        )
+        assert result is None
+        assert session.post.call_count == 1  # no second POST — refused
+
+    async def test_in_band_price_still_uses_set_price_after_a_reseed(self):
+        # The cycle after a recovery is an ORDINARY cycle: normal selector.
+        updater, (session_cm, session) = self._updater()
+        await self._push(updater, session_cm, usd=self.RECOVERY_USD, reference_int=self.STALE_REF, age_s=13 * _DAY_S)
+        await self._push(
+            updater, session_cm, usd=self.RECOVERY_USD * 1.05, reference_int=_int6(self.RECOVERY_USD), age_s=0.0
+        )
+        assert session.post.call_count == 2
+        assert session.post.call_args.kwargs["json"]["abiFunctionSignature"] == "setPrice(uint256)"
+
+    # ── the guard must still reject ────────────────────────────────
+
+    async def test_fresh_baseline_still_rejects_the_same_move(self):
+        # Negative control: identical prices, only the baseline age differs.
+        # 1h old → an ordinary out-of-band price → refused, no tx.
+        updater, (session_cm, session) = self._updater()
+        result = await self._push(
+            updater, session_cm, usd=self.RECOVERY_USD, reference_int=self.STALE_REF, age_s=3600.0
+        )
+        assert result is None
+        session.post.assert_not_called()
+
+    async def test_reseed_ceiling_rejects_an_implausible_move_even_when_stale(self, caplog):
+        # Adversarial input: a ÷10 decimal-shift glitch (9000 bps) during the
+        # SAME 13-day stale window that legitimises the 3341 bps recovery. The
+        # outage must not become a blank cheque.
+        updater, (session_cm, session) = self._updater()
+        with caplog.at_level(logging.ERROR, logger="archimedes.chain.oracle_updater"):
+            result = await self._push(updater, session_cm, usd=10450.0, reference_int=self.STALE_REF, age_s=13 * _DAY_S)
+        assert result is None
+        session.post.assert_not_called()
+        errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+        assert any("STALE-RESEED REFUSED for sBTC" in m and "9000 bps" in m for m in errors), errors
+
+    async def test_ceiling_is_what_rejects_it(self):
+        # Proves the previous test is exercising the ceiling and not some other
+        # gate: raise ONLY the ceiling and the identical input goes through.
+        updater, (session_cm, session) = self._updater()
+        updater._max_reseed_deviation_bps = 9500
+        result = await self._push(updater, session_cm, usd=10450.0, reference_int=self.STALE_REF, age_s=13 * _DAY_S)
+        assert result == "tx-reseed"
+        session.post.assert_called_once()
+
+    async def test_threshold_boundary_one_second_short_still_rejects(self):
+        # Pins the comparison direction on the staleness threshold itself: at
+        # the threshold minus 1s the baseline is NOT yet stale and the identical
+        # move is refused; at exactly the threshold it is. Without this an
+        # off-by-one (>= vs >) would silently widen or narrow the escape by a
+        # full cycle and no other test would notice.
+        updater, (session_cm, session) = self._updater()
+        just_short = await self._push(
+            updater,
+            session_cm,
+            usd=self.RECOVERY_USD,
+            reference_int=self.STALE_REF,
+            age_s=float(DEFAULT_STALE_RESEED_AFTER_SECONDS - 1),
+        )
+        assert just_short is None
+        session.post.assert_not_called()
+
+        at_threshold = await self._push(
+            updater,
+            session_cm,
+            usd=self.RECOVERY_USD,
+            reference_int=self.STALE_REF,
+            age_s=float(DEFAULT_STALE_RESEED_AFTER_SECONDS),
+        )
+        assert at_threshold == "tx-reseed"
+        session.post.assert_called_once()
+
+    async def test_reseed_still_faces_the_secondary_crosscheck(self, caplog):
+        # The escape relaxes ONE gate (the deviation band vs a stale on-chain
+        # baseline) and nothing else. The #775 independent-second-opinion
+        # cross-check runs AFTER _validate_for_push returns None, so a re-seed
+        # candidate whose primary diverges from the secondary is still refused
+        # and no tx is submitted. Uses sSPY (the only synth in YFINANCE_MAP, so
+        # the cross-check is live for it) and the issue's real sSPY numbers:
+        # 592.40 → 769.09 is 2983 bps, inside the 7500 bps recovery ceiling.
+        updater, (session_cm, session) = self._updater()
+        price = AssetPrice(
+            symbol="sSPY",
+            price_usd=769.09,
+            timestamp=datetime.now(UTC),
+            # NOT the active market-data provider, so the cross-check is a real
+            # second opinion rather than the same source twice.
+            source="pyth",
+        )
+        fresh_bar = datetime.now(UTC)
+        with (
+            patch("archimedes.chain.oracle_updater.aiohttp.ClientSession", return_value=session_cm),
+            patch("archimedes.chain.oracle_updater._encrypt_entity_secret", return_value="ciphertext"),
+            patch.object(updater, "_get_reference_price_int", AsyncMock(return_value=(_int6(592.40), True))),
+            patch.object(updater, "_reference_age_seconds", AsyncMock(return_value=13 * _DAY_S)),
+            patch.object(updater, "_poll_circle_tx", AsyncMock(return_value="COMPLETE")),
+            # Independent reading disagrees wildly — beyond the 5000 bps band.
+            patch.object(updater, "_fetch_yfinance_single", AsyncMock(return_value=(300.0, fresh_bar))),
+            caplog.at_level(logging.WARNING, logger="archimedes.chain.oracle_updater"),
+        ):
+            result = await updater.push_prices_on_chain([price])
+
+        assert result is None
+        session.post.assert_not_called()
+        messages = [r.getMessage() for r in caplog.records]
+        # The escape did fire (proving the cross-check is what stopped it, not
+        # the deviation band) and the cross-check then refused the push anyway.
+        assert any("STALE-RESEED for sSPY" in m for m in messages), messages
+        assert any("cross-check FAIL" in m for m in messages), messages
+
+    async def test_unknown_baseline_age_does_not_unlock_the_escape(self, caplog):
+        # An unreadable lastUpdated (RPC down) must never be read as "stale
+        # enough" — same confirmed-absent vs unobtainable discipline as #587.
+        updater, (session_cm, session) = self._updater()
+        with caplog.at_level(logging.WARNING, logger="archimedes.chain.oracle_updater"):
+            result = await self._push(
+                updater, session_cm, usd=self.RECOVERY_USD, reference_int=self.STALE_REF, age_s=None
+            )
+        assert result is None
+        session.post.assert_not_called()
+        assert any("UNREADABLE" in r.getMessage() for r in caplog.records), caplog.records
+
+    async def test_escape_can_be_disabled_by_env(self, monkeypatch):
+        monkeypatch.setenv("ORACLE_STALE_RESEED_AFTER_SECONDS", "0")
+        updater = OracleUpdater()
+        updater._circle_public_key = "cached-pem"
+        assert updater._stale_reseed_after_s == 0
+        resp = MagicMock(status=201)
+        resp.json = AsyncMock(return_value={"data": {"id": "tx-reseed"}})
+        session_cm, session = _mock_aiohttp_session(post_response=resp)
+        result = await self._push(
+            updater, session_cm, usd=self.RECOVERY_USD, reference_int=self.STALE_REF, age_s=13 * _DAY_S
+        )
+        assert result is None
+        session.post.assert_not_called()
+
+    async def test_a_failed_reseed_names_the_manual_escape(self, caplog):
+        # forceSetPrice is onlyOwner. If the Circle wallet is not the owner the
+        # recovery reverts — that must be loud and actionable, never silent.
+        updater, (session_cm, _session) = self._updater()
+        price = _price(symbol="sBTC", usd=self.RECOVERY_USD)
+        with (
+            patch("archimedes.chain.oracle_updater.aiohttp.ClientSession", return_value=session_cm),
+            patch("archimedes.chain.oracle_updater._encrypt_entity_secret", return_value="ciphertext"),
+            patch.object(updater, "_get_reference_price_int", AsyncMock(return_value=(self.STALE_REF, True))),
+            patch.object(updater, "_reference_age_seconds", AsyncMock(return_value=13 * _DAY_S)),
+            patch.object(updater, "_poll_circle_tx", AsyncMock(return_value="FAILED")),
+            caplog.at_level(logging.ERROR, logger="archimedes.chain.oracle_updater"),
+        ):
+            result = await updater.push_prices_on_chain([price])
+
+        assert result is None
+        assert "sBTC" not in updater._last_pushed_price_int  # baseline reference untouched
+        errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+        assert any("STALE-RESEED FAILED for sBTC" in m and "forceSetPrice" in m for m in errors), errors
+
+    async def test_defaults(self):
+        updater = OracleUpdater()
+        assert updater._stale_reseed_after_s == DEFAULT_STALE_RESEED_AFTER_SECONDS == 86_400
+        assert updater._max_reseed_deviation_bps == DEFAULT_MAX_RESEED_DEVIATION_BPS == 7500
+        # The ceiling must sit above the normal band (otherwise the escape is
+        # unreachable) and below the contract's FORCE_MAX_DEVIATION_BPS (90_000).
+        assert DEFAULT_MAX_DEVIATION_BPS < DEFAULT_MAX_RESEED_DEVIATION_BPS < 90_000
+
+
+# ── _reference_age_seconds ────────────────────────────────────────────────
+
+
+class TestReferenceAgeSeconds:
+    """The baseline clock behind the #1341 escape. Every unreadable case must
+    return None (unknown), never a number the caller could read as 'stale'."""
+
+    def _loader(self, last_updated):
+        oracle_contract = MagicMock()
+        oracle_contract.functions.lastUpdated.return_value.call = AsyncMock(return_value=last_updated)
+        loader = MagicMock()
+        loader.oracle_for.return_value = oracle_contract
+        return loader
+
+    async def test_reads_last_updated_as_an_age(self, updater):
+        ts = int(datetime.now(UTC).timestamp()) - 3600
+        with patch("archimedes.chain.contracts.get_contract_loader", return_value=self._loader(ts)):
+            age = await updater._reference_age_seconds("sBTC")
+        assert age is not None and 3590 <= age <= 3610
+
+    async def test_chain_read_failure_is_unknown_not_stale(self, updater):
+        with patch(
+            "archimedes.chain.contracts.get_contract_loader",
+            side_effect=ConnectionError("RPC down"),
+        ):
+            assert await updater._reference_age_seconds("sBTC") is None
+
+    async def test_never_set_timestamp_is_unknown(self, updater):
+        with patch("archimedes.chain.contracts.get_contract_loader", return_value=self._loader(0)):
+            assert await updater._reference_age_seconds("sBTC") is None
+
+    async def test_future_timestamp_is_unknown(self, updater):
+        ts = int(datetime.now(UTC).timestamp()) + 3600
+        with patch("archimedes.chain.contracts.get_contract_loader", return_value=self._loader(ts)):
+            assert await updater._reference_age_seconds("sBTC") is None

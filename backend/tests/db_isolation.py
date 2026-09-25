@@ -16,6 +16,7 @@ the same process (see issue #1100).
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from archimedes import db as archimedes_db
@@ -76,3 +77,18 @@ def redirect_to_tmp_sqlite(tmp_path: Path) -> Iterator[None]:
         archimedes_db.engine = orig_engine
         archimedes_db.SessionLocal = orig_session_local
         archimedes_db.DATABASE_URL = orig_database_url
+
+
+@contextmanager
+def isolated_empty_sqlite(tmp_path: Path) -> Iterator[None]:
+    """``with`` form of :func:`redirect_to_tmp_sqlite`.
+
+    Use this when a test calls ``load_corpus()`` with ``path=None`` and
+    therefore takes the DB-first branch. A sibling TestClient / ASGI lifespan
+    can have already seeded the process-global suite DB with the full
+    ~18k-row manifest (the 18752-vs-4 failure on Quality Gate). Redirecting
+    to an empty tmp sqlite lets the test measure the *file* fallback it
+    claims — ``ARCHIMEDES_CORPUS_MANIFEST`` is that fallback's location, not
+    a production DB bypass (issue #1640).
+    """
+    yield from redirect_to_tmp_sqlite(tmp_path)

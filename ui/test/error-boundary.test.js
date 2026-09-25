@@ -68,7 +68,12 @@ test("AuthenticatedApp.jsx wraps {renderPage()} in an <ErrorBoundary keyed on th
 	);
 	assert.match(
 		authenticatedApp,
-		/<ErrorBoundary\s*key=\{`\$\{route\.page\}:\$\{route\.strategyId \?\? ""\}:\$\{route\.vaultAddress \?\? ""\}:\$\{route\.traceId \?\? ""\}:\$\{route\.highlight \?\? ""\}:\$\{route\.tab \?\? ""\}`\}\s*>\s*\{renderPage\(\)\}\s*<\/ErrorBoundary>/,
+		// The boundary must be keyed on the page + every parameterised sub-route
+		// and enclose renderPage(). A Suspense wrapper between them is allowed
+		// (lazy routes need a fallback INSIDE the boundary so a chunk-load
+		// failure is caught by it) — what the guard rejects is a missing key
+		// segment or renderPage() escaping the boundary.
+		/<ErrorBoundary\s*key=\{`\$\{route\.page\}:\$\{route\.strategyId \?\? ""\}:\$\{route\.vaultAddress \?\? ""\}:\$\{route\.traceId \?\? ""\}:\$\{route\.highlight \?\? ""\}:\$\{route\.tab \?\? ""\}`\}\s*>\s*(?:<Suspense[\s\S]*?>\s*)?\{renderPage\(\)\}\s*(?:<\/Suspense>\s*)?<\/ErrorBoundary>/,
 	);
 });
 

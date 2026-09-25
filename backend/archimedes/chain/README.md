@@ -31,7 +31,7 @@ Minimal harness: creates an `OracleUpdater`, calls `fetch_prices() → push_pric
 Implements `IStrategyPublisher`. Registers strategy keccak256 hashes (methodology + consulted-papers hash) to `StrategyRegistry.sol` once a strategy passes the rigor gate (DSR + PBO + walk-forward OOS + look-ahead audit). Only Tier-1 strategies are promoted to VALIDATED and anchored; candidate/rejected strategies are never registered. Uses the dual-path signing pattern: Circle Developer-Controlled Wallet (primary) or raw agent private key (fallback).
 
 **`trace_publisher.py`** — Anchors reasoning traces on-chain.  
-Implements `ITracePublisher`. Publishes `ReasoningTrace` objects as keccak256 hashes to `ReasoningTraceRegistry.sol`. The hash is the proof of provenance; the full trace JSON is stored off-chain (db + optional IPFS); anyone can recompute and verify against the on-chain anchor. Encodes metadata (timestamp, decision type, agent version) alongside the hash. Uses the same dual-path signing as `strategy_publisher.py`.
+Implements `ITracePublisher`. Publishes `ReasoningTrace` objects as keccak256 hashes to `ReasoningTraceRegistry.sol`. The hash is the proof of provenance; the full trace JSON is stored off-chain (Postgres). Anyone can recompute and verify against the on-chain anchor. Encodes metadata (timestamp, decision type, agent version) alongside the hash. Uses the same dual-path signing as `strategy_publisher.py`. Live reveals pass an empty `storagePointer` — we do not pin traces ([ADR](../../docs/adr/ipfs-pinning-not-live.md)).
 
 ### Agent Coordination
 
@@ -375,7 +375,7 @@ Both paths sign the same transaction shape, so either can be swapped for the oth
 
 ### Why Reasoning Traces Are Hashed, Not Stored On-Chain?
 
-On-chain storage is expensive and immutable. The hash is the proof of existence and integrity. The full trace JSON is stored off-chain (Postgres) and optionally pinned to IPFS. Anyone can recompute the hash and verify against the on-chain anchor. This is the "commit-reveal" pattern: fast on-chain (one hash), full details off-chain (full JSON), verifiable both ways.
+On-chain storage is expensive and immutable. The hash is the proof of existence and integrity. The full trace JSON is stored off-chain (Postgres). Anyone can recompute the hash and verify against the on-chain anchor. This is the "commit-reveal" pattern: fast on-chain (one hash), full details off-chain (full JSON), verifiable both ways. We do not pin traces to a public gateway ([ADR](../../docs/adr/ipfs-pinning-not-live.md)).
 
 ## Known Limitations and TODOs
 

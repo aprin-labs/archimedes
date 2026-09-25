@@ -2,7 +2,7 @@
 
 > **Audience:** Archimedes team
 > **Status:** Accepted
-> **Date:** 2026-05-13 (recommended); ratified in the Day-3 sync — exact ratification date not recorded in git [unestablished — needs Dan]; closed as Accepted 2026-07-28; amended 2026-08-19 (engine census + provenance columns)
+> **Date:** 2026-05-13 (recommended); ratified in the Day-3 sync — exact ratification date not recorded in git [unestablished — needs Dan]; closed as Accepted 2026-07-28; amended 2026-08-19 (engine census + provenance columns), amended 2026-08-30 (look_ahead_audit_source is now a real structural audit)
 > **Owner:** Dan Browne
 > **Supersedes:** —
 > **Superseded-by:** —
@@ -293,17 +293,48 @@ the record matches reality:
 **Disposition after the 2026-08 chaff/test-suite audit:** much of
 `portfolio_backtester.py` was found structurally dead on the production pipeline —
 "bypassed, never decommissioned" (its Phase-2.2 rigor-overlay helpers and the
-`capacity_decay` loop had no live callers). [PR #1259](https://github.com/a-apin/archimedes/pull/1259)
+`capacity_decay` loop had no live callers). [PR #1259](https://github.com/aprin-labs/archimedes/pull/1259)
 (in review at the time of this amendment) deletes the dead clusters with their tests;
 the surviving `portfolio-simulator-v1` surface is exactly `backtest_portfolio` +
 `sensitivity_sweep`. Historical `backtest_results` rows tagged
 `portfolio-simulator-v1` remain valid provenance — the tag did its job.
 
-**Provenance extended beyond the engine tag** ([PR #1242](https://github.com/a-apin/archimedes/pull/1242),
+**Provenance extended beyond the engine tag** ([PR #1242](https://github.com/aprin-labs/archimedes/pull/1242),
 merged, migration `b41c7d9e2a05`): `backtest_results` now also carries
 `cost_model_id` (which cost floor priced the run) and `look_ahead_audit_source`
-(AST audit vs. closed-DSL self-attestation — the distinction matters for generated
-strategies). The "engine provenance is recorded per result" consequence above now
-covers *how* a result was costed and audited, not just which engine produced it.
+(which kind of look-ahead evidence backs the boolean beside it — the distinction
+matters for generated strategies). The "engine provenance is recorded per result"
+consequence above now covers *how* a result was costed and audited, not just which
+engine produced it.
+
+**`look_ahead_audit_source` values, updated 2026-08-30.** The DSL path's value
+was `"self_attested"` when this amendment was written, because the boolean it
+labelled genuinely was the LLM's own `look_ahead_safe` declaration. It no longer
+is. [`services/dsl_lookahead_audit.py`](../../backend/archimedes/services/dsl_lookahead_audit.py)
+replaced that declaration with a structural proof — an AST audit of the DSL
+interpreter showing every bar-indexed read is at offset ≤ 0, a walk of the
+validated spec showing it uses nothing outside that audited surface, and the
+broker cheat-on-close/open check charged on the real `cerebro`. The DSL path now
+records which of two things happened, on the axis a provenance column is about —
+did an audit conclude:
+
+- `dsl_structural_audit` — the audit reached a verdict about the strategy,
+  `pass` **or** `fail`. A failure's provenance is the audit just as much as a
+  pass's is.
+- `dsl_audit_not_run` — the audit reached no verdict (`pending`/`degenerate`).
+  The boolean beside this label is `False` because nothing was proven, not
+  because a leak was found.
+
+`"self_attested"` is **retired**: the field it named — the LLM's own
+`look_ahead_safe` declaration — was deleted from the DSL, so nothing is attested
+and no path writes the value again. It is also no longer honoured on *read*: a
+pre-existing row carrying it has a boolean that was a claim rather than a
+measurement, so `dsl_lookahead_audit.verdict_from_persisted_row` grades such a
+row `pending` — non-deployable, rendered "NOT_RUN", never a `PASS`. The
+three-source distinction the amendment relied on is therefore now five values,
+one of them historical: `broker_config_only` (execution-timing only, never
+fails), `ast_audit` (source-level audit of cited curated code),
+`dsl_structural_audit` (the closed-DSL proof concluded), `dsl_audit_not_run`
+(it did not), and the retired `self_attested` on legacy rows only.
 Per-engine row counts are a live-DB question (`GROUP BY source_pipeline,
 backtest_engine`); no number is stated here by design.

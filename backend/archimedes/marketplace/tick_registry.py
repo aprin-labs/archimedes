@@ -52,6 +52,7 @@ class HaltSource(str, Enum):
     PUBLISHER = "publisher"  # step stopped the flow for everyone
     PAYMENT = "payment"  # this subscriber could not pay for a step
     EXECUTION = "execution"  # paid, but the on-chain mirror itself failed
+    PAYMENTS_HALT = "payments_halt"  # #1240 kill switch active — no real charge moved, subscriber not deferred
 
 
 @dataclass

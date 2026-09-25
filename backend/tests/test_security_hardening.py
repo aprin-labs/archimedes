@@ -25,8 +25,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from tests.auth_helpers import TEST_WALLET, auth_cookies
-
 # ─── 1. Docs gate ─────────────────────────────────────────────────────
 
 
@@ -185,35 +183,6 @@ except RuntimeError as e:
 # ─── 3. Rate limits on POST endpoints ─────────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_chat_post_rate_limited():
-    """POST /api/vaults/{addr}/chat is rate-limited (returns 429 eventually)."""
-    from archimedes.main import app
-
-    # Enable rate limiting for this test
-    app.state.limiter.enabled = True
-    # Reset limiter storage so prior test state doesn't interfere
-    import contextlib
-
-    with contextlib.suppress(Exception):
-        app.state.limiter.reset()
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            hit_429 = False
-            for _ in range(25):
-                resp = await client.post(
-                    "/api/vaults/0x0000000000000000000000000000000000000001/chat",
-                    json={"wallet_address": TEST_WALLET, "message": "test"},
-                    cookies=auth_cookies(),
-                )
-                if resp.status_code == 429:
-                    hit_429 = True
-                    break
-            assert hit_429, "Expected 429 rate limit but never hit it in 25 requests"
-    finally:
-        app.state.limiter.enabled = not os.getenv("TESTING")
-
-
 @contextlib.contextmanager
 def _limiter_enabled():
     """Rate limiting is off under TESTING (limiter.py) — switch it on for one test.
@@ -352,6 +321,16 @@ def test_cors_no_wildcard_headers():
 # ─── 6. Request body size limit ───────────────────────────────────────
 
 
+# The route below is incidental: the 1 MB cap is enforced by an app-level
+# middleware (`main.py::_limit_body_size`) that runs before routing, so any real
+# POST path exercises it. These two used to POST at the per-vault chat endpoint;
+# chat was deleted 2026-08-31, so they moved to `/api/strategies/stress/run`
+# (public POST, no auth) rather than being deleted with it — the middleware is
+# the thing under test and its coverage must not disappear with the surface that
+# happened to carry it.
+_SIZE_PROBE_ROUTE = "/api/strategies/stress/run"
+
+
 @pytest.mark.asyncio
 async def test_oversized_body_returns_413():
     """POST with body > 1 MB returns 413."""
@@ -361,7 +340,7 @@ async def test_oversized_body_returns_413():
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
-            "/api/vaults/0x0000000000000000000000000000000000000001/chat",
+            _SIZE_PROBE_ROUTE,
             content=big_body,
             headers={"Content-Type": "application/json", "Content-Length": str(len(big_body))},
         )
@@ -375,54 +354,11 @@ async def test_normal_body_passes_size_check():
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
-            "/api/vaults/0x0000000000000000000000000000000000000001/chat",
-            json={"wallet_address": "0x" + "a" * 40, "message": "hello"},
+            _SIZE_PROBE_ROUTE,
+            json={"allocations": [{"symbol": "sTSLA", "weight": 1.0}]},
         )
     # Should not be 413 — might be 400/422/200 depending on other validation
     assert resp.status_code != 413
-
-
-# ─── 7. Chat account boundary precedes body wallet trust ──────────────
-
-
-@pytest.mark.asyncio
-async def test_chat_rejects_invalid_wallet():
-    """Anonymous body wallet input cannot create chat identity."""
-    from archimedes.main import app
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post(
-            "/api/vaults/0x0000000000000000000000000000000000000001/chat",
-            json={"wallet_address": "garbage", "message": "test"},
-        )
-    assert resp.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_chat_rejects_short_wallet():
-    """Anonymous short wallet input cannot bypass account authentication."""
-    from archimedes.main import app
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post(
-            "/api/vaults/0x0000000000000000000000000000000000000001/chat",
-            json={"wallet_address": "0xabc", "message": "test"},
-        )
-    assert resp.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_chat_accepts_valid_wallet():
-    """POST accepts a properly-formatted 0x + 40-hex wallet address."""
-    from archimedes.main import app
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post(
-            "/api/vaults/0x0000000000000000000000000000000000000001/chat",
-            json={"wallet_address": "0x" + "a" * 40, "message": "hello"},
-        )
-    # Should pass wallet validation (may fail for other reasons like missing vault)
-    assert resp.status_code != 422, f"Valid wallet rejected with 422: {resp.text}"
 
 
 # ─── 8. _load_strategy_code path traversal guard ─────────────────────

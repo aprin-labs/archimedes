@@ -194,8 +194,17 @@ class TestPassportToStrategyResponse:
 
         assert resp.papers[0].title == "Hand-curated Title"
 
-    def test_unknown_arxiv_id_falls_back_to_arxiv_id(self, session: Session):
-        """When corpus has no matching row, the title falls back to the arxiv_id."""
+    def test_unknown_arxiv_id_reports_a_null_title_not_the_id(self, session: Session):
+        """An unresolvable title is **None**, not the arXiv id (#1637).
+
+        Was: the id was returned in the ``title`` field. An id presented as a
+        title is a small fabrication of the same family as printing the
+        strategy's own name there — and it is not needed, because ``arxiv_id``
+        is right beside it and the renderer already composes its own fallback
+        (``{p.title || p.arxiv_id || "—"}``). This also aligns the passport
+        with ``_resolve_source_papers``, whose ``resolved_title`` has always
+        stayed None for exactly this case. Owner decision Q3 on #1688.
+        """
         _make_passport_record(
             session,
             "fuse-003",
@@ -209,10 +218,12 @@ class TestPassportToStrategyResponse:
         record = get_passport(session, "fuse-003")
         resp = _passport_to_strategy_response(record, session=session)
 
-        assert resp.papers[0].title == "2301.99999"
+        assert resp.papers[0].title is None
+        assert resp.papers[0].arxiv_id == "2301.99999"
+        assert resp.paper_title is None
 
-    def test_no_session_falls_back_to_arxiv_id(self, session: Session):
-        """Without a session, enrichment is skipped and title falls back to arxiv_id."""
+    def test_no_session_reports_a_null_title_not_the_id(self, session: Session):
+        """Without a session, enrichment is skipped and the title stays None."""
         _add_corpus_paper(session, "2301.00004", "Would be enriched")
 
         _make_passport_record(
@@ -228,9 +239,9 @@ class TestPassportToStrategyResponse:
         record = get_passport(session, "fuse-004")
         resp = _passport_to_strategy_response(record, session=None)
 
-        # No session → falls back to arxiv_id (the title is "" so _resolved_title
-        # returns arxiv_id as the final fallback)
-        assert resp.papers[0].title == "2301.00004"
+        # No session → no enrichment, and the final fallback is None, not the id.
+        assert resp.papers[0].title is None
+        assert resp.papers[0].arxiv_id == "2301.00004"
 
     def test_papers_field_populated_for_multi_paper_strategy(self, session: Session):
         """The ``papers`` list on the response contains all source papers."""
@@ -282,7 +293,27 @@ class TestPassportToStrategyResponse:
 
 
 # ---------------------------------------------------------------------------
-# #1184 — a zero-variance persisted series must not report as "pending"
+# The verdict of record — what the read path serves, and where #1184's
+# zero-variance property is now enforced.
+#
+# HISTORY, because these tests changed shape and the reason matters. #1184
+# fixed a real defect: the passport read path graded the STORED AGGREGATE alone
+# ("pending" if sharpe_ratio is NULL, else the stored boolean), so a flat
+# persisted series — broken data, or a zero-trade backtest — surfaced as
+# "pending", which is a claim ("not graded yet") and for those rows a false
+# one. The fix loaded each row's persisted return series on every request and
+# re-derived the four-state badge from it.
+#
+# The owner decision of 2026-09-01 (docs/adr/rigor-verdict-of-record.md) keeps
+# the property and moves where it is enforced: a strategy is graded ONCE, at
+# backtest time, and `verdict_from_returns` — the real gate — stores
+# "degenerate" as itself. The read path serves that stored word. So the
+# property is now proven at the WRITER (TestAFlatSeriesIsGradedDegenerate,
+# which runs the actual gate over the actual flat shapes #1184 named) and the
+# read path is proven to serve what was stored, unchanged
+# (TestTheStoredVerdictIsServedVerbatim). Nothing about the four states is
+# weaker; the derivation simply stopped happening twice, in two places, with
+# two possible answers.
 # ---------------------------------------------------------------------------
 
 
@@ -312,223 +343,206 @@ def _add_backtest_row(
             artifact_json=_json.dumps({"results": [{"metrics": {"daily_returns": daily_returns}}]}),
         )
     )
-    # commit, not flush: the fallback path under test rolls the session back
-    # before retrying, and a rollback discards un-committed rows. Production
-    # rows are committed, so flushing here would test a state that cannot occur.
     session.commit()
 
 
-def _passport_with_aggregate(
+def _passport_with_verdict(
     session: Session,
     strategy_id: str,
     *,
     sharpe_ratio: float | None,
-    passes: bool,
+    status: str,
 ) -> StrategyPassportRecord:
+    """A passport row carrying a STORED verdict, coupled the way the loader writes it."""
     record = _make_passport_record(session, strategy_id, [{"arxiv_id": "2301.00009", "title": "T"}])
     record.sharpe_ratio = sharpe_ratio
-    record.passes_rigor_gate = passes
+    record.rigor_gate_status = status
+    record.passes_rigor_gate = status == "pass"
     session.commit()  # see _add_backtest_row
     return record
 
 
-class TestZeroVarianceSeriesReportsDegenerate:
-    """#1184: the generated/fusion passport read path graded the stored aggregate
-    alone, so a flat persisted series — broken data, or a zero-trade backtest —
-    surfaced as ``"pending"``. "Pending" is a claim ("not graded yet"), and for
-    these rows it was false. These tests pin the four-state answer.
+class TestTheStoredVerdictIsServedVerbatim:
+    """The read path serves ``strategy_passports.rigor_gate_status``, full stop.
 
-    Anti-vacuity: every assertion below is written against a specific mutation,
-    named in its docstring. Reverting ``rigor_gate_status`` to the old
-    ``"pending" if record.sharpe_ratio is None else ("pass" if ... else "fail")``
-    expression fails each one.
+    Anti-vacuity: every case names the mutation that reddens it. The single
+    mutation that reddens ALL of them is restoring the read-time derivation —
+    ``_rigor_status, _is_placeholder = _passport_rigor_status(record, returns)``
+    in ``_passport_to_strategy_response`` — because that expression cannot
+    return "degenerate" for a row with no persisted series, cannot return
+    "pass" for a row whose stored sharpe is NULL, and answers from a second
+    source that can disagree with the first.
     """
 
-    def test_flat_series_with_no_stored_sharpe_is_degenerate_not_pending(self, session: Session):
-        """MUTATION: the old three-way returns "pending" here — the exact defect."""
+    def test_a_stored_degenerate_is_served_as_degenerate(self, session: Session):
+        """MUTATION: derive from the aggregate — this row has NO persisted series,
+        so the old expression returns "pending" and loses the fourth state."""
         from archimedes.api.strategies_routes import _passport_to_strategy_response
 
-        record = _passport_with_aggregate(session, "flat-none", sharpe_ratio=None, passes=False)
-        _add_backtest_row(session, "flat-none", [0.0] * 400)
+        record = _passport_with_verdict(session, "stored-degen", sharpe_ratio=0.0, status="degenerate")
 
         resp = _passport_to_strategy_response(record, session)
 
         assert resp.rigor_gate_status == "degenerate"
-        assert resp.is_backtest_placeholder is False, "a persisted series exists, so this is graded, not ungraded"
+        assert resp.passes_rigor_gate is False
+        assert resp.is_backtest_placeholder is False, "a degenerate row HAS a backtest; its returns are just flat"
 
-    def test_flat_series_with_a_stored_sharpe_is_degenerate_not_fail(self, session: Session):
-        """MUTATION: the old three-way returns "fail" here.
+    def test_a_stored_pass_is_served_as_a_pass(self, session: Session):
+        """MUTATION: serve ``record.passes_rigor_gate`` instead of the four-state."""
+        from archimedes.api.strategies_routes import _passport_to_strategy_response
 
-        Kept alongside the case above deliberately: a fix that only handled the
-        NULL-sharpe shape would pass that test and fail this one.
+        record = _passport_with_verdict(session, "stored-pass", sharpe_ratio=1.4, status="pass")
+
+        resp = _passport_to_strategy_response(record, session)
+
+        assert resp.rigor_gate_status == "pass"
+        assert resp.passes_rigor_gate is True
+        assert resp.is_backtest_placeholder is False
+
+    def test_a_stored_fail_is_served_as_a_fail(self, session: Session):
+        from archimedes.api.strategies_routes import _passport_to_strategy_response
+
+        record = _passport_with_verdict(session, "stored-fail", sharpe_ratio=0.2, status="fail")
+
+        resp = _passport_to_strategy_response(record, session)
+
+        assert resp.rigor_gate_status == "fail"
+        assert resp.passes_rigor_gate is False
+
+    def test_a_stored_pending_is_served_as_pending_and_marked_a_placeholder(self, session: Session):
+        """CONTROL: "pending" has to survive where it is still true."""
+        from archimedes.api.strategies_routes import _passport_to_strategy_response
+
+        record = _passport_with_verdict(session, "stored-pending", sharpe_ratio=None, status="pending")
+
+        resp = _passport_to_strategy_response(record, session)
+
+        assert resp.rigor_gate_status == "pending"
+        assert resp.passes_rigor_gate is False
+        assert resp.is_backtest_placeholder is True
+
+    def test_a_stored_sharpe_does_not_promote_an_ungraded_row(self, session: Session):
+        """MUTATION: restore ``"pending" if record.sharpe_ratio is None else ...``.
+
+        The old derivation read a NON-NULL sharpe as proof the gate had run and
+        answered. It is not: ``_update_record`` writes ``sharpe_ratio`` from any
+        refresh, graded or not. A row with real backtest metrics and no grade is
+        exactly the shape a crashed post-backtest refresh leaves behind — and it
+        must stay "pending", not become a "fail" nothing decided.
         """
         from archimedes.api.strategies_routes import _passport_to_strategy_response
 
-        record = _passport_with_aggregate(session, "flat-zero", sharpe_ratio=0.0, passes=False)
-        _add_backtest_row(session, "flat-zero", [0.0] * 400)
+        record = _passport_with_verdict(session, "metrics-no-grade", sharpe_ratio=1.9, status="pending")
 
-        assert _passport_to_strategy_response(record, session).rigor_gate_status == "degenerate"
+        assert _passport_to_strategy_response(record, session).rigor_gate_status == "pending"
 
-    def test_a_flat_series_can_never_report_as_passing(self, session: Session):
-        """MUTATION: drop the ``and _rigor_status != "degenerate"`` conjunct.
+    def test_a_stored_true_boolean_cannot_outvote_a_non_pass_status(self, session: Session):
+        """MUTATION: ``passes_rigor_gate=bool(record.passes_rigor_gate)``.
 
-        A stored ``passes_rigor_gate=True`` on a row with no variance to grade is
-        contradictory data. The badge must not repeat the contradiction — this is
-        the claims-integrity half of the fix, not the labelling half.
+        A row that predates the coupling (the generation-time fusion verdict
+        wrote the boolean; nothing wrote a status) can carry ``True`` beside a
+        non-pass four-state. The served boolean is derived from the status, so
+        the contradiction cannot reach a badge.
         """
         from archimedes.api.strategies_routes import _passport_to_strategy_response
 
-        record = _passport_with_aggregate(session, "flat-claims-pass", sharpe_ratio=1.9, passes=True)
-        _add_backtest_row(session, "flat-claims-pass", [0.0] * 400)
+        record = _passport_with_verdict(session, "legacy-true", sharpe_ratio=1.4, status="degenerate")
+        record.passes_rigor_gate = True  # deliberately decoupled, as legacy rows were
+        session.commit()
 
         resp = _passport_to_strategy_response(record, session)
 
         assert resp.rigor_gate_status == "degenerate"
         assert resp.passes_rigor_gate is False
 
-    def test_series_flat_only_inside_the_oos_window_is_degenerate(self, session: Session):
-        """MUTATION: drop the ``is_oos_zero_variance_series`` half of the OR.
+    def test_the_list_path_agrees_with_the_detail_path(self, session: Session):
+        """The list endpoints are a second code path to the same claim.
 
-        A strategy that stops trading partway through — one of the two causes
-        #1184 names — leaves the full series non-constant, so the full-series
-        predicate alone misses it while ``compute_oos_sharpe`` still returns None.
+        MUTATION: make ``_passport_responses`` return anything but the same
+        per-row mapping (e.g. re-derive from a cohort read for list callers
+        only) — the two answers diverge and this reddens.
+        """
+        from archimedes.api.strategies_routes import _passport_responses, _passport_to_strategy_response
+
+        degen = _passport_with_verdict(session, "bulk-degen", sharpe_ratio=0.0, status="degenerate")
+        pending = _passport_with_verdict(session, "bulk-pending", sharpe_ratio=None, status="pending")
+
+        bulk = {r.id: r.rigor_gate_status for r in _passport_responses([degen, pending], session)}
+
+        assert bulk == {"bulk-degen": "degenerate", "bulk-pending": "pending"}
+        assert bulk["bulk-degen"] == _passport_to_strategy_response(degen, session).rigor_gate_status
+        assert bulk["bulk-pending"] == _passport_to_strategy_response(pending, session).rigor_gate_status
+
+
+class TestAFlatSeriesIsGradedDegenerate:
+    """#1184's property, proven where it is now enforced: the GRADING EVENT.
+
+    These run the real gate (``verdict_from_returns`` → ``run_rigor_gate``) over
+    the exact series shapes #1184 named, persist the verdict through the real
+    loader, and read it back through the real route. Nothing is stubbed, so the
+    chain writer → column → badge is proven end to end.
+    """
+
+    @staticmethod
+    def _grade_and_store(session: Session, strategy_id: str, series: list[float]) -> None:
+        from archimedes.services.live_rigor_gate import verdict_from_returns
+        from archimedes.services.passport_loader import RigorVerdictWrite, _apply_rigor_verdict
+
+        record = session.query(StrategyPassportRecord).filter_by(id=strategy_id).one()
+        _apply_rigor_verdict(record, RigorVerdictWrite.from_verdict(verdict_from_returns(strategy_id, series)))
+        session.commit()
+
+    def test_a_long_flat_series_grades_degenerate(self, session: Session):
+        """MUTATION: store ``verdict.passes`` and re-derive a status from it —
+        the boolean is False for BOTH "fail" and "degenerate", so the fourth
+        state is lost at the write, not at the read."""
+        from archimedes.api.strategies_routes import _passport_to_strategy_response
+
+        record = _passport_with_verdict(session, "grade-flat", sharpe_ratio=None, status="pending")
+        self._grade_and_store(session, "grade-flat", [0.0] * 400)
+
+        assert _passport_to_strategy_response(record, session).rigor_gate_status == "degenerate"
+
+    def test_a_SHORT_flat_series_grades_degenerate(self, session: Session):
+        """MUTATION: drop ``is_zero_variance_series`` from the gate's degeneracy OR.
+
+        The mirror of the OOS case below, and the half that is only load-bearing
+        below ~60 bars, where the OOS slice is too short for
+        ``is_oos_zero_variance_series`` to fire:
+
+            n=25  is_zero_variance_series=True  is_oos_zero_variance_series=False
+
+        A zero-trade backtest is exactly this shape — one of the two causes
+        #1184 names.
+        """
+        from archimedes.api.strategies_routes import _passport_to_strategy_response
+
+        record = _passport_with_verdict(session, "grade-flat-short", sharpe_ratio=None, status="pending")
+        self._grade_and_store(session, "grade-flat-short", [0.0] * 25)
+
+        assert _passport_to_strategy_response(record, session).rigor_gate_status == "degenerate"
+
+    def test_a_series_flat_only_inside_the_oos_window_grades_degenerate(self, session: Session):
+        """MUTATION: drop ``is_oos_zero_variance_series`` from that OR.
+
+        A strategy that stops trading partway through — the other cause #1184
+        names — leaves the full series non-constant, so the full-series predicate
+        alone misses it.
         """
         from archimedes.api.strategies_routes import _passport_to_strategy_response
 
         varied = [0.001 * ((i % 7) - 3) for i in range(280)]
-        record = _passport_with_aggregate(session, "flat-oos", sharpe_ratio=None, passes=False)
-        _add_backtest_row(session, "flat-oos", varied + [0.0] * 120)
+        record = _passport_with_verdict(session, "grade-flat-oos", sharpe_ratio=None, status="pending")
+        self._grade_and_store(session, "grade-flat-oos", varied + [0.0] * 120)
 
         assert _passport_to_strategy_response(record, session).rigor_gate_status == "degenerate"
 
-    def test_a_SHORT_flat_series_is_degenerate(self, session: Session):
-        """MUTATION: drop the ``is_zero_variance_series`` half of the OR.
-
-        The mirror of the OOS case above, and the one my first pass missed. Every
-        other flat fixture here is 400 bars, where BOTH predicates fire — so the
-        full-series half was never load-bearing and could have been deleted with
-        the suite still green. It is only load-bearing below ~60 bars, where the
-        OOS slice is too short for ``is_oos_zero_variance_series`` to return True:
-
-            n=25  is_zero_variance_series=True  is_oos_zero_variance_series=False
-
-        A zero-trade backtest is exactly this shape, and it is one of the two
-        causes #1184 names.
-        """
+    def test_a_real_varied_series_does_not_grade_degenerate(self, session: Session):
+        """CONTROL. MUTATION: label everything degenerate — every test above
+        would still pass without this one."""
         from archimedes.api.strategies_routes import _passport_to_strategy_response
 
-        record = _passport_with_aggregate(session, "flat-short", sharpe_ratio=None, passes=False)
-        _add_backtest_row(session, "flat-short", [0.0] * 25)
+        record = _passport_with_verdict(session, "grade-varied", sharpe_ratio=None, status="pending")
+        self._grade_and_store(session, "grade-varied", [0.001 * ((i % 11) - 5) for i in range(400)])
 
-        assert _passport_to_strategy_response(record, session).rigor_gate_status == "degenerate"
-
-    def test_a_short_flat_series_is_degenerate_through_the_bulk_path_too(self, session: Session):
-        """Same mutation, via the list path — the two must not diverge."""
-        from archimedes.api.strategies_routes import _passport_responses
-
-        record = _passport_with_aggregate(session, "bulk-flat-short", sharpe_ratio=None, passes=False)
-        _add_backtest_row(session, "bulk-flat-short", [0.0] * 25)
-
-        assert _passport_responses([record], session)[0].rigor_gate_status == "degenerate"
-
-    def test_a_real_series_with_no_stored_sharpe_still_reports_pending(self, session: Session):
-        """CONTROL. MUTATION: relabel unconditionally, ignoring the series.
-
-        Without this, a fix that returned "degenerate" for everything would pass
-        every test above. "Pending" has to survive where it is still true.
-        """
-        from archimedes.api.strategies_routes import _passport_to_strategy_response
-
-        record = _passport_with_aggregate(session, "varied-none", sharpe_ratio=None, passes=False)
-        _add_backtest_row(session, "varied-none", [0.001 * ((i % 11) - 5) for i in range(400)])
-
-        resp = _passport_to_strategy_response(record, session)
-
-        assert resp.rigor_gate_status == "pending"
-        assert resp.is_backtest_placeholder is True
-
-    def test_no_persisted_series_at_all_still_reports_pending(self, session: Session):
-        """CONTROL: genuinely ungraded. An absent series is not a flat series."""
-        from archimedes.api.strategies_routes import _passport_to_strategy_response
-
-        record = _passport_with_aggregate(session, "no-series", sharpe_ratio=None, passes=False)
-
-        assert _passport_to_strategy_response(record, session).rigor_gate_status == "pending"
-
-    def test_a_real_series_that_passed_still_reports_pass(self, session: Session):
-        """CONTROL: the fix must not disturb the verdict it was not about."""
-        from archimedes.api.strategies_routes import _passport_to_strategy_response
-
-        record = _passport_with_aggregate(session, "varied-pass", sharpe_ratio=1.4, passes=True)
-        _add_backtest_row(session, "varied-pass", [0.001 * ((i % 11) - 5) for i in range(400)])
-
-        resp = _passport_to_strategy_response(record, session)
-
-        assert resp.rigor_gate_status == "pass"
-        assert resp.passes_rigor_gate is True
-
-
-class TestTheListPathAgreesWithTheDetailPath:
-    """The list endpoints bulk-prefetch returns rather than loading per row.
-
-    That is a second code path to the same claim, so it gets its own guard: a
-    prefetch that silently handed every row an empty series would restore the
-    bug on exactly the surface (Library, the leaderboard) where it is most
-    visible, while every single-row test above kept passing.
-    """
-
-    def test_bulk_prefetch_reaches_the_same_verdict_as_the_single_row_load(self, session: Session):
-        """MUTATION: make ``_passport_responses`` pass ``[]`` for every row."""
-        from archimedes.api.strategies_routes import _passport_responses, _passport_to_strategy_response
-
-        flat = _passport_with_aggregate(session, "bulk-flat", sharpe_ratio=None, passes=False)
-        _add_backtest_row(session, "bulk-flat", [0.0] * 400)
-        varied = _passport_with_aggregate(session, "bulk-varied", sharpe_ratio=None, passes=False)
-        _add_backtest_row(session, "bulk-varied", [0.001 * ((i % 11) - 5) for i in range(400)])
-
-        bulk = {r.id: r.rigor_gate_status for r in _passport_responses([flat, varied], session)}
-
-        assert bulk == {"bulk-flat": "degenerate", "bulk-varied": "pending"}
-        # And it agrees with the per-row path, which is the point of the guard.
-        assert bulk["bulk-flat"] == _passport_to_strategy_response(flat, session).rigor_gate_status
-        assert bulk["bulk-varied"] == _passport_to_strategy_response(varied, session).rigor_gate_status
-
-    def test_an_explicitly_empty_prefetch_slice_is_not_treated_as_unknown(self, session: Session):
-        """A row the cohort read found nothing for is ungraded, not degenerate.
-
-        Guards the ``_RETURNS_NOT_PREFETCHED`` sentinel: collapsing "no prefetch
-        happened" into "the prefetch found nothing" would make the list path
-        re-query per row, quietly reintroducing the N+1 the bulk helper exists to
-        avoid.
-        """
-        from archimedes.api.strategies_routes import _passport_to_strategy_response
-
-        record = _passport_with_aggregate(session, "empty-slice", sharpe_ratio=None, passes=False)
-        _add_backtest_row(session, "empty-slice", [0.0] * 400)
-
-        # Explicit empty slice: do NOT go back to the DB, even though a row exists.
-        assert _passport_to_strategy_response(record, session, []).rigor_gate_status == "pending"
-
-
-class TestACohortReadFailureDoesNotSilentlyBecomePending:
-    """The failure branch of the bulk read is itself claim-bearing.
-
-    Handing every row ``[]`` when the cohort read raises would report a flat
-    series as "pending" again — the exact false claim this work removes — while
-    every other test in this file stayed green.
-    """
-
-    def test_a_failed_cohort_read_falls_back_to_per_row_not_to_pending(self, session: Session, monkeypatch):
-        """MUTATION: swallow the failure and hand every row ``[]``."""
-        import archimedes.services.backtest_repository as repo
-        from archimedes.api.strategies_routes import _passport_responses
-
-        record = _passport_with_aggregate(session, "cohort-boom", sharpe_ratio=None, passes=False)
-        _add_backtest_row(session, "cohort-boom", [0.0] * 400)
-
-        def _boom(*a, **k):
-            raise RuntimeError("cohort read exploded")
-
-        monkeypatch.setattr(repo, "get_all_daily_returns", _boom)
-
-        assert _passport_responses([record], session)[0].rigor_gate_status == "degenerate"
+        assert _passport_to_strategy_response(record, session).rigor_gate_status == "fail"

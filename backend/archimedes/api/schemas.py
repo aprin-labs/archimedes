@@ -153,16 +153,33 @@ class VaultListResponse(BaseModel):
 
 
 class PaperRefResponse(BaseModel):
-    """A single paper reference in a strategy passport."""
+    """A single paper reference in a strategy passport.
+
+    The wire projection of one ``assoc/v1`` association (#1637) — see
+    ``models/paper_assoc.py``. Every enrichment field is nullable and stays
+    null when unknown: authors, venue, year and DOI are structurally NULL for
+    generated strategies today, and ``null`` is the honest rendering of that.
+    """
 
     arxiv_id: str | None = None
-    title: str = ""
+    #: ``None``, not ``""``, when no title resolves — the renderer prints
+    #: "title unavailable — arXiv:<id>" rather than an empty pair of quotes.
+    title: str | None = None
     authors: list[str] = []
     doi: str | None = None
     venue: str | None = None
     year: int | None = None
     citation_count: int | None = None
     contribution: str | None = None
+    #: "cited" | "considered". ``papers[]`` carries only cited associations
+    #: today; the field is here so a consumer never has to assume.
+    role: str = "cited"
+    selection_rank: int | None = None
+    #: Reranker score at selection time. ``None`` whenever the rerank was
+    #: keyword-only or disabled — which is the common case. Never 0.0.
+    semantic_score: float | None = None
+    #: Corpus content hash. NULL in production until #1091 hydrates it.
+    content_hash: str | None = None
 
 
 class StrategyResponse(BaseModel):
@@ -183,6 +200,35 @@ class StrategyResponse(BaseModel):
     # strategy (no brief), or a legacy generated row the backfill migration
     # could not resolve.
     brief_intent: str | None = None
+    # The validated machine-readable DSL spec that RUNS this strategy — the
+    # same dict a fusion proposal emits, stored on ``StrategyPassport.
+    # strategy_spec`` / ``strategy_store.strategy_spec`` (#1646). The passport
+    # page renders it so a reader can see the executable rules behind the
+    # prose, instead of taking ``methodology_summary`` on faith.
+    #
+    # REASONING, not card content — and that classification is not a judgement
+    # call made here, it is quoted from the #1557 matrix in
+    # ``services/strategy_visibility.py``, which names "machine-readable DSL
+    # spec" in the REASONING column beside the debate transcript and the raw
+    # return series. So the gate is ``is_strategy_reasoning_visible``: public
+    # for ``is_example`` house rows, OWNER-ONLY for a user's row **including a
+    # published one**. Publishing consents to sharing the result, not the
+    # executable derivation — the identical rule ``GET /{id}/returns`` and
+    # ``GET /{id}/debate`` already enforce by 404ing, and the same reason
+    # ``POST /api/paper/deployments``'s ``_spec_for_strategy`` fails closed
+    # ("the thing a marketplace would license, not give away").
+    #
+    # Populated ONLY by the single-strategy detail route (``get_strategy``),
+    # exactly like ``brief_intent`` above and for a second, independent
+    # reason: the shared ``_passport_to_strategy_response`` /
+    # ``_passport_responses`` builders back Library and the public
+    # leaderboard, and a 100-row list payload (already heavy with full-library
+    # grading, #1173) must not carry 100 arbitrary-size JSON blobs. Both
+    # reasons point the same way, so this field is set at the route, never in
+    # a shared helper. ``None`` = not the caller's to read, a row with no spec
+    # (curated code-path strategies carry a ``strategy_code_path`` instead),
+    # or a row persisted before the column existed.
+    strategy_spec: dict[str, Any] | None = None
     asset_universe: list[str]
     # Provenance of the asset_universe pick (#857): "user" | "model" | "full",
     # or None for rows written before this field existed (curated strategies,
@@ -238,15 +284,26 @@ class StrategyResponse(BaseModel):
     # ── Metric provenance (A3 / #1187) ──────────────────────────────────────
     # Which source produced the RIGOR numbers above (deflated_sharpe_ratio,
     # dsr_p_value, pbo_score, out_of_sample_sharpe):
-    #   "live_gate"   — the live run_rigor_gate call on persisted real returns
-    #   "unavailable" — the gate could not run; every rigor field is None
+    #   "stored_grade" — the numbers the STORED grade produced, read off
+    #                    strategy_passports beside the verdict that same gate run
+    #                    produced (docs/adr/rigor-verdict-of-record.md)
+    #   "live_gate"    — a live run_rigor_gate call on persisted real returns.
+    #                    No longer reachable from the curated read path (#1746 /
+    #                    PR-B moved that grade to the write side); still the
+    #                    honest label for a surface that genuinely recomputes,
+    #                    which the deploy ladder at
+    #                    GET /api/selection-bias/gate/{id} deliberately does.
+    #   "unavailable"  — no grade to read; every rigor field is None
     #
     # There is deliberately no "persisted_backtest" value. #1187/#1340 removed
     # the `s.<field> ?? bt.<field>` fallback that served fixture constants
     # beside live numbers, so a persisted rigor column can no longer reach a
     # response at all. The value's ABSENCE from this enum is the assertion that
     # the fallback is gone — if it ever reappears, something has to add it back
-    # here and that shows up in a diff.
+    # here and that shows up in a diff. "stored_grade" is not that fallback
+    # returning: those columns are now written by, and only by, a gate run
+    # (passport_loader._apply_rigor_verdict), and a row with no `graded_at`
+    # serves None rather than whatever a fixture sync left behind.
     metrics_source: str = "unavailable"
     # Which source produced the DISPLAY metrics (sharpe_ratio, cagr, win_rate,
     # max_drawdown, calmar_ratio, sortino_ratio, correlation_to_spy,
@@ -269,6 +326,23 @@ class StrategyResponse(BaseModel):
     sharpe_ci_lower: float | None = None
     sharpe_ci_upper: float | None = None
 
+    # Selection-set size this verdict was graded at, plus its provenance (#1358).
+    # ``None``/``"unspecified"`` for a strategy the live gate has not graded yet
+    # — either no/insufficient persisted returns, OR a batch/DB-read failure
+    # (both collapse to the same "no number to report" shape; a reader must not
+    # infer which one from this field alone) — never a silently-assumed 1.
+    # Once graded: "curated_self_contained" (a
+    # hand-implemented paper, graded on its own Sharpe, N=1 by design — decouple
+    # #2) | "generated_search_pool" (the generation pipeline's own tracked
+    # N-candidate search, N>1 possible) | "generated_untracked_default"
+    # (DB-persisted but the writing pipeline never proved it tracks its own
+    # search size, so forced to N=1 and said so explicitly). Mirrors
+    # ``selection_bias_routes.py``'s ``StrategyRigorResult.num_trials_scope`` —
+    # same discriminator, same labels, so this can never disagree with what
+    # ``GET /api/selection-bias/gate/{id}`` reports for the same strategy.
+    num_trials_in_selection: int | None = None
+    num_trials_scope: str = "unspecified"
+
     # Backtest period (ISO date strings; what window the metrics were computed over)
     backtest_start: str | None = None
     backtest_end: str | None = None
@@ -282,7 +356,13 @@ class StrategyResponse(BaseModel):
     backtest_engine: str | None = None
     cost_model_id: str | None = None
     # Where look_ahead_audit_passed came from: "broker_config_only" (an
-    # execution-timing check that never fails) | "ast_audit" | "self_attested".
+    # execution-timing check that never fails) | "ast_audit" |
+    # "dsl_structural_audit" (the DSL path's derived verdict: the spec was
+    # checked against the audited interpreter surface and the audit concluded) |
+    # "dsl_audit_not_run" (DSL path, the audit reached no verdict — the boolean
+    # beside it is False because nothing was checked, not because a check
+    # failed) | "self_attested" (RETIRED — the LLM's own removed
+    # look_ahead_safe declaration; historical rows only, never an audit result).
     # Without it a constant True reads as a passed audit.
     look_ahead_audit_source: str | None = None
 
@@ -409,6 +489,42 @@ class TradeExecutedResponse(BaseModel):
     value_usdc: float = 0.0
 
 
+class TraceDetailResponse(TraceResponse):
+    """A single trace with the rest of the body the hash was computed over.
+
+    Everything in :class:`TraceResponse` is what a *list row* needs. This adds
+    the fields a reader needs to actually audit one decision, and they are not
+    decoration: ``market_context``, ``portfolio_before``, ``portfolio_after``
+    and ``consulted_paper_hashes`` are four of the thirteen ``_HASH_FIELDS``
+    (``models/trace.py``) that go into the anchored keccak256. Without them the
+    only way to see what was committed was ``GET /api/traces/{id}/canonical``,
+    a raw-JSON developer surface — so the anchored claim was, in practice,
+    unreadable by the person whose money the decision moved.
+
+    Defaults are empty rather than ``None``: a trace persisted before a field
+    existed, or one projected from the on-chain registry alone (which carries
+    no body at all), genuinely has nothing here. An empty dict renders as an
+    honest absence; the caller must not read it as "the agent considered
+    nothing". ``verification_mode`` already carries whether a body existed.
+
+    ``settlement_tx_hashes`` and ``ipfs_cid`` are deliberately OUTSIDE the
+    hashed set — they are only knowable after the trade, and the committed
+    bytes are immutable (#903). They are surfaced here as provenance, never as
+    part of the hash preimage.
+
+    ``ipfs_cid`` is the registry ``storagePointer`` if one exists. The field
+    name is leftover from an unused pin design. Live reveals write an empty
+    pointer (#1526); a non-empty value is historical or copied from chain.
+    """
+
+    market_context: dict = {}
+    portfolio_before: dict = {}
+    portfolio_after: dict = {}
+    consulted_paper_hashes: list[str] = []
+    settlement_tx_hashes: list[str] = []
+    ipfs_cid: str | None = None
+
+
 class TraceListResponse(BaseModel):
     traces: list[TraceResponse]
     total: int
@@ -469,6 +585,30 @@ class TraceVerifyResponse(BaseModel):
     vault: str = ""
     on_chain_timestamp: int = 0
     details: str  # Human-readable result
+    # ── Source-paper verification (#1637) ────────────────────────────────
+    # ``verify_source_papers`` had ZERO production callers: /verify re-hashed
+    # the trace body and never checked that the papers it claims to have
+    # consulted exist. The "trace-verify button" could not verify the half of
+    # the trace that carries the research provenance.
+    #
+    # Tri-state for the same reason ``verification_mode`` is: None means NOT
+    # CHECKED, and the two ways that happens are named in
+    # ``source_paper_verification.mode`` — the trace claimed no papers, or the
+    # corpus was unreachable. Neither is a pass and neither is a failure, and
+    # collapsing either into ``False`` would report a fabricated provenance
+    # failure while collapsing it into ``True`` would report a fabricated pass.
+    #
+    # And what a ``True`` here means is EXISTENCE, not a hash comparison:
+    # corpus ``content_hash``/``pdf_sha256`` are NULL until #1091, so a claimed
+    # suffix is empty and the check is "the corpus has this paper". Every
+    # surface that renders this must say so (owner decision Q8 on #1688) —
+    # ``ui/src/trace-binding.js:sourcePapersCopy`` is the one place that copy
+    # lives.
+    papers_verified: bool | None = None
+    #: ``{"mode", "checked", "verified", "missing", "hash_mismatch"}`` — None
+    #: when nothing was attempted (the anchored-only branch has no off-chain
+    #: body to read a cited set out of).
+    source_paper_verification: dict[str, Any] | None = None
     # Temporal binding verification
     temporal_binding_valid: bool | None = None
     commit_block_number: int | None = None
@@ -559,49 +699,6 @@ class PoolListResponse(BaseModel):
 # ═══════════════════════════════════════════════════════════════
 # Contract Addresses (for frontend to call on-chain directly)
 # ═══════════════════════════════════════════════════════════════
-
-
-# ═══════════════════════════════════════════════════════════════
-# Chat (per-vault)
-# ═══════════════════════════════════════════════════════════════
-
-
-class ChatMessageResponse(BaseModel):
-    """A single chat message in a vault's chat room."""
-
-    id: int
-    vault_address: str
-    wallet_address: str
-    message: str
-    is_ai: bool = False
-    verified: bool = False  # True when wallet was proof-linked to posting account
-    created_at: str  # ISO 8601
-
-
-class ChatMessageListResponse(BaseModel):
-    """Paginated list of chat messages for a vault."""
-
-    messages: list[ChatMessageResponse]
-    total: int
-    has_more: bool = False
-
-
-class ChatPostRequest(BaseModel):
-    """Post a new message to a vault's chat.
-
-    wallet_address is optional; server uses current account's selected verified
-    linked wallet. Body value may only match that server-resolved wallet.
-    """
-
-    wallet_address: str | None = None
-    message: str
-
-
-class ChatPostResponse(BaseModel):
-    """Response after posting a message. Includes AI response if triggered."""
-
-    message: ChatMessageResponse
-    ai_response: ChatMessageResponse | None = None
 
 
 # ═══════════════════════════════════════════════════════════════

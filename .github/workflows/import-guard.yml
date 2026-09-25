@@ -44,7 +44,7 @@ jobs:
         # Mirrors what used to be the workflow-level `paths:` filter, but as
         # an in-job gate instead: the job (and therefore the required check)
         # always runs and always reports a result, it just no-ops fast when
-        # none of backend/**.py, backend/requirements.txt, environment.yml,
+        # none of backend/**.py, backend/requirements*.txt, environment.yml,
         # or this workflow file changed. Never restore the top-level
         # `paths:` filter — see the comment on `on:` above.
         run: |
@@ -64,7 +64,7 @@ jobs:
           relevant=false
           while IFS= read -r f; do
             case "$f" in
-              backend/*.py|backend/requirements.txt|environment.yml|.github/workflows/import-guard.yml)
+              backend/*.py|backend/requirements.txt|backend/requirements-base.txt|environment.yml|.github/workflows/import-guard.yml)
                 relevant=true
                 ;;
             esac
@@ -72,7 +72,7 @@ jobs:
           echo "relevant=${relevant}" >> "$GITHUB_OUTPUT"
       - name: No relevant files changed — skipping
         if: steps.changes.outputs.relevant == 'false'
-        run: echo "No backend/**.py, backend/requirements.txt, environment.yml, or workflow changes in this PR — nothing for import-guard to check."
+        run: echo "No backend/**.py, backend/requirements*.txt, environment.yml, or workflow changes in this PR — nothing for import-guard to check."
       - uses: actions/setup-python@v7
         if: steps.changes.outputs.relevant == 'true'
         with:
@@ -90,6 +90,11 @@ jobs:
         run: python -m compileall -q backend/archimedes
       - name: Dependency hygiene — undeclared / missing deps (incl. lazy imports)
         if: steps.changes.outputs.relevant == 'true'
+        # Only backend/requirements.txt is listed even though the 32 shared
+        # floors now live in backend/requirements-base.txt (#1522): deptry
+        # follows `-r` includes, verified against deptry 0.25.1 (the pin below)
+        # on a two-file fixture — a package reachable only through the include
+        # resolves and does not raise DEP001.
         # DEP002 is noisy for one shared requirements file. umap and paperqa are
         # deliberate optional imports with runtime fallbacks. The
         # --package-module-name-map entries exist because deptry can only
