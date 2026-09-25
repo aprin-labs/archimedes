@@ -269,7 +269,11 @@ class TestTheRewritePinsTheThreshold:
     def test_nginx_and_auth_are_not_given_the_threshold(self):
         out = _rewrite(_last_good_task_def())
         assert _container(out, "nginx")["environment"] == [{"name": "FOO", "value": "1"}]
-        assert "environment" not in _container(out, "auth")
+        # The auth container gains exactly its own pin (#1804,
+        # test_ecs_auth_ses_config_set_pin.py) and nothing of the backend's.
+        auth_names = [e["name"] for e in _container(out, "auth").get("environment") or []]
+        assert "HEALTH_STALE_UNREADY_S" not in auth_names
+        assert "PAPER_ADVANCE_ENABLED" not in auth_names
 
 
 class TestOwnershipStaysInsideContainerDefinitions:

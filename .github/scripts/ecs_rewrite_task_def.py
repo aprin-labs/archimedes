@@ -52,7 +52,14 @@ This script is the path that actually ships. It:
    ``ARCHIMEDES_FUSION_ENABLED`` on 2026-09-02 and left the same residue for
    the same reason. Cleanups ship with the deploy rather than as an operator
    ritual, so the clone drops them here.
-8. Drops the describe-only fields ``register-task-definition`` rejects.
+8. Pins ``SES_CONFIGURATION_SET`` to :data:`SES_CONFIGURATION_SET_VALUE` on
+   the AUTH container (#1804). The bounce/complaint loop in
+   ``infra/ses_events.tf`` only hears sends that name the configuration set,
+   and the auth container is the only one that sends. ``infra/ecs.tf`` states
+   the same value, but with ``ignore_changes = [container_definitions]`` in
+   force it is prose as far as production is concerned; this line is what
+   ships it.
+9. Drops the describe-only fields ``register-task-definition`` rejects.
 
 The pinned value is ``"true"`` as of 2026-09-01 (#1778, the #1632 lift): the
 paper-advance tick is ARMED. It never runs in the web interpreter —
@@ -132,6 +139,24 @@ FREE_GENERATIONS_NAME = "FREE_GENERATIONS_PER_ACCOUNT"
 FREE_GENERATIONS_VALUE = "3"
 
 BACKEND_CONTAINER = "backend"
+AUTH_CONTAINER = "auth"
+
+#: #1804. The SES configuration set every auth-container send must name — it is
+#: the only thing that makes SES publish a bounce/complaint event for that send
+#: (``infra/ses_events.tf``, ``aws_sesv2_configuration_set.mail``, named
+#: ``"${var.project_name}-mail"``). ``infra/ecs.tf`` states the same env on the
+#: auth container, but since #1799 (PR #1833) terraform no longer writes
+#: ``container_definitions``, and this job clones the LIVE revision, so a value
+#: that exists only in ``ecs.tf`` never ships: revision 250 (2026-09-04)
+#: carried ``SES_CONFIGURATION_SET`` on no container at all. That is the
+#: deaf-loop shape — the event destination applies cleanly and hears nothing,
+#: because no send names the set. ``auth/mailer.js`` treats a blank value as
+#: "send without a configuration set", so the pull-back is editing this
+#: constant to ``""`` and deploying; a blank never breaks mail.
+#: backend/tests/test_ecs_auth_ses_config_set_pin.py holds the value equal to
+#: the terraform name, so the two cannot drift apart silently.
+SES_CONFIGURATION_SET_NAME = "SES_CONFIGURATION_SET"
+SES_CONFIGURATION_SET_VALUE = "archimedes-mail"
 
 # #1798. The env var name is the canonical one the provider reads first
 # (``market_data_provider._TIINGO_TOKEN_ENV_VARS[0]``); the SSM path is the
@@ -217,6 +242,22 @@ def pin_backend_health_stale_unready(environment: list[dict[str, Any]] | None) -
     """
     pinned = [entry for entry in (environment or []) if entry.get("name") != HEALTH_STALE_UNREADY_NAME]
     pinned.append({"name": HEALTH_STALE_UNREADY_NAME, "value": HEALTH_STALE_UNREADY_VALUE})
+    return pinned
+
+
+def pin_auth_ses_configuration_set(environment: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Return a copy of the AUTH container's ``environment`` with the SES
+    configuration set pinned (#1804).
+
+    Order-preserving, idempotent, exactly like :func:`pin_backend_paper_advance`:
+    ``SES_CONFIGURATION_SET`` ends up present exactly once carrying
+    :data:`SES_CONFIGURATION_SET_VALUE`, whatever the clone held. Only the auth
+    container sends mail (``auth/mailer.js``); pinning the name on the backend
+    or nginx container would satisfy a file-wide grep while no send named the
+    set, which is why this is a separate function applied to one container.
+    """
+    pinned = [entry for entry in (environment or []) if entry.get("name") != SES_CONFIGURATION_SET_NAME]
+    pinned.append({"name": SES_CONFIGURATION_SET_NAME, "value": SES_CONFIGURATION_SET_VALUE})
     return pinned
 
 
@@ -374,7 +415,8 @@ def rewrite_registered_task_definition(
     auth_image: str,
 ) -> dict[str, Any]:
     """Clone ``task_def``, retag application images, pin the tick + allowance
-    flags, the Tiingo secret and the readiness check, and drop retired env.
+    flags, the Tiingo secret, the readiness check and the auth container's SES
+    configuration set, and drop retired env.
 
     Raises :class:`RewriteError` if there is no backend container — a silent
     skip would register a revision whose ``PAPER_ADVANCE_ENABLED`` and whose
@@ -420,8 +462,9 @@ def rewrite_registered_task_definition(
             next_container["healthCheck"] = rewrite_backend_health_check(container.get("healthCheck"))
         elif name == "nginx":
             next_container["image"] = nginx_image
-        elif name == "auth":
+        elif name == AUTH_CONTAINER:
             next_container["image"] = auth_image
+            next_container["environment"] = pin_auth_ses_configuration_set(container.get("environment"))
         rewritten.append(next_container)
 
     if not saw_backend:
