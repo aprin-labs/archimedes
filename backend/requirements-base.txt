@@ -25,7 +25,17 @@ fastapi>=0.141.1
 # backend imports neither GZipMiddleware nor FileResponse (checked 2026-08-30).
 starlette>=1.6.0
 uvicorn[standard]>=0.52.4
-sqlalchemy>=2.0.52
+# Upper-bounded 2026-09-25: 2.1.0 (released after this floor was set) changes the
+# DEFAULT driver a bare `postgresql://` URL resolves to — `create_engine()` now
+# imports `sqlalchemy.dialects.postgresql.psycopg` (psycopg **3**) instead of
+# `...postgresql.psycopg2`, and this repo only installs psycopg2 (see below).
+# Every bare-scheme call site (`db.py`'s `DATABASE_URL`, `migrations/env.py`, the
+# alembic offline-SQL tests) broke with `ModuleNotFoundError: No module named
+# 'psycopg'` on a fresh CI install the moment pip could resolve 2.1.x — reproduced
+# in an isolated venv both directions (2.0.52 clean, 2.1.1 breaks) before pinning.
+# Raise this ceiling only alongside either installing `psycopg` (v3) or making
+# every DATABASE_URL construction say `postgresql+psycopg2://` explicitly.
+sqlalchemy>=2.0.52,<2.1
 # Schema migration tool (issue #1028) — replaces the hand-rolled idempotent
 # `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` patches in db.py for retrofitting
 # the already-populated prod Postgres DB. MIT license, maintained by the
