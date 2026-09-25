@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@circle-fin/modular-wallets-core": "^1.0.15",
-    "react": "^19.2.8",
+    "react": "^19.3.0",
     "react-dom": "^19.2.8",
     "react-force-graph-2d": "^1.29.1",
     "viem": "^2.56.3"
@@ -30,7 +30,7 @@
     "@iconify-json/lucide": "^1.2.129",
     "@iconify-json/simple-icons": "^1.2.93",
     "@iconify-json/token-branded": "^1.2.44",
-    "@types/react": "^19.2.18",
+    "@types/react": "^19.3.0",
     "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^6.1.0",
     "cssnano": "^9.0.4",
