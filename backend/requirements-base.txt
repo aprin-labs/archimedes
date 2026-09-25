@@ -57,7 +57,7 @@ alembic>=1.19.1
 # environment.yml). Do not "fix a slow build" by putting -binary back.
 psycopg2>=2.9.12
 redis>=8.1.0
-pydantic>=2.13.4
+pydantic>=2.13.5
 # Declared because backend code IMPORTS IT DIRECTLY — `PydanticCustomError` in
 # `api/rigor_verify_routes.py`, which is how that route's refusals carry a stable
 # machine-readable `type` (#1803). pydantic exposes no public re-export of it
@@ -68,7 +68,7 @@ pydantic>=2.13.4
 # so this floor never selects the version — pydantic's own pin does. It exists so
 # the dependency is declared where every consumer of this file can see it.
 pydantic-core>=2.46.4
-pydantic-settings>=2.14.2
+pydantic-settings>=2.15.0
 python-dotenv>=1.2.3
 
 # Data + numerics
@@ -79,7 +79,7 @@ numpy>=2.5.2,<3.0
 # non-yanked release. (NB: environment.yml still floors pandas>=2.2 — a
 # pre-existing local-vs-prod major drift to reconcile separately.)
 pandas>=3.0.5
-scipy>=1.18.0
+scipy>=1.18.1
 scikit-learn>=1.9.0  # GaussianMixture + StandardScaler for the data-driven GmmRegimeDetector (issue #661); BSD-3-Clause
 
 # Market data
@@ -165,4 +165,4 @@ pypdf>=6.16.2
 # AWS / S3
 boto3>=1.43.82
 # Imported directly for AWS exceptions/config; boto3 constrains compatibility.
-botocore>=1.43.81
+botocore>=1.43.88

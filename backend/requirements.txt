@@ -23,4 +23,4 @@
 # they are the only floors still written down twice.
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch>=2.13.0,<3.0  # CPU-only wheel via pytorch whl index (see extra-index-url above); no +cpu here, pip rejects a local version label on a >= specifier
-sentence-transformers>=6.0.0  # all-MiniLM-L6-v2 semantic retrieval; baked at Docker build time
+sentence-transformers>=6.0.1  # all-MiniLM-L6-v2 semantic retrieval; baked at Docker build time
