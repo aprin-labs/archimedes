@@ -208,7 +208,7 @@ jobs:
     timeout-minutes: 30  # torch/sentence-transformers install + model bake + multi-GB ECR push
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       - name: Build backend image
         # Build context is the REPO ROOT (issue #1039) so the image can bundle
@@ -503,7 +503,7 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       # Issue #1039 P4 (shared with #1028 Phase A): run `alembic upgrade
       # head` as an ordered, pre-rollout ECS one-off task — BEFORE any new
@@ -681,7 +681,7 @@ jobs:
       # tree; pinning PAPER_ADVANCE_ENABLED cannot live only in that jq
       # comment — it has to be the same function the unit tests run, in
       # whichever direction the pin currently points.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c  # v6.2.3
