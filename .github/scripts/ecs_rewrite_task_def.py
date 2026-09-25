@@ -18,7 +18,7 @@ This script is the path that actually ships. It:
 1. Retags the backend / nginx / auth images to this commit.
 2. Pins ``PAPER_ADVANCE_ENABLED`` to :data:`PAPER_ADVANCE_VALUE` on the
    backend container, whether the cloned definition had the name unset,
-   ``"true"``, or ``"false"``.
+   ``"true"``, or ``"false"``. This PR does not flip that pin.
 3. Pins ``FREE_GENERATIONS_PER_ACCOUNT`` to :data:`FREE_GENERATIONS_VALUE`
    on the backend container, for the same reason (#1643 finding A5): prod was
    giving away three generations per account by accident of a code default,
@@ -34,7 +34,13 @@ This script is the path that actually ships. It:
    [container_definitions]`` makes terraform stop writing container settings at
    ALL and this script becomes not merely the first writer but the only one —
    a strengthening, not a premise.
-6. Strips the retired env names in :data:`RETIRED_BACKEND_ENV` from the
+6. Pins the backend container ``healthCheck.startPeriod`` to 90s so a
+   cloned live revision (startPeriod 30) cannot leave the #1713 warmup
+   budget (60s) outside ECS's ignored-failure window. Command stays the
+   readiness probe; interval / timeout / retries on an existing healthCheck
+   are preserved; a clone with no healthCheck gets the default shape with
+   startPeriod 90. Do not terraform-noop ``deployment_minimum_healthy_percent``.
+7. Strips the retired env names in :data:`RETIRED_BACKEND_ENV` from the
    backend container. This runs AFTER the pins above, so the retired tuple is
    the last word on what ships; a name that ever landed on both lists would
    lose its pin, which ``test_no_pinned_name_is_also_retired`` forbids rather
@@ -46,7 +52,14 @@ This script is the path that actually ships. It:
    ``ARCHIMEDES_FUSION_ENABLED`` on 2026-09-02 and left the same residue for
    the same reason. Cleanups ship with the deploy rather than as an operator
    ritual, so the clone drops them here.
-7. Drops the describe-only fields ``register-task-definition`` rejects.
+8. Pins ``SES_CONFIGURATION_SET`` to :data:`SES_CONFIGURATION_SET_VALUE` on
+   the AUTH container (#1804). The bounce/complaint loop in
+   ``infra/ses_events.tf`` only hears sends that name the configuration set,
+   and the auth container is the only one that sends. ``infra/ecs.tf`` states
+   the same value, but with ``ignore_changes = [container_definitions]`` in
+   force it is prose as far as production is concerned; this line is what
+   ships it.
+9. Drops the describe-only fields ``register-task-definition`` rejects.
 
 The pinned value is ``"true"`` as of 2026-09-01 (#1778, the #1632 lift): the
 paper-advance tick is ARMED. It never runs in the web interpreter —
@@ -62,8 +75,7 @@ deploy. The code default in ``services/paper_trading.py`` stays ``"false"`` on
 purpose: unset must still mean OFF, which is the :211 hole.
 
 terraform apply is still required for other ``ecs.tf`` drift. This flag must
-not depend on it.
-"""
+not depend on it."""
 
 from __future__ import annotations
 
@@ -107,13 +119,17 @@ READINESS_HEALTH_CHECK_COMMAND = [
 
 #: Only used when the cloned revision carries no ``healthCheck`` at all. Mirrors
 #: the block in ``infra/ecs.tf``; 3 retries x 30s => ~90s of continuous 503
-#: before ECS acts, and the 30s ``startPeriod`` is what keeps a cold task (whose
-#: probe cache is process-local and empty at boot) out of a replacement loop.
+#: before ECS acts. startPeriod is 90 so the #1713 request-path warmup budget
+#: (60s) fits inside ECS's ignored-failure window; a clone of the live 30s
+#: revision cannot leave that budget outside the window. Do not lower this
+#: below the warmup budget. Do not raise desiredCount. Do not flip
+#: PAPER_ADVANCE as part of the warmup pin.
+BACKEND_HEALTHCHECK_START_PERIOD = 90
 _DEFAULT_HEALTH_CHECK_SHAPE: dict[str, Any] = {
     "interval": 30,
     "timeout": 5,
     "retries": 3,
-    "startPeriod": 30,
+    "startPeriod": BACKEND_HEALTHCHECK_START_PERIOD,
 }
 
 #: Free generations per account, lifetime (#1643). Kept equal to
@@ -123,6 +139,24 @@ FREE_GENERATIONS_NAME = "FREE_GENERATIONS_PER_ACCOUNT"
 FREE_GENERATIONS_VALUE = "3"
 
 BACKEND_CONTAINER = "backend"
+AUTH_CONTAINER = "auth"
+
+#: #1804. The SES configuration set every auth-container send must name — it is
+#: the only thing that makes SES publish a bounce/complaint event for that send
+#: (``infra/ses_events.tf``, ``aws_sesv2_configuration_set.mail``, named
+#: ``"${var.project_name}-mail"``). ``infra/ecs.tf`` states the same env on the
+#: auth container, but since #1799 (PR #1833) terraform no longer writes
+#: ``container_definitions``, and this job clones the LIVE revision, so a value
+#: that exists only in ``ecs.tf`` never ships: revision 250 (2026-09-04)
+#: carried ``SES_CONFIGURATION_SET`` on no container at all. That is the
+#: deaf-loop shape — the event destination applies cleanly and hears nothing,
+#: because no send names the set. ``auth/mailer.js`` treats a blank value as
+#: "send without a configuration set", so the pull-back is editing this
+#: constant to ``""`` and deploying; a blank never breaks mail.
+#: backend/tests/test_ecs_auth_ses_config_set_pin.py holds the value equal to
+#: the terraform name, so the two cannot drift apart silently.
+SES_CONFIGURATION_SET_NAME = "SES_CONFIGURATION_SET"
+SES_CONFIGURATION_SET_VALUE = "archimedes-mail"
 
 # #1798. The env var name is the canonical one the provider reads first
 # (``market_data_provider._TIINGO_TOKEN_ENV_VARS[0]``); the SSM path is the
@@ -211,15 +245,32 @@ def pin_backend_health_stale_unready(environment: list[dict[str, Any]] | None) -
     return pinned
 
 
+def pin_auth_ses_configuration_set(environment: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Return a copy of the AUTH container's ``environment`` with the SES
+    configuration set pinned (#1804).
+
+    Order-preserving, idempotent, exactly like :func:`pin_backend_paper_advance`:
+    ``SES_CONFIGURATION_SET`` ends up present exactly once carrying
+    :data:`SES_CONFIGURATION_SET_VALUE`, whatever the clone held. Only the auth
+    container sends mail (``auth/mailer.js``); pinning the name on the backend
+    or nginx container would satisfy a file-wide grep while no send named the
+    set, which is why this is a separate function applied to one container.
+    """
+    pinned = [entry for entry in (environment or []) if entry.get("name") != SES_CONFIGURATION_SET_NAME]
+    pinned.append({"name": SES_CONFIGURATION_SET_NAME, "value": SES_CONFIGURATION_SET_VALUE})
+    return pinned
+
+
 def rewrite_backend_health_check(health_check: dict[str, Any] | None) -> dict[str, Any]:
     """Return the backend container's health check, pointed at ``/health/ready``.
 
-    Only ``command`` moves. ``interval``, ``timeout``, ``retries``,
-    ``startPeriod`` and anything else the live revision carries are preserved
-    exactly: what the check ASKS is this file's decision, how often and how
-    patiently it asks is the registered revision's, and rewriting both at once
-    would silently re-time a running fleet on a deploy that meant to change a
-    URL.
+    ``command`` is this file's decision (the #1818 P3 readiness probe).
+    ``startPeriod`` is also this file's decision: 90s so the #1713 warmup
+    budget (60s) fits inside ECS's ignored-failure window. A cloned live
+    revision still carries startPeriod 30; preserving that would leave the
+    warmup outside the window — the pin this function exists to close.
+    ``interval``, ``timeout``, ``retries`` and any unknown fields the live
+    revision carries are preserved.
 
     A clone with no ``healthCheck`` key at all gets the full block from
     :data:`_DEFAULT_HEALTH_CHECK_SHAPE` instead of being left alone. ECS reads
@@ -232,6 +283,7 @@ def rewrite_backend_health_check(health_check: dict[str, Any] | None) -> dict[st
     for key, value in _DEFAULT_HEALTH_CHECK_SHAPE.items():
         rewritten.setdefault(key, value)
     rewritten["command"] = list(READINESS_HEALTH_CHECK_COMMAND)
+    rewritten["startPeriod"] = BACKEND_HEALTHCHECK_START_PERIOD
     return rewritten
 
 
@@ -363,7 +415,8 @@ def rewrite_registered_task_definition(
     auth_image: str,
 ) -> dict[str, Any]:
     """Clone ``task_def``, retag application images, pin the tick + allowance
-    flags, the Tiingo secret and the readiness check, and drop retired env.
+    flags, the Tiingo secret, the readiness check and the auth container's SES
+    configuration set, and drop retired env.
 
     Raises :class:`RewriteError` if there is no backend container — a silent
     skip would register a revision whose ``PAPER_ADVANCE_ENABLED`` and whose
@@ -409,8 +462,9 @@ def rewrite_registered_task_definition(
             next_container["healthCheck"] = rewrite_backend_health_check(container.get("healthCheck"))
         elif name == "nginx":
             next_container["image"] = nginx_image
-        elif name == "auth":
+        elif name == AUTH_CONTAINER:
             next_container["image"] = auth_image
+            next_container["environment"] = pin_auth_ses_configuration_set(container.get("environment"))
         rewritten.append(next_container)
 
     if not saw_backend:
