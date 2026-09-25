@@ -48,7 +48,7 @@ DOCS_INDEX = REPO_ROOT / "docs" / "doc-index.md"
 # The statuses a row is allowed to carry. Adding one is a deliberate act — a new word is a
 # new promise to the reader about what the row means — so it goes here and in the ledger's
 # own "How to read a row" table, together.
-ALLOWED_STATUSES = frozenset({"TRUE", "CHANGED", "RETRACTED", "OVER-CLAIMED", "PENDING ADR MERGE"})
+ALLOWED_STATUSES = frozenset({"TRUE", "CHANGED", "RETRACTED", "OVER-CLAIMED", "PENDING VENDOR CUTOVER"})
 
 # A citation: a backticked repo-relative path, optionally `:line` or `:line-line`. The
 # extension list is what keeps `GET /api/selection-bias/gate` and other backticked
@@ -314,6 +314,58 @@ class TestPendingExemptionsRetireThemselves:
             "the claims-ledger:pending-paths block is missing from the ledger — "
             "it stays, empty or not, as the landing place for the next promised path"
         )
+
+
+# `{ name = "<var>", value = "<value>" }` — the shape every env entry in the ECS container
+# definitions takes (see infra/ecs.tf). Matched against committed text only, same as every
+# other check in this file: no import of archimedes, no reading of the live task definition.
+_ECS_ENV_VAR_RE = re.compile(r'\{\s*name\s*=\s*"(?P<name>[^"]+)"\s*,\s*value\s*=\s*"(?P<value>[^"]*)"\s*\}')
+
+
+def _pinned_env_value(hcl_text: str, var_name: str) -> str | None:
+    """The value pinned for `var_name` in an ECS container `environment` block, or None if unpinned."""
+    for m in _ECS_ENV_VAR_RE.finditer(hcl_text):
+        if m.group("name") == var_name:
+            return m.group("value")
+    return None
+
+
+class TestVendorCutoverStillPending:
+    """Self-retiring pin for the claims-ledger row 'Paid analysis runs on licensed data'.
+
+    That row is `PENDING VENDOR CUTOVER`: the ADR is merged and the Tiingo secret is wired
+    (#1798), but nothing has pointed a seam's default vendor at it. Since #1798 the daily
+    seam reads `MARKET_DATA_DAILY_PROVIDER`, falling back to `MARKET_DATA_PROVIDER`
+    (`market_data_provider.py::provider_name`), and defaults to `"yfinance"` when neither is
+    set. `infra/ecs.tf` pins neither today. The moment it pins either to something other
+    than `"yfinance"`, the owner has performed the cutover and this pin goes red — on
+    purpose, so the ledger row cannot rot true by silent drift the way the equivalent
+    file-existence exemption above already did once.
+    """
+
+    def test_ecs_tf_pins_no_non_yfinance_daily_provider(self):
+        ecs_tf = (REPO_ROOT / "infra" / "ecs.tf").read_text()
+        for var in ("MARKET_DATA_DAILY_PROVIDER", "MARKET_DATA_PROVIDER"):
+            value = _pinned_env_value(ecs_tf, var)
+            assert value in (None, "yfinance"), (
+                f"infra/ecs.tf now pins {var}={value!r} — the Tiingo cutover has happened. "
+                "Re-point docs/claims-ledger.md's 'Paid analysis runs on licensed data' row "
+                "off PENDING VENDOR CUTOVER and onto the verified-pull record "
+                "(scripts/verify_market_data.py)."
+            )
+
+    def test_the_env_var_parser_is_not_vacuous(self):
+        """Anti-vacuity for the parser: proven against a fixture that DOES pin a cutover,
+        so the assertion above is known to be capable of going red rather than
+        vacuously matching `None` forever."""
+        fixture = (
+            "environment = [\n"
+            '  { name = "AWS_REGION", value = "us-east-1" },\n'
+            '  { name = "MARKET_DATA_DAILY_PROVIDER", value = "tiingo" },\n'
+            "]"
+        )
+        assert _pinned_env_value(fixture, "MARKET_DATA_DAILY_PROVIDER") == "tiingo"
+        assert _pinned_env_value(fixture, "MARKET_DATA_PROVIDER") is None
 
 
 class TestLedgerRowsSayOnlyWhatTheyMay:
