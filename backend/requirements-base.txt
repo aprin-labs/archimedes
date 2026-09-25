@@ -173,6 +173,6 @@ arxiv>=4.0.1
 pypdf>=6.16.2
 
 # AWS / S3
-boto3>=1.43.82
+boto3>=1.43.92
 # Imported directly for AWS exceptions/config; boto3 constrains compatibility.
 botocore>=1.43.88
