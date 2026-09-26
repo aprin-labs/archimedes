@@ -745,21 +745,41 @@ resource "aws_ecs_task_definition" "backend" {
         # this line removes. Guarded by
         # backend/tests/test_ecs_generation_timeout.py.
         { name = "GENERATION_TIMEOUT_SECONDS", value = "300" },
-        # Premium-tier entitlement switch (services/model_gate.py:56 reads it;
-        # unset/anything-but-truthy = off). Pinned to the value prod already
+        # Premium-tier entitlement switch. Cited by SYMBOL, not line — a line
+        # reference to a 2000+-line route file is exactly the kind of comment
+        # that goes stale one main-merge later (it happened to this comment
+        # twice: :335/:329-334 in the PR that wrote this, then :492-501 after
+        # one review round, both already wrong by the time you read this).
+        # `model_gate._premium_globally_enabled()` reads this var;
+        # unset/anything-but-truthy = off. Pinned to the value prod already
         # has in effect, so this is behaviourally a no-op today — the point is
         # that it was UNSET here, which made prod's answer an accident of a
         # code default rather than a decision. Same class of bug the money
         # switches above were pinned to close (#1239).
         #
         # Load-bearing now that GENERATION_PAYMENT_REQUIRED is "true": an
-        # entitled premium request is NOT servable yet (premium ids are absent
-        # from FREE_TIER_MODELS, so generate_routes.py:335 falls back to the
-        # env default — disclosed at :329-334, roadmap T3.8/Bedrock). Flipping
-        # this to "true" before that is fixed would charge GENERATION_PRICE_USD
-        # and deliver a different model than the caller paid for. Fix the
-        # serving path first; do not flip this to unblock a demo.
+        # entitled premium request is NOT servable yet — `generate_routes.py`
+        # runs the paywall (`_paywall_with_credit`) BEFORE the entitlement
+        # gate (`enforce_model_entitlement`), so an entitled caller is charged
+        # first; premium ids are absent from `FREE_TIER_MODELS`, so the
+        # free-tier defense-in-depth selection (`is_allowed_model` /
+        # `selected_model`, commented "roadmap T3.8/Bedrock" at that call
+        # site) then falls back to the env default model. Flipping this to
+        # "true" before that serving path is fixed would charge
+        # GENERATION_PRICE_USD and deliver a different model than the caller
+        # paid for. Fix the serving path first; do not flip this to unblock a
+        # demo.
+        #
+        # THIS IS ONLY HALF THE LOCK. `model_gate.is_entitled_to_premium` is
+        # wallet AND (`_premium_globally_enabled()` OR wallet in
+        # `PREMIUM_MODELS_ALLOWLIST`) — an OR, not this flag alone. Adding one
+        # wallet to the allowlist reaches the identical charge-then-fallback
+        # outcome with this flag still "false". Both entries below must stay
+        # off together; `backend/tests/test_ecs_backend_secrets.py`'s
+        # `test_premium_tier_stays_off` pins both and is demonstrated to
+        # reject either one flipping alone.
         { name = "PREMIUM_MODELS_ENABLED", value = "false" },
+        { name = "PREMIUM_MODELS_ALLOWLIST", value = "" },
         # Generation payment gate (flip-list #834). FLIPPED to "true" by Dan
         # on 2026-08-20 (a45e8e5, "THE FLIP") — this comment previously still
         # said the flag "stays false until Dan flips it", contradicting the
