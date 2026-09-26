@@ -191,7 +191,7 @@ jobs:
           fi
 
       - name: Install Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           # The wrapper mangles exit codes in multi-line run blocks, and this
