@@ -66,7 +66,7 @@ jobs:
     steps:
       # No `submodules:` — deliberate. The checkers skip submodules/ and
       # contracts/lib/, so cloning them would cost minutes for zero signal.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       - uses: actions/setup-python@v7
         with:

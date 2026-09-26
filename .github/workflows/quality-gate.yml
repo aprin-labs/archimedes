@@ -38,7 +38,7 @@ jobs:
     name: Infra — user-data size guard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       # `bash <script>` rather than `./<script>` so the job does not depend on
       # the executable bit surviving every checkout/copy path.
       - name: EC2 user-data stays under the 16 KB limit
@@ -74,7 +74,7 @@ jobs:
     name: Migrations — chain fork guard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
       # actions/checkout on a pull_request event does not otherwise leave a
@@ -89,7 +89,7 @@ jobs:
     name: Analytics engine — unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -120,7 +120,7 @@ jobs:
     name: Backend — unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -166,7 +166,7 @@ jobs:
     name: Frontend + Better Auth
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
@@ -185,7 +185,7 @@ jobs:
     name: Ruff — format + critical lint rules
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -204,7 +204,7 @@ jobs:
     name: Lint — report table
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       - uses: actions/setup-python@v7
         with:
@@ -323,7 +323,7 @@ jobs:
     if: github.event.pull_request.user.login == 't2o2'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -356,7 +356,7 @@ jobs:
     name: Supply chain — report table
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
