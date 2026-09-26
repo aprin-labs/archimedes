@@ -15,6 +15,12 @@ import { fetchHealth } from "../health";
 import flowDiagramSrc from "../assets/flow-diagram.svg";
 import { ROADMAP_SURFACES_ENABLED } from "../featureFlags.js";
 import { architecture as ROADMAP_COPY } from "../roadmapCopy.js";
+import {
+	CORPUS_HERO_CAPTION,
+	CORPUS_HERO_LABEL,
+	formatCorpusHonestyCounts,
+	formatCorpusLedgerCounts,
+} from "../corpusCountCopy.js";
 
 function fmtNum(n) {
 	return typeof n === "number" ? n.toLocaleString() : n;
@@ -147,15 +153,11 @@ function HeroStrip({
 				caption="live on Arc testnet"
 			/>
 			<StatTile
-				label="Research papers in the corpus manifest"
-				value={health?.corpus_papers}
+				label={CORPUS_HERO_LABEL}
+				value={health?.corpus_db_count}
 				loading={healthLoading}
 				failed={healthError}
-				caption={
-					health
-						? `${fmtNum(health.corpus_db_count)} ingested and retrievable today`
-						: ""
-				}
+				caption={health ? CORPUS_HERO_CAPTION : ""}
 			/>
 			<StatTile
 				label="Strategies on the public leaderboard"
@@ -837,7 +839,7 @@ function MarketplaceSection() {
 
 // ── §9 — The research corpus ───────────────────────────────────────────
 // Every retrieval claim on this panel is driven off /health, never asserted
-// statically — see #778. Two things this panel must NOT imply. (1) That a
+// statically — see #778. Three things this panel must NOT imply. (1) That a
 // vector index sits behind the corpus: the papers schema carries text only,
 // and /health says so directly now (#1488) — corpus_embedded_at_rest is false,
 // while paper_rerank_model_live carries the narrower process-local fact of
@@ -845,6 +847,9 @@ function MarketplaceSection() {
 // (2) That a knowledge graph exists: corpus_kg_built is false and the
 // graph/KG endpoints 503. backend/tests/test_corpus_claim_integrity.py
 // scans this file for both claim-shapes.
+// (3) That corpus_db_count ⊂ corpus_papers (or the reverse). They are
+// different populations — see ../corpusCountCopy.js. Never concatenate them
+// with "of the".
 
 function CorpusSection({ health, healthError }) {
 	const loading = !health && !healthError;
@@ -864,8 +869,8 @@ function CorpusSection({ health, healthError }) {
 				</p>
 			) : (
 				<p className="body mb-4">
-					Generation starts from a corpus of quantitative-finance research — a{" "}
-					{fmtNum(health.corpus_papers)}-paper arXiv manifest spanning
+					Generation starts from a corpus of quantitative-finance research —{" "}
+					{fmtNum(health.corpus_papers)} embargo-eligible papers spanning
 					statistical finance, portfolio math, market microstructure, and
 					agentic AI. At generate time, retrieval runs in two stages: a
 					keyword/asset-class filter, then a relevance rerank against your brief,
@@ -894,10 +899,8 @@ function CorpusSection({ health, healthError }) {
 					</p>
 				) : (
 					<p className="caption" style={{ color: "var(--text-3)" }}>
-						{fmtNum(health.corpus_db_count)} of the{" "}
-						{fmtNum(health.corpus_papers)} manifest papers are fully ingested
-						and retrievable today. The knowledge-graph layer (citation graph
-						over the corpus){" "}
+						{formatCorpusHonestyCounts(health, fmtNum)} The knowledge-graph
+						layer (citation graph over the corpus){" "}
 						{health.corpus_kg_built
 							? "has produced its first artifact"
 							: "has not yet produced its first production artifact"}{" "}
@@ -1102,8 +1105,7 @@ function HonestyLedger({ health, healthError, agentStatus, agentStatusError }) {
 									<>
 										<LedgerStatus tone="live">Live</LedgerStatus> — keyword +
 										MiniLM rerank, scored per request;{" "}
-										{fmtNum(health.corpus_db_count)} of{" "}
-										{fmtNum(health.corpus_papers)} papers hydrated
+										{formatCorpusLedgerCounts(health, fmtNum)}
 									</>
 								) : (
 									<>
