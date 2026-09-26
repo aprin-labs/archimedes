@@ -32,10 +32,22 @@ threshold is current. `test_no_library_sized_num_trials` matches the code-shaped
 form only. A doc can still describe the reversed convention in words, which is
 correct — the findings notes need to, to explain their own vintage.
 
-Scope is ``docs/quant/`` only, matching the issue. ``openwiki/`` is excluded on
-purpose: its pages are generated artifacts, and
-``openwiki/rigor/documented-conflicts.md`` is the evidence record of what the run
-found — it *must* keep quoting the strings this module forbids.
+Scope is ``docs/quant/`` only for the guards above, matching the issue. The blanket
+``openwiki/`` carve-out those guards were written with — "its pages are generated
+artifacts, and ``documented-conflicts.md`` is the evidence record of what the run
+found, so it *must* keep quoting the strings this module forbids" — was correct
+about the *evidence record* and wrong about the rest of the tree. ``mkdocs.yml``
+serves every one of those pages publicly. #1794 moved the DSR bar and review found
+three served pages still teaching the retired one, one of them a field guide whose
+closing note asserted the exact inverse of the truth.
+
+So ``TestServedWikiPagesDoNotTeachARetiredBar`` reinstates the scan over the served
+rigor/ and findings/ pages under a rule that keeps the provenance argument intact:
+**a served page either states the live bar, or carries a STALE-ON-ONE-NUMBER banner
+saying it does not.** The banner is the disclosure a reader actually sees, it is
+bound to ``DSR_P_BADGE_MIN`` so a future bar move re-aims every one of them, and it
+lets a generated page stay as generated instead of being hand-patched into a lie
+about its own vintage.
 
 Hermetic: reads committed files off disk and imports one pure-dataclass module.
 No DB, no network, no .env, no model load.
@@ -107,8 +119,16 @@ _PASS_COUNT = re.compile(
 # ── Conflict 2 — the reversed `num_trials` convention, in code form ─────────
 _LIBRARY_SIZED_NUM_TRIALS = re.compile(r"num_trials\s*=\s*len\s*\(", re.IGNORECASE)
 
-# ── Conflict 3 — the pre-#901 bar stated as a gate condition ────────────────
-_STALE_095_BAR = re.compile(r"p\s*(?:≥|>=)\s*0\.95")
+# ── Conflict 3 — a RETIRED bar stated as a gate condition ──────────────────
+# This guard has been inverted once already, which is the whole lesson. It was
+# written to forbid `p ≥ 0.95` because PR #901 had lowered the bar; #1794 found
+# that the Generate path and every public rigor page had gone on saying 0.95 the
+# whole time, and the owner's call was 0.95 everywhere. So the forbidden string is
+# now `p ≥ 0.90`. To make a second inversion impossible to miss,
+# `test_the_retired_bar_guard_is_not_the_live_bar` asserts this pattern does NOT
+# match the live constant — move the bar in rigor_profiles and this file fails
+# until the guard is re-aimed.
+_RETIRED_BAR = re.compile(r"p\s*(?:≥|>=)\s*0\.90?(?![\d])")
 
 # ── Conflict 5 — 0.612 is a DSR p-value; it is not any kind of Sharpe ───────
 _SHARPE_0612 = re.compile(r"Sharpe[^\n]{0,40}0\.612", re.IGNORECASE)
@@ -173,7 +193,7 @@ class TestForbiddenClaims:
             "The corrected pass count is unestablished.",
             # A decimal that must not read as a count (conflict 5's own prose).
             "an always-on floor of `> 0` and a cliff of `OOS/IS ≥ 0.5` — and 0.930 clears both",
-            "the `num_trials = 22` row at p = 0.941 clears 0.90",
+            "the `num_trials = 22` row at p = 0.941 clears the lower bar",
         ],
     )
     def test_pass_count_guard_admits_correct_prose(self, line: str):
@@ -201,23 +221,67 @@ class TestForbiddenClaims:
             "num-trials-self-containment.md:\n  " + "\n  ".join(hits)
         )
 
-    def test_no_stale_095_gate_bar(self):
-        """The DSR bar has been 0.90 since PR #901; `p ≥ 0.95` states a gate condition.
+    def test_no_retired_gate_bar(self):
+        """The DSR bar is `DSR_P_BADGE_MIN`; PR #901's lower bar is retired (#1794).
 
-        Historical *narration* of the old bar is fine and necessary — the findings
+        Historical *narration* of a retired bar is fine and necessary — the findings
         notes need it to explain their own vintage — which is why this matches the
         threshold-expression form and not the digits.
         """
-        hits = _hits(_STALE_095_BAR)
+        hits = _hits(_RETIRED_BAR)
         assert not hits, (
-            "A `p ≥ 0.95` gate condition survives in docs/quant/. The bar is 0.90 "
-            "(PR #901); narrate the old bar, do not state it as a condition:\n  " + "\n  ".join(hits)
+            "A retired `p ≥ 0.90` gate condition survives in docs/quant/. The bar is "
+            f"{rigor_profiles.DSR_P_BADGE_MIN} (#1794); narrate the old bar, do not "
+            "state it as a condition:\n  " + "\n  ".join(hits)
         )
+
+    def test_the_retired_bar_guard_is_not_the_live_bar(self):
+        """The guard must forbid a RETIRED bar, never the live one.
+
+        #1794's root cause in miniature: this pattern was aimed at 0.95 while the
+        live bar was 0.90, and when the owner moved the bar back the guard would
+        have started rejecting correct prose. Bind it to the constant instead.
+        """
+        live = f"p ≥ {rigor_profiles.DSR_P_BADGE_MIN:.2f}"
+        assert not _RETIRED_BAR.search(live), (
+            f"_RETIRED_BAR matches the LIVE bar ({live}). The bar moved in "
+            "rigor_profiles and this guard was not re-aimed — it now forbids docs "
+            "from stating the truth."
+        )
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "the gate admits a strategy at `p >= 0.90`",
+            "Admission is `p ≥ 0.90` at level 1.",
+            "DSR `p ≥ 0.9`, PBO `< 0.5`",
+        ],
+    )
+    def test_retired_bar_guard_rejects_the_forbidden_form(self, line: str):
+        """Shown red on the input it must reject, not assumed to be (CLAUDE.md rule 4)."""
+        assert _RETIRED_BAR.search(line), f"_RETIRED_BAR misses a retired gate condition: {line!r}"
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            # Narration of the retired bar — the correction style this module requires.
+            "PR #901 briefly lowered the bar; #1794 retired that path.",
+            "the 0.90 bar PR #901 briefly used",
+            # The live bar, stated as a condition. Must NOT trip the guard.
+            "Admission requires `dsr_p_value ≥ 0.95`.",
+            "DSR `p ≥ 0.95`, PBO `< 0.5`",
+            # A p-value that merely starts with 0.90-ish digits is not a bar.
+            "the `num_trials = 22` row at p = 0.941",
+            "Faber's `dsr_p_value` is p ≥ 0.9012 on that pull",
+        ],
+    )
+    def test_retired_bar_guard_admits_correct_prose(self, line: str):
+        assert not _RETIRED_BAR.search(line), f"_RETIRED_BAR false-positives on correct prose: {line!r}"
 
     def test_0612_is_never_called_a_sharpe(self):
         """0.612 is Faber's DSR p-value. Its OOS Sharpe on the same pull is 0.930.
 
-        Two passages explained a failure as an OOS Sharpe of 0.612 "under the 0.90
+        Two passages explained a failure as an OOS Sharpe of 0.612 "under the DSR
         gate" — comparing a Sharpe ratio to a probability. The OOS Sharpe's own
         thresholds are an always-on floor of > 0 and a cliff of OOS/IS >= 0.5, and
         0.930 clears both; the failure is on criterion 1.
@@ -225,7 +289,7 @@ class TestForbiddenClaims:
         hits = _hits(_SHARPE_0612)
         assert not hits, (
             "docs/quant/ attributes 0.612 to a Sharpe ratio. It is a DSR p-value "
-            "(docs/analysis/faber-dsr-finding.md); 0.90 is a probability bar, not "
+            "(docs/analysis/faber-dsr-finding.md); the DSR bar is a probability, not "
             "an OOS-Sharpe bar:\n  " + "\n  ".join(hits)
         )
 
@@ -299,3 +363,161 @@ class TestThresholdsMatchLiveCode:
         """The single most-quoted number on the page."""
         bar = rigor_profiles.get_profile(rigor_profiles.STRICTEST_LEVEL).dsr_p_min
         assert f"`dsr_p_value ≥ {bar:.2f}`" in admission_text
+
+
+# ── The served OpenWiki pages (#1794 review) ────────────────────────────────
+#
+# These live outside docs_dir but mkdocs.yml mounts them, and
+# `test_docs_site.py::test_every_openwiki_page_is_in_the_nav` guarantees every one
+# is reachable. A visitor cannot tell a "generated artifact" from a hand-written
+# page; both are just the site.
+#
+# Every markdown page under openwiki/, not a hand-named subset: a list of two
+# directories is the same shape of mistake as `TestOneLiteral`'s old nine-module
+# allowlist, and openwiki/ grows a section whenever the generator runs.
+
+# The banner that makes a stale page honest. Matched on the marker AND on the live
+# bar, so a banner left behind after the next bar move fails here instead of
+# quietly certifying the wrong number.
+_STALE_BANNER = "STALE ON ONE NUMBER"
+
+# A DSR bar written down on a wiki page: `0.9`/`0.90`/`0.95`, or `90%`/`95%`.
+# Deliberately broader than `_RETIRED_BAR` above, which only matches the `p ≥ x`
+# gate-condition form — review's two pages stated the retired bar as "is it ≥
+# 0.90?" and "the gate has since moved to 0.90", and `_RETIRED_BAR` reads neither.
+#
+# It captures the VALUE rather than hardcoding the retired one, and `_wiki_bar_hits`
+# drops anything equal to `DSR_P_BADGE_MIN`. Written the other way round — a pattern
+# aimed at the digits `0.90` — this guard would need re-aiming by hand every time
+# the bar moves, which is the failure mode `test_the_retired_bar_guard_is_not_the_live_bar`
+# exists to catch one class up. Caught by this module's own adversarial cases: the
+# first draft matched `0.9\d?` and flagged the live bar, i.e. it would have demanded
+# a "this page is stale" banner on a page telling the truth.
+_WIKI_BAR_LITERAL = re.compile(r"(?<![\d.])(?P<dec>0\.9\d?)(?![\d])|(?<![\d.])(?P<pct>9\d)\s*%")
+# ...but only where it is a claim about the gate. Same window trick as
+# test_single_dsr_bar: the token must appear within two lines.
+_WIKI_BAR_TOKEN = re.compile(r"dsr|deflat|\bgate\b|\bbar\b|threshold|confidence|admission", re.IGNORECASE)
+_WIKI_WINDOW = 2
+
+
+def _served_wiki_pages() -> list[Path]:
+    root = _repo_root() / "openwiki"
+    pages = sorted(root.rglob("*.md"))
+    assert pages, f"no served wiki pages found under {root} — the guard would pass vacuously"
+    return pages
+
+
+def _non_live_bars(line: str) -> list[str]:
+    """Bar-shaped numbers on ``line`` that are NOT the live badge bar."""
+    live = rigor_profiles.DSR_P_BADGE_MIN
+    found: list[str] = []
+    for m in _WIKI_BAR_LITERAL.finditer(line):
+        raw = m.group("dec") or m.group("pct")
+        value = float(raw) if m.group("dec") else float(raw) / 100
+        if value != live:
+            found.append(raw)
+    return found
+
+
+def _wiki_bar_hits(page: Path) -> list[str]:
+    lines = page.read_text(encoding="utf-8").splitlines()
+    out: list[str] = []
+    for i, line in enumerate(lines):
+        if not _non_live_bars(line):
+            continue
+        window = lines[max(0, i - _WIKI_WINDOW) : i + _WIKI_WINDOW + 1]
+        if not any(_WIKI_BAR_TOKEN.search(w) for w in window):
+            continue
+        out.append(f"{page.relative_to(_repo_root())}:{i + 1}: {line.strip()}")
+    return out
+
+
+class TestServedWikiPagesDoNotTeachARetiredBar:
+    """Every served wiki page states the live bar, or says it doesn't."""
+
+    def test_a_page_quoting_a_retired_bar_carries_the_stale_banner(self):
+        offenders: list[str] = []
+        for page in _served_wiki_pages():
+            text = page.read_text(encoding="utf-8")
+            if _STALE_BANNER in text:
+                continue
+            offenders.extend(_wiki_bar_hits(page))
+        assert not offenders, (
+            "A publicly served OpenWiki page states a DSR bar that is not "
+            f"{rigor_profiles.DSR_P_BADGE_MIN} and carries no STALE-ON-ONE-NUMBER "
+            "banner. That is #1794's headline symptom — a public rigor page quoting "
+            "a threshold the gate does not use. Either correct the page or add the "
+            "banner:\n  " + "\n  ".join(offenders)
+        )
+
+    def test_every_stale_banner_names_the_live_bar(self):
+        """A banner is a claim too. Bind it, or the next bar move strands them all."""
+        live = f"**{rigor_profiles.DSR_P_BADGE_MIN:.2f}**"
+        wrong = [
+            str(page.relative_to(_repo_root()))
+            for page in _served_wiki_pages()
+            if _STALE_BANNER in page.read_text(encoding="utf-8") and live not in page.read_text(encoding="utf-8")
+        ]
+        assert not wrong, (
+            f"A STALE-ON-ONE-NUMBER banner does not name the live bar ({live}). The "
+            "banner exists to tell a reader what the number really is; one that omits "
+            "it — or names a bar that has since moved again — is worse than no banner "
+            f"at all: {wrong}"
+        )
+
+    def test_the_banner_exemption_is_not_swallowing_the_whole_tree(self):
+        """Anti-vacuity: the guard must still be scanning unbannered pages.
+
+        If every served page ends up bannered, this suite would pass while teaching
+        nothing. Assert that most pages are NOT exempt, so the scan has real work.
+        """
+        pages = _served_wiki_pages()
+        bannered = [p for p in pages if _STALE_BANNER in p.read_text(encoding="utf-8")]
+        assert len(bannered) < len(pages), (
+            "every served wiki page is bannered stale — the scan is now vacuous, and "
+            "the wiki needs regenerating rather than more banners"
+        )
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "2. **DSR p-value** — is it ≥ 0.90? If not, the excess Sharpe is unproven.",
+            "the gate has since moved to 0.90 (see documented-conflicts)",
+            "**DSR at 0.90** is one-sided 90% confidence that the excess Sharpe is positive",
+            "| 1 | Deflated Sharpe Ratio | `dsr_p_value ≥ 0.90`, and not `None` |",
+        ],
+    )
+    def test_the_wiki_scan_rejects_a_retired_bar_claim(self, line: str):
+        """Shown red on the input it must reject, not assumed to be (CLAUDE.md rule 4)."""
+        assert _non_live_bars(line), f"the wiki scan misses a retired bar: {line!r}"
+        assert _WIKI_BAR_TOKEN.search(line), f"_WIKI_BAR_TOKEN misses the gate context: {line!r}"
+
+    def test_the_wiki_scan_never_flags_the_live_bar(self):
+        """The `_RETIRED_BAR` inversion lesson, applied one guard up.
+
+        A scan aimed at digits instead of at "not the live value" starts demanding a
+        stale banner on pages that tell the truth the moment the bar moves.
+        """
+        live = rigor_profiles.DSR_P_BADGE_MIN
+        for stated in (f"the DSR bar is {live:.2f}", f"{live:.0%} one-sided confidence"):
+            assert not _non_live_bars(stated), (
+                f"the wiki scan flags the LIVE bar ({stated!r}). It must reject bars "
+                "that are not DSR_P_BADGE_MIN, never the one that is."
+            )
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            # The live bar, stated as the gate. Must NOT trip the scan.
+            "the badge bar is **0.95**, defined once as `DSR_P_BADGE_MIN`",
+            "| 1 | Deflated Sharpe Ratio | `dsr_p_value ≥ 0.95`, and not `None` |",
+            # A measured p-value in a worked table is not a threshold claim.
+            "DSR p-values of 0.999 → 0.963 for `num_trials` 1–13",
+            "the `num_trials = 22` row at p = 0.941 clears the bar",
+            # A number with nothing to do with the gate.
+            "the strategy drew down 90% of its peak equity in 2008",
+        ],
+    )
+    def test_the_wiki_scan_admits_correct_prose(self, line: str):
+        flagged = bool(_non_live_bars(line)) and bool(_WIKI_BAR_TOKEN.search(line))
+        assert not flagged, f"the wiki scan false-positives on correct prose: {line!r}"

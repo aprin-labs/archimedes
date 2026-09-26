@@ -27,7 +27,7 @@ mkdocs, scoped to `docs_dir`, cannot resolve any of them: 371 warnings on
 published site. Rather than rewrite ~47 unique targets across dozens of files
 to work around a generator limitation (the tradeoff the docs-site scaffold
 declined, `docs/runbooks/docs-site-setup.md`), this rewrites them **at build
-time** to `https://github.com/a-apin/archimedes/blob/main/<path>`, preserving
+time** to `https://github.com/aprin-labs/archimedes/blob/main/<path>`, preserving
 `#Lnn` line anchors. The committed markdown is untouched.
 
 **The rewrite deliberately does not paper over real breakage.** A link whose
@@ -35,6 +35,31 @@ target lands *inside* `docs/` or `openwiki/` but names a file that does not
 exist is left exactly as written, so mkdocs still warns and `--strict` still
 fails the build. Only targets outside the site's own source trees become
 GitHub URLs. See `test_docs_site.py::test_broken_in_site_link_is_left_for_strict_to_catch`.
+
+`on_files` also enforces **default-deny publication** (issue #1751). Removing a
+page from the nav does not unpublish it: mkdocs walks `docs_dir` and builds
+every markdown file it finds, in the nav or not. That made the curated nav an
+*allow-list of links* while the site itself stayed an allow-everything build,
+so a new `docs/runbooks/*.md` or `docs/api/*.md` published the moment it was
+committed and `exclude_docs` only caught the pages someone had already thought
+of. This hook inverts it: a file under `docs_dir` (or the mounted `openwiki/`
+tree) is kept only if the curated `nav:` names it, or `not_in_nav` allow-lists
+it explicitly. Anything else is marked `InclusionLevel.EXCLUDED` — the same
+state `exclude_docs` produces, so it is not built, not copied, and every link
+into it is repointed at GitHub by the rewriter below — and logged at WARNING,
+which `mkdocs build --strict` (the build command in
+`.github/workflows/docs-site.yml`) fails on. `mkdocs.yml`'s
+`validation.nav.omitted_files: warn` is the backstop for the case where this
+hook is removed: mkdocs itself then fails the strict build on the same file.
+
+`on_page_context` — **fix the edit pencil on the mounted wiki pages.** `edit_uri`
+in `mkdocs.yml` is `edit/main/docs/`, which is right for every page that really
+does live under `docs/`. The openwiki pages do not: they are mounted from
+the repository root, so mkdocs built them an edit URL of
+`…/edit/main/docs/openwiki/…` and all 14 pencils returned GitHub's 404. The fix
+lives here rather than in the config because the alternative — `edit_uri: ""`
+plus a computed URL for every page — moves every working link onto new code for
+the sake of the 14 broken ones.
 
 Importability: mkdocs is imported lazily inside `on_files` so this module can be
 imported by the drift test in the backend unit suite, which does not install
@@ -44,6 +69,7 @@ rather than re-derived (they already carry the nested-badge-link fix from #1262)
 
 from __future__ import annotations
 
+import logging
 import posixpath
 import sys
 from pathlib import Path
@@ -54,6 +80,11 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from docs_links import BADGE_LINK, INLINE_LINK, REF_DEF, is_external, strip_code  # noqa: E402
+
+#: Under the `mkdocs` logger on purpose: `mkdocs build --strict` counts WARNING and
+#: above through a handler attached to `logging.getLogger("mkdocs")` (mkdocs/__main__.py),
+#: so a logger outside that namespace would print and gate nothing.
+log = logging.getLogger("mkdocs.hooks.mkdocs_hooks")
 
 #: Repository root: <root>/.github/scripts/mkdocs_hooks.py -> parents[1] is <root>/.github.
 REPO_ROOT = _SCRIPTS_DIR.parents[1]
@@ -68,8 +99,11 @@ WIKI_DIR = "openwiki"
 #: its provenance note. Source file: docs/agent-wiki.md.
 PROVENANCE_PAGE = "agent-wiki.md"
 
-_BLOB_BASE = "https://github.com/a-apin/archimedes/blob/main"
-_TREE_BASE = "https://github.com/a-apin/archimedes/tree/main"
+_BLOB_BASE = "https://github.com/aprin-labs/archimedes/blob/main"
+_TREE_BASE = "https://github.com/aprin-labs/archimedes/tree/main"
+#: Base for `on_page_context`'s edit-pencil fix. Mirrors `edit_uri` in mkdocs.yml
+#: minus its `docs/` prefix, which is exactly what is wrong for these pages.
+_EDIT_BASE = "https://github.com/aprin-labs/archimedes/edit/main"
 
 #: Stamped on every openwiki page by `add_provenance_banner`. A reader arriving from
 #: a search engine lands on a leaf page, not on the section index, so the label has to
@@ -108,8 +142,134 @@ def wiki_pages(root: Path | str | None = None) -> list[Path]:
     return pages
 
 
+# ── default-deny publication (#1751) ─────────────────────────────────────────────────
+
+
+def nav_source_paths(nav: Any) -> set[str]:
+    """Every source path the curated `nav:` names, as mkdocs source URIs.
+
+    The nav is a tree of strings, lists and one-key dicts. Only the leaves that
+    address a file in the source tree count: an `- Label: https://…` row is a
+    link off the site, and a site-absolute `/path` row addresses a built URL
+    rather than a source file, so neither one publishes anything.
+
+    Shared with `backend/tests/test_docs_default_deny.py` so the build and the
+    guard read the nav the same way instead of each deciding separately — the
+    failure mode this whole mechanism exists to prevent.
+    """
+    found: set[str] = set()
+
+    def walk(node: Any) -> None:
+        if isinstance(node, str):
+            if not is_external(node) and not node.startswith("/"):
+                found.add(posixpath.normpath(node))
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+        elif isinstance(node, dict):
+            for value in node.values():
+                walk(value)
+
+    walk(nav)
+    return found
+
+
+def _is_under(abs_path: str, root: Path) -> bool:
+    try:
+        Path(abs_path).resolve().relative_to(root)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _effective_inclusion(file: Any, config: Any, inclusion_level: Any) -> Any:
+    """What `mkdocs.structure.files.set_exclusions` would make of this file.
+
+    Files mkdocs discovered under `docs_dir` already carry a level by the time a
+    hook sees them. Files a hook *appended* — the mounted `openwiki/` tree — are
+    still `UNDEFINED`, and mkdocs only resolves those after `on_files` returns
+    (`mkdocs/commands/build.py`: "If plugins have added files but haven't set
+    their inclusion level, calculate it again"). Mirroring that resolution here
+    means one rule covers both, and in particular that an appended file matched
+    by `exclude_docs` or `not_in_nav` is not reported as an unclassified page.
+    """
+    if file.inclusion is not inclusion_level.UNDEFINED:
+        return file.inclusion
+    for key, level in (
+        ("exclude_docs", inclusion_level.EXCLUDED),
+        ("draft_docs", inclusion_level.DRAFT),
+        ("not_in_nav", inclusion_level.NOT_IN_NAV),
+    ):
+        spec = config.get(key)
+        if spec is not None and spec.match_file(file.src_uri):
+            return level
+    return inclusion_level.INCLUDED
+
+
+def deny_unlisted(files: Any, config: Any) -> list[str]:
+    """Unpublish every `docs_dir`/`openwiki` file the curated nav does not name.
+
+    This is the control that makes the nav an allow-list of *pages* rather than
+    an allow-list of *links*. `exclude_docs` still works and still means what it
+    said; it is now the place to record a deliberate "this is internal", not the
+    only thing standing between a new file and the public site.
+
+    Denial is `InclusionLevel.EXCLUDED` — exactly the state `exclude_docs`
+    produces — so the rest of the build already handles it: the page is not
+    rendered, a media file is not copied, and `published_uris` keeps every link
+    into it out of the relative-link path so `rewrite_target` sends it to GitHub.
+
+    Theme files are deliberately out of scope: `add_files_from_theme` runs before
+    this hook, so the collection also holds mkdocs-material's CSS, JS and fonts
+    (and `docs-site/overrides/404.html`), none of which is ever in the nav.
+
+    Returns the denied source URIs, sorted — the return value is what
+    `backend/tests/test_docs_default_deny.py` asserts on.
+    """
+    from mkdocs.exceptions import PluginError
+    from mkdocs.structure.files import InclusionLevel
+
+    nav_uris = nav_source_paths(config.get("nav"))
+    if not nav_uris:
+        # Without a nav, mkdocs generates one from the whole tree and every file
+        # under docs/ publishes. Denying everything would be worse than useless
+        # and denying nothing would be a lie, so the build stops.
+        raise PluginError(
+            "docs default-deny (#1751): mkdocs.yml has no curated `nav:`, so there is no "
+            "allow-list to publish from. Restore the nav, or remove this hook deliberately "
+            "and accept that every file under docs/ goes public."
+        )
+
+    roots = [Path(config["docs_dir"]).resolve(), (REPO_ROOT / WIKI_DIR).resolve()]
+    denied: list[str] = []
+    for file in files:
+        abs_src = getattr(file, "abs_src_path", None)
+        if not abs_src or not any(_is_under(abs_src, root) for root in roots):
+            continue
+        if _effective_inclusion(file, config, InclusionLevel) is not InclusionLevel.INCLUDED:
+            continue
+        if file.src_uri in nav_uris:
+            continue
+        file.inclusion = InclusionLevel.EXCLUDED
+        denied.append(file.src_uri)
+
+    denied.sort()
+    if denied:
+        log.warning(
+            "docs default-deny (#1751): %d file(s) under docs/ are named by no nav entry and by no "
+            "`not_in_nav` pattern, so this build does NOT publish them:\n  - %s\n"
+            "Choose one, in the same change that adds the file: a nav row in mkdocs.yml publishes "
+            "it; a `not_in_nav` pattern publishes it without a nav entry; an `exclude_docs` pattern "
+            "records that it is internal. Until then it stays off the site and this build stays red "
+            "under --strict.",
+            len(denied),
+            "\n  - ".join(denied),
+        )
+    return denied
+
+
 def on_files(files: Any, config: Any) -> Any:
-    """Append the `openwiki/` tree to the build's file set."""
+    """Mount the `openwiki/` tree, then deny every file the curated nav does not name."""
     # Lazy so this module imports without mkdocs — see the module docstring.
     from mkdocs.structure.files import File
 
@@ -122,6 +282,7 @@ def on_files(files: Any, config: Any) -> Any:
                 config["use_directory_urls"],
             )
         )
+    deny_unlisted(files, config)
     return files
 
 
@@ -219,6 +380,32 @@ def rewrite_links(markdown: str, page_repo_uri: str, page_site_uri: str, known: 
     return out
 
 
+def published_uris(files: Any) -> set[str]:
+    """The source URIs the built site actually serves.
+
+    `files` still carries the pages `exclude_docs` removed — mkdocs *marks* a
+    file's inclusion level rather than dropping it — so a plain
+    `{f.src_uri for f in files}` counts an excluded page as "on the site". Every
+    link INTO one would then be left as a relative link, which resolves nowhere
+    once the page is gone: mkdocs reports that at INFO, so `--strict` stays green
+    while the published site grows dead links.
+
+    Filtering here is what lets a page be unpublished without a tree-wide link
+    scrub. A link to an excluded page falls through `rewrite_target`'s step 3 and
+    becomes the GitHub blob URL for the file, which is where the content now is.
+
+    `inclusion` is mkdocs >= 1.6 (`InclusionLevel`); the getattr keeps this module
+    importable, and the build honest-by-default, on anything older.
+    """
+    out: set[str] = set()
+    for f in files:
+        inclusion = getattr(f, "inclusion", None)
+        if inclusion is not None and not inclusion.is_included():
+            continue
+        out.add(f.src_uri)
+    return out
+
+
 def add_provenance_banner(markdown: str, page_site_uri: str) -> str:
     """Insert the agent-generated banner just below an openwiki page's first heading."""
     index_link = posixpath.relpath(PROVENANCE_PAGE, posixpath.dirname(page_site_uri) or ".")
@@ -235,9 +422,33 @@ def add_provenance_banner(markdown: str, page_site_uri: str) -> str:
 # `config` is unused but the name is load-bearing: mkdocs dispatches plugin events
 # by keyword (`method(item, **kwargs)`), so renaming or dropping it breaks the call.
 def on_page_markdown(markdown: str, page: Any, config: Any, files: Any) -> str:  # noqa: ARG001
-    known = {f.src_uri for f in files}
+    known = published_uris(files)
     page_repo_uri = Path(page.file.abs_src_path).resolve().relative_to(REPO_ROOT).as_posix()
     out = rewrite_links(markdown, page_repo_uri, page.file.src_uri, known)
     if page_repo_uri.startswith(WIKI_DIR + "/"):
         out = add_provenance_banner(out, page.file.src_uri)
     return out
+
+
+# ── edit pencil ──────────────────────────────────────────────────────────────────────
+
+
+def wiki_edit_url(src_uri: str) -> str | None:
+    """GitHub edit URL for a mounted `openwiki/` page, or None for anything else.
+
+    Separated from the hook so `backend/tests/test_docs_site.py` can assert the
+    URL without standing up a mkdocs build.
+    """
+    if src_uri != WIKI_DIR and not src_uri.startswith(WIKI_DIR + "/"):
+        return None
+    return f"{_EDIT_BASE}/{src_uri}"
+
+
+# `config` and `nav` are unused but the names are load-bearing: mkdocs dispatches
+# plugin events by keyword (`method(item, **kwargs)`).
+def on_page_context(context: Any, page: Any, config: Any, nav: Any) -> Any:  # noqa: ARG001
+    """Repoint the edit pencil for pages whose source is not under `docs_dir`."""
+    fixed = wiki_edit_url(page.file.src_uri)
+    if fixed is not None:
+        page.edit_url = fixed
+    return context

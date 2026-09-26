@@ -951,3 +951,93 @@ async def test_the_stamp_suppresses_save_traces_vault_owner_lookup():
         json.loads(call.args[1]) for call in redis.set.call_args_list if call.args[1].startswith("{")
     ]
     assert payload["owner_user_id"] == OWNER_USER_ID
+
+
+# ── G8: the advance cycle is ONE connection (#1818 P2) ─────────────────────
+
+
+async def test_the_advance_cycle_opens_no_second_session(monkeypatch):
+    """The wedge shape from the 2026-09-03 incident, made unrepresentable.
+
+    ``docs/incidents/2026-09-03-paper-advance-ddl-wedge.md``, mechanism item 3:
+    the cycle transaction held ``AccessShareLock`` on ``papers`` for the whole
+    replay while ``resolve_paper_hashes`` opened a SECOND session and queried
+    ``papers`` from it. A sibling task's ``ALTER TABLE papers`` sat between the
+    two, so session 2 waited on the ALTER, the ALTER waited on session 1, and
+    session 1 waited on session 2 — a cycle that lives outside PostgreSQL,
+    which is why there was no deadlock detection, no timeout and no log line
+    for ten hours.
+
+    So the guard is not about ``papers`` or about DDL, both of which P1 already
+    moved off the cycle path: it is that the cycle is ONE connection, whatever
+    anyone later adds to it. Exactly one session may be opened for the whole
+    advance, the cycle's own, and the failure message names the file and line
+    of every extra opener.
+
+    ``archimedes.db.SessionLocal`` is what is instrumented, NOT ``get_session``.
+    Patching ``get_session`` only intercepts callers that resolve the name at
+    call time; this repo's dominant idiom is a module-level ``from archimedes.db
+    import get_session`` (``api/user_routes.py``, ``api/wallet_routes.py``,
+    ``marketplace/service.py``, ``services/corpus_service.py``,
+    ``scripts/run_backtests.py``, …), and those bindings are invisible to that
+    patch — a second session opened through one of them left this guard GREEN.
+    ``get_session()`` is ``return SessionLocal()``, resolving the module global
+    at call time, so instrumenting the factory counts every route to a session
+    including those bindings.
+
+    The corpus row is seeded so the lookup genuinely resolves — a guard that
+    passed because ``resolve_paper_hashes`` returned early on an empty corpus
+    would be measuring nothing.
+    """
+    import traceback
+
+    import archimedes.db as db_module
+    from archimedes.models.corpus_store import PaperRecord
+    from archimedes.services import paper_trading
+
+    _seed()
+    with db_module.get_session() as session:
+        session.merge(PaperRecord(arxiv_id="0706.1497", title="Faber", content_hash="c" * 64))
+        session.commit()
+
+    def one_decision(spec_dict, deployed_at):
+        return _replay(spec_dict, deployed_at), {DECIDED: _decision()}
+
+    monkeypatch.setattr(paper_trading, "replay_spec_with_decisions", one_decision)
+
+    opens: list[str] = []
+    real_session_local = db_module.SessionLocal
+    db_file = db_module.__file__
+
+    def _recording_session_local(*args, **kwargs):
+        # Name the REAL opener: drop this wrapper, then any ``archimedes/db.py``
+        # frame, since ``get_session`` is only ``return SessionLocal()``. A
+        # future direct ``SessionLocal()`` caller is attributed just as
+        # precisely, which a fixed stack index would not manage.
+        stack = traceback.extract_stack()[:-1]
+        caller = next((f for f in reversed(stack) if f.filename != db_file), stack[-1])
+        opens.append(f"{caller.filename}:{caller.lineno} in {caller.name}()")
+        return real_session_local(*args, **kwargs)
+
+    monkeypatch.setattr(db_module, "SessionLocal", _recording_session_local)
+
+    store = _Store()
+    with _store(store):
+        # Exactly the shape of `paper_advance_loop`'s `_run`: one session, one
+        # commit, the whole fleet advanced in between.
+        from archimedes.db import get_session
+        from archimedes.services.paper_trading import advance_all
+
+        with get_session() as session:
+            out = advance_all(session)
+            session.commit()
+
+    assert out["ok"] == 1 and out["traces_published"] == 1, "the cycle has to have actually done the work"
+    (published,) = list({id(v): v for v in store.records.values()}.values())
+    assert published["consulted_paper_hashes"] == ["0706.1497:" + "c" * 64], (
+        "the corpus lookup must have really run on the cycle session"
+    )
+    assert len(opens) == 1, (
+        f"the advance cycle opened {len(opens)} sessions, not 1 — a second connection inside the cycle "
+        f"transaction is the 2026-09-03 wedge shape (#1818 P2). Openers: {opens[1:]}"
+    )

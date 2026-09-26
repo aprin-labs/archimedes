@@ -25,7 +25,13 @@ import {
 	UNKNOWN_RIGOR_LABEL,
 	UNKNOWN_RIGOR_TITLE,
 } from "../rigorGateStatus.js";
+import { statusTag, statusLabel, statusTitle } from "../libraryStatus.js";
 import { formatStrategySpec, tokenizeJson } from "../strategySpec.js";
+import { paperAttributionHeader } from "../paperAttribution.js";
+import {
+	hasSharpeReconciliation,
+	rigorBarClause,
+} from "../sharpeReconciliation.js";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
@@ -130,21 +136,26 @@ function joinWords(items) {
 	return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }
 
-function PapersTable({ papers, methodologyHash }) {
+function PapersTable({ papers, methodologyHash, distinctMechanismPapers }) {
 	const rows = papers;
 	const blanks = blankColumns(rows);
+	// #1769: the heading counts CITATIONS and ATTRIBUTIONS separately. It used
+	// to read "Fused from N papers", which presented a citation count as fusion
+	// depth — on the strategy that surfaced this, all 5 contribution cells were
+	// em-dashes. The sub-line is no longer conditional on `rows.length > 1`
+	// either: it was the claim "One methodology synthesized from every row
+	// below", which is the same overclaim in a sentence.
+	const attribution = paperAttributionHeader(rows, distinctMechanismPapers, "passport");
+	// `null` only for an empty `rows`, which the one call site already routes to
+	// its own "no source papers are recorded" panel. Guarded anyway so a second
+	// call site can never white-screen the passport on an empty list.
+	if (!attribution) return null;
 
 	return (
 		<div className="card passport-panel passport-papers">
 			<div className="passport-papers__head">
-				<div className="label">
-					{rows.length === 1 ? "Source paper" : `Fused from ${rows.length} papers`}
-				</div>
-				{rows.length > 1 && (
-					<p className="caption text-[var(--text-3)]">
-						One methodology synthesized from every row below.
-					</p>
-				)}
+				<div className="label">{attribution.heading}</div>
+				<p className="caption text-[var(--text-3)]">{attribution.note}</p>
 			</div>
 
 			<div className="passport-papers__scroll">
@@ -280,25 +291,28 @@ function StrategySpecPanel({ spec }) {
 	);
 }
 
-function statusTag(status, passesRigor) {
-	// A "live" admin status combined with a failed rigor verdict shouldn't
-	// render green — the rigor verdict is the truthful signal. Match the
-	// Strategies.jsx pill rule (Issue #387) so the passport doesn't
-	// contradict the library page.
-	if (status === "live" && passesRigor === false) return "tag-muted";
-	if (status === "validated" || status === "live") return "tag-positive";
-	if (status === "rejected" || status === "retired") return "tag-muted";
-	return "tag-accent";
-}
-
-function statusLabel(status, passesRigor) {
-	if (status === "live" && passesRigor === false)
-		return "Reference only — gate failed";
-	return (
-		(status || "candidate").charAt(0).toUpperCase() +
-		(status || "candidate").slice(1)
-	);
-}
+// The status pill's class, its words and its tooltip are `../libraryStatus.js`'s
+// — this file defines none of them.
+//
+// Two local two-argument helpers used to live here. They read `status` and
+// `passes_rigor_gate`, and nothing else, which left this surface the last place
+// the BOOLEAN could still stand in for the verdict. The Library moved its pill
+// onto the four-state `rigor_gate_status` (#1747); the passport imported only
+// the shared demotion LABEL and kept its own two-arm logic — so it looked
+// unified and was not. `passes_rigor_gate` is false for a PENDING row and for a
+// DEGENERATE one too, by fail-closed design, so a live row no gate had ever
+// graded painted its pill "Reference only — gate failed" — a graded-and-lost
+// claim — a few pixels from this same header's rigor chip reading "rigor gate
+// pending". One vocabulary, one module: a pill may say "gate failed" only when
+// `rigor_gate_status === "fail"`; pending says "Not yet graded", degenerate
+// says "Unevaluable — flat returns".
+//
+// Two pill COLOURS move as a result, on purpose. `validated` was green here and
+// is accent in the shared helper; an unknown/`candidate` status was accent here
+// and is muted there. Green is reachable from exactly one place now — a `live`
+// row with a literal `true` verdict — which is the whole point of the shared
+// module: a second green door on the passport would re-open the gap this
+// closes. No graded state's WORDS change.
 
 // Derive a brief-specific display title. The unified passport table doesn't
 // persist `strategy_name`, but Pi's #336 fix ensures methodology_summary
@@ -405,8 +419,21 @@ export default function StrategyPassport({
 		setGate(null);
 		if (!strategyId) return;
 		// min_passing_level is strictness-independent, so one call (default level)
-		// gives the whole ladder. 404 (generated strategy not in the curated cohort)
-		// is expected — we fall back to the badge boolean below.
+		// gives the whole ladder.
+		//
+		// The old comment here said "404 (generated strategy not in the curated
+		// cohort) is expected — we fall back to the badge boolean below". That
+		// stopped being true when `_generated_strategy_rigor` landed:
+		// `evaluate_strategy_rigor` (backend/archimedes/api/selection_bias_routes.py)
+		// falls through to it and runs `run_rigor_gate` LIVE on a generated row's
+		// own persisted returns, so a generated id gets a 200 with a real ladder.
+		// What this call is, precisely: the DEPLOY ladder (which strictness levels
+		// this strategy clears), computed live, and the same source the vault
+		// deploy gate reads. The BADGE beside it is the stored verdict of record
+		// (docs/adr/rigor-verdict-of-record.md) — graded once, at backtest time.
+		// The two can differ in vintage, and that is a known, named seam: the
+		// badge is the verdict, the ladder is the deploy check. A 404 is still
+		// handled (an id neither path resolves) and still falls back to the badge.
 		fetch(
 			`${API_BASE}/api/selection-bias/gate/${encodeURIComponent(strategyId)}`,
 		)
@@ -548,8 +575,11 @@ export default function StrategyPassport({
 					{regime && (
 						<span className={`tag ${regime.cls}`}>{regime.label}</span>
 					)}
-					<span className={`tag ${statusTag(s.status, s.passes_rigor_gate)}`}>
-						{statusLabel(s.status, s.passes_rigor_gate)}
+					<span
+						className={`tag ${statusTag(s.status, s.passes_rigor_gate, s.rigor_gate_status)}`}
+						title={statusTitle(s.status, s.passes_rigor_gate, s.rigor_gate_status)}
+					>
+						{statusLabel(s.status, s.passes_rigor_gate, s.rigor_gate_status)}
 					</span>
 					{unknownRigor ? (
 						<span className="tag tag-muted" title={UNKNOWN_RIGOR_TITLE}>
@@ -576,7 +606,11 @@ export default function StrategyPassport({
 					{(s.papers || []).length > 1 ? (
 						<span className="tag tag-accent inline-flex items-center gap-1">
 							<span className="i-lucide-layers w-3.5 h-3.5" />
-							{s.papers.length} fused papers
+							{/* "fused papers" was the same citation-count-as-fusion-depth
+							    claim the table heading carried (#1769). The chip is a
+							    count, so it says what it counts; the attribution split
+							    lives in the table heading, which has room for it. */}
+							{s.papers.length} papers cited
 						</span>
 					) : (
 						s.paper_arxiv_id && (
@@ -792,7 +826,11 @@ export default function StrategyPassport({
 						    renders, and a strategy with no recorded papers says so
 						    instead of printing an empty pair of quotation marks. */}
 						{papers.length > 0 ? (
-							<PapersTable papers={papers} methodologyHash={s.methodology_hash} />
+							<PapersTable
+								papers={papers}
+								methodologyHash={s.methodology_hash}
+								distinctMechanismPapers={s.distinct_mechanism_papers}
+							/>
 						) : (
 							<div className="card passport-panel passport-papers">
 								<div className="label mb-2">Source papers</div>
@@ -933,6 +971,40 @@ export default function StrategyPassport({
 								}
 							/>
 						</div>
+						{/* Raw vs deflated (#1769). The card above prints a Sharpe and
+						    the Rigor card below prints a Deflated Sharpe beside a
+						    pass/fail pill; nothing said they are the same edge measured
+						    twice, so the gap read as two contradictory results. Both
+						    figures go through MetricValue like every other number on this
+						    page (#1651) — this sentence introduces no arithmetic and no
+						    threshold of its own, and it renders only when BOTH numbers
+						    exist, because the relationship is its entire subject. */}
+						{hasSharpeReconciliation(s) && (
+							<p className="caption mt-3 leading-relaxed text-[var(--text-3)]">
+								Sharpe{" "}
+								<strong>
+									<MetricValue
+										metric="sharpe_ratio"
+										value={s.sharpe_ratio}
+										row={s}
+										surface="Passport"
+									/>
+								</strong>{" "}
+								is the raw backtest figure; deflated for selection bias it is{" "}
+								<strong>
+									<MetricValue
+										metric="deflated_sharpe_ratio"
+										value={s.deflated_sharpe_ratio}
+										row={s}
+										surface="Passport"
+									/>
+								</strong>
+								. The verdict below reads that deflation — not the raw
+								Sharpe — alongside PBO, out-of-sample Sharpe and the
+								look-ahead audit
+								{rigorBarClause(s) ? `, ${rigorBarClause(s)}.` : "."}
+							</p>
+						)}
 						{(s.backtest_start || s.backtest_end) && (
 							<div className="caption mt-3 text-[var(--text-3)]">
 								Window:{" "}
@@ -1415,7 +1487,7 @@ function PaperDeployCard({ strategyId, user, onNavigate }) {
 			<p className="caption leading-relaxed">
 				Simulated deployment — <strong>free, no funds move</strong>. Snapshots
 				this strategy's spec and appends one real-data return per trading day,
-				building the track record that carries to mainnet.
+				building a paper track record on Arc testnet — no real funds.
 			</p>
 			{error && (
 				<p className="caption" role="alert" style={{ color: "var(--negative)", marginTop: 6 }}>

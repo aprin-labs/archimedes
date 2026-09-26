@@ -102,27 +102,21 @@ class TestHasRealFalsePositive:
     """
 
     def _call_to_strategy_response(self, strategy, mock_bt=None):
-        """Call _to_strategy_response with a controlled get_backtest_result."""
+        """Call _to_strategy_response with a controlled get_backtest_result.
+
+        ``stored=None`` — no passport row — so the response takes the ungraded
+        fallback and resolves its display metrics from the provider, which is
+        the chain these tests are about.
+        """
         from unittest.mock import MagicMock, patch
 
         from archimedes.api.strategies_routes import _to_strategy_response
-        from archimedes.services.live_rigor_gate import RigorGateVerdict
 
         provider = MagicMock()
         provider.get_backtest_result.return_value = mock_bt
 
-        with (
-            patch("archimedes.api.strategies_routes.strategy_provider", return_value=provider),
-            patch(
-                "archimedes.api.strategies_routes._live_verdict_for_one",
-                return_value=RigorGateVerdict.pending(),
-            ),
-            patch(
-                "archimedes.api.strategies_routes._live_rigor_result_for_one",
-                return_value=None,
-            ),
-        ):
-            return _to_strategy_response(strategy)
+        with patch("archimedes.api.strategies_routes.strategy_provider", return_value=provider):
+            return _to_strategy_response(strategy, None)
 
     def test_metrics_but_no_returns_is_placeholder(self):
         """FAILING before the fix: real_sharpe=1.2 but bt=None → is_backtest_placeholder must be True."""
@@ -178,16 +172,24 @@ class TestHasRealFalsePositive:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-class TestDsrPValuePlumbing:
-    """dsr_p_value written at persist time and survives force_update refresh.
+class TestGateNumbersTravelWithTheGrade:
+    """The four gate numbers reach the row through the GRADE, and only the grade.
 
-    Regression: _persist_candidate initial write omitted dsr_p_value; and
-    _update_record did not propagate it even when _refresh_passport_real_metrics
-    passed it in.
+    Regression history, in two layers. First (#passport-honesty):
+    ``_persist_candidate``'s initial write omitted ``dsr_p_value`` and
+    ``_update_record`` did not propagate it, so ``strategy_passports.dsr_p_value``
+    stayed NULL even after a backtest ran. Then (#1746 / PR-B): propagating them
+    off the passport DATACLASS turned out to be the wrong mechanism — DSR, its
+    p-value, PBO and the OOS Sharpe are what a gate run PRODUCED, so a
+    ``force_update`` refresh carrying no grade (the curated boot-time passport
+    sync runs one on every process start) could overwrite a real grade's numbers
+    with a fixture's, or with NULL. They now move only through
+    ``RigorVerdictWrite`` → ``_apply_rigor_verdict``, together with the verdict
+    the same run produced.
     """
 
     def _make_session(self, tmp_path):
-        """Return a fresh SQLAlchemy session backed by an in-memory SQLite DB."""
+        """Return a fresh SQLAlchemy session backed by an on-disk SQLite DB."""
         from archimedes.models.chat import Base
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
@@ -196,8 +198,7 @@ class TestDsrPValuePlumbing:
         Base.metadata.create_all(engine)
         return sessionmaker(bind=engine)()
 
-    def test_ingest_passport_with_dsr_p_value(self, tmp_path):
-        """A passport with dsr_p_value persisted correctly on first insert."""
+    def _passport(self, sid: str, **kw):
         from archimedes.models.paper_ref import PaperRef
         from archimedes.models.strategy import (
             PositionSizing,
@@ -205,99 +206,121 @@ class TestDsrPValuePlumbing:
             StrategyPassport,
             StrategyStatus,
         )
+
+        base = {
+            "id": sid,
+            "papers": [PaperRef(arxiv_id="2301.00001", title="DSR Test", authors=[])],
+            "methodology_summary": "DSR plumbing test",
+            "asset_universe": ["SPY"],
+            "position_sizing": PositionSizing.EQUAL_WEIGHT,
+            "rebalance_frequency": RebalanceFrequency.WEEKLY,
+            "status": StrategyStatus.CANDIDATE,
+            "regime_tag": "regime_neutral",
+        }
+        base.update(kw)
+        return StrategyPassport(**base)
+
+    def test_a_grade_writes_the_numbers_its_own_run_produced(self, tmp_path):
+        """MUTATION: drop the four ``record.<field> = verdict.<field>`` lines from
+        ``_apply_rigor_verdict``. The numbers never reach the row and the API
+        serves NULLs beside a real verdict — the #passport-honesty defect, one
+        layer down."""
+        from archimedes.services.passport_loader import RigorVerdictWrite, ingest_passport
+
+        session = self._make_session(tmp_path)
+        record = ingest_passport(
+            session,
+            self._passport("dsr-test-001"),
+            generation_method="fusion",
+            rigor_verdict=RigorVerdictWrite(
+                status="fail",
+                cohort_n=1,
+                dsr_p_value=0.941561,
+                deflated_sharpe_ratio=0.451103,
+                pbo_score=0.550894,
+                out_of_sample_sharpe=0.31,
+            ),
+        )
+        session.flush()
+
+        assert record.dsr_p_value == pytest.approx(0.941561)
+        assert record.deflated_sharpe_ratio == pytest.approx(0.451103)
+        assert record.pbo_score == pytest.approx(0.550894)
+        assert record.out_of_sample_sharpe == pytest.approx(0.31)
+        assert record.rigor_gate_status == "fail", "the numbers and the verdict are one write"
+
+    def test_the_passport_dataclass_cannot_write_them(self, tmp_path):
+        """A passport carrying gate numbers but no grade writes NONE of them.
+
+        This is the #1746 half. A curated ``Strategy`` carries the #1187 FIXTURE
+        snapshot in exactly these four fields; letting the dataclass write them
+        is how a fixture number ended up in a column that names a gate.
+
+        MUTATION: restore ``record.dsr_p_value = passport.dsr_p_value`` (and its
+        three siblings) in ``_update_record``, or the same four in the INSERT
+        branch. The fixture value lands in the row and this reddens.
+        """
         from archimedes.services.passport_loader import ingest_passport
 
         session = self._make_session(tmp_path)
-        passport = StrategyPassport(
-            id="dsr-test-001",
-            papers=[PaperRef(arxiv_id="2301.00001", title="DSR Test", authors=[])],
-            methodology_summary="DSR plumbing test",
-            asset_universe=["SPY"],
-            position_sizing=PositionSizing.EQUAL_WEIGHT,
-            rebalance_frequency=RebalanceFrequency.WEEKLY,
-            status=StrategyStatus.CANDIDATE,
-            regime_tag="regime_neutral",
-            dsr_p_value=0.941561,
-            deflated_sharpe_ratio=0.451103,
-            pbo_score=0.550894,
+        record = ingest_passport(
+            session,
+            self._passport("dsr-test-fixture", dsr_p_value=0.941561, deflated_sharpe_ratio=0.451103),
+            generation_method="curated",
+            force_update=True,
         )
-        record = ingest_passport(session, passport, generation_method="fusion")
         session.flush()
 
-        assert record.dsr_p_value == pytest.approx(0.941561), (
-            f"Expected dsr_p_value=0.941561 after first ingest; got {record.dsr_p_value}"
-        )
+        assert record.dsr_p_value is None
+        assert record.deflated_sharpe_ratio is None
+        assert record.rigor_gate_status == "pending", "no grade ran, so the row says so"
 
-    def test_update_record_propagates_dsr_p_value(self, tmp_path):
-        """force_update=True must propagate dsr_p_value (was missing from _update_record)."""
-        from archimedes.models.paper_ref import PaperRef
-        from archimedes.models.strategy import (
-            PositionSizing,
-            RebalanceFrequency,
-            StrategyPassport,
-            StrategyStatus,
-        )
-        from archimedes.services.passport_loader import ingest_passport
+    def test_a_refresh_without_a_grade_cannot_overwrite_a_graded_number(self, tmp_path):
+        """The boot-time curated passport sync runs ``force_update=True`` on every
+        process start, with the strategy files' fixture values on the dataclass.
+        It must not be able to touch what a gate decided.
+
+        MUTATION: same as above — restore the four ``record.<field> =
+        passport.<field>`` lines in ``_update_record``. The refresh replaces
+        0.941561 with the fixture's 0.111111 and this reddens.
+        """
+        from archimedes.services.passport_loader import RigorVerdictWrite, ingest_passport
 
         session = self._make_session(tmp_path)
-
-        # First write: dsr_p_value=None (mimics _persist_candidate before fix)
-        passport_v1 = StrategyPassport(
-            id="dsr-test-002",
-            papers=[PaperRef(arxiv_id="2301.00002", title="DSR Refresh Test", authors=[])],
-            methodology_summary="DSR update test",
-            asset_universe=["QQQ"],
-            position_sizing=PositionSizing.EQUAL_WEIGHT,
-            rebalance_frequency=RebalanceFrequency.WEEKLY,
-            status=StrategyStatus.CANDIDATE,
-            regime_tag="regime_neutral",
-            dsr_p_value=None,
-            deflated_sharpe_ratio=0.45,
+        graded = ingest_passport(
+            session,
+            self._passport("dsr-test-002"),
+            generation_method="curated",
+            force_update=True,
+            rigor_verdict=RigorVerdictWrite(status="pass", cohort_n=3, dsr_p_value=0.941561),
         )
-        r1 = ingest_passport(session, passport_v1, generation_method="fusion", force_update=True)
         session.flush()
-        assert r1.dsr_p_value is None
+        assert graded.dsr_p_value == pytest.approx(0.941561)
 
-        # Second write: dsr_p_value set (mimics _refresh_passport_real_metrics)
-        passport_v2 = StrategyPassport(
-            id="dsr-test-002",
-            papers=[PaperRef(arxiv_id="2301.00002", title="DSR Refresh Test", authors=[])],
-            methodology_summary="DSR update test",
-            asset_universe=["QQQ"],
-            position_sizing=PositionSizing.EQUAL_WEIGHT,
-            rebalance_frequency=RebalanceFrequency.WEEKLY,
-            status=StrategyStatus.CANDIDATE,
-            regime_tag="regime_neutral",
-            dsr_p_value=0.941561,
-            deflated_sharpe_ratio=0.451103,
+        refreshed = ingest_passport(
+            session,
+            self._passport("dsr-test-002", dsr_p_value=0.111111, real_sharpe=1.4),
+            generation_method="curated",
+            force_update=True,
         )
-        r2 = ingest_passport(session, passport_v2, generation_method="fusion", force_update=True)
         session.flush()
 
-        assert r2.dsr_p_value == pytest.approx(0.941561), (
-            f"Expected dsr_p_value=0.941561 after force_update; got {r2.dsr_p_value}. "
-            "_update_record must propagate dsr_p_value."
-        )
-        assert r2.id == r1.id, "force_update must update the existing row, not insert a new one"
+        assert refreshed.id == graded.id, "force_update must update the existing row"
+        assert refreshed.dsr_p_value == pytest.approx(0.941561), "a gradeless refresh overwrote a graded number"
+        assert refreshed.rigor_gate_status == "pass", "…and it must not have touched the verdict either"
+        assert refreshed.sharpe_ratio == pytest.approx(1.4), "the DISPLAY metrics are still refreshed, on purpose"
 
     @pytest.mark.asyncio
     async def test_api_returns_dsr_p_value_from_persisted_record(self, tmp_path, monkeypatch):
-        """GET /api/strategies/{id} returns dsr_p_value from the persisted passport record.
+        """GET /api/strategies/{id} returns dsr_p_value from the persisted grade.
 
-        Simulates the prod scenario: fusion strategy with dsr_p_value stored in
-        strategy_passports (via _persist_candidate fix + _update_record fix).
+        Simulates the prod scenario: a fusion strategy whose post-backtest grade
+        stored its numbers on strategy_passports.
         """
         from archimedes.db import get_session, init_db
         from archimedes.main import app
-        from archimedes.models.paper_ref import PaperRef
-        from archimedes.models.strategy import (
-            PositionSizing,
-            RebalanceFrequency,
-            StrategyPassport,
-            StrategyStatus,
-        )
         from archimedes.models.strategy_store import upsert_strategy
-        from archimedes.services.passport_loader import ingest_passport
+        from archimedes.services.passport_loader import RigorVerdictWrite, ingest_passport
 
         db_path = tmp_path / "dsr_api.db"
         monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
@@ -317,21 +340,18 @@ class TestDsrPValuePlumbing:
             session.flush()
             sid = row.id
 
-            passport = StrategyPassport(
-                id=sid,
-                papers=[PaperRef(arxiv_id="2301.99999", title="DSR API Test", authors=[])],
-                methodology_summary="DSR API test",
-                asset_universe=["SPY"],
-                position_sizing=PositionSizing.EQUAL_WEIGHT,
-                rebalance_frequency=RebalanceFrequency.WEEKLY,
-                status=StrategyStatus.CANDIDATE,
-                regime_tag="regime_neutral",
-                dsr_p_value=0.941561,
-                deflated_sharpe_ratio=0.451103,
-                pbo_score=0.550894,
-                real_sharpe=1.1,
+            ingest_passport(
+                session,
+                self._passport(sid, real_sharpe=1.1),
+                generation_method="fusion",
+                rigor_verdict=RigorVerdictWrite(
+                    status="fail",
+                    cohort_n=1,
+                    dsr_p_value=0.941561,
+                    deflated_sharpe_ratio=0.451103,
+                    pbo_score=0.550894,
+                ),
             )
-            ingest_passport(session, passport, generation_method="fusion")
             session.commit()
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

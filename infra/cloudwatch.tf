@@ -27,13 +27,88 @@ resource "aws_sns_topic" "alerts" {
   tags = { Project = var.project_name }
 }
 
-# Optional email subscription. Created only when var.alarm_email is non-empty.
-# AWS sends a confirmation email; the subscription is pending until confirmed.
+# The pre-#1818 email subscription. UNCHANGED, and deliberately so: this
+# resource is live, confirmed, and delivering (see the measured note below).
+# `count` stays gated on `var.alarm_email` — which is NOT in any tfvars, so a
+# bare apply without `TF_VAR_alarm_email` still destroys it. That landmine
+# predates this change and is documented in README.md § "Operational
+# variables"; closing it means capturing the applied address in
+# terraform.tfvars, which is the owner's to do and not something this PR can
+# guess.
 resource "aws_sns_topic_subscription" "alerts_email" {
   count     = var.alarm_email == "" ? 0 : 1
   topic_arn = aws_sns_topic.alerts.arn
   protocol  = "email"
   endpoint  = var.alarm_email
+}
+
+# ── Owner paging (issue #1818 P5) ────────────────────────────────────────────
+#
+# WHAT P5 SAYS, AND WHAT THE ACCOUNT SAYS. Issue #1818 P5 reads "there was no
+# alarm, the owner found out by using the site". The first half is not what
+# happened, and building on it would have produced a fix for a defect that does
+# not exist. Measured from the account on 2026-09-03 (CloudWatch alarm history
+# + AWS/SNS metrics on this topic, all times UTC):
+#
+#   13:29     outage begins; both targets unhealthy
+#   13:38:46  archimedes-alb-unhealthy-hosts   OK -> ALARM
+#   13:39:16  archimedes-alb-5xx-rate-high     OK -> ALARM   (flaps 4x to 13:45)
+#   13:35-13:50  SNS NumberOfNotificationsDelivered = 5, NumberOfNotificationsFailed = 0
+#   15:03     outage ends (OOM kill)
+#   15:06:46  archimedes-alb-unhealthy-hosts   ALARM -> OK   (1 more delivered)
+#
+# Two alarms fired and SIX emails were delivered to a confirmed subscriber,
+# the first of them 9m46s into a 94-minute outage — and the owner still learned
+# about it by loading the site. So the real P5 gaps are:
+#
+#   (a) DETECTION SHAPE. Nothing watched the signals that were abnormal ten
+#       hours earlier (Aurora connections flat at 33 from 03:33; ECS memory
+#       ramping). Those alarms are added below, and the connections one is the
+#       single highest-value line in this file: it fires at ~03:48.
+#   (b) DETECTION LATENCY. 9m46s is the 5-of-5-minute window plus evaluation
+#       lag. The retune to 2-of-2 below drops three of the five one-minute
+#       datapoints, so it buys back about three minutes of that.
+#   (c) THE PAGE DID NOT REACH THE OWNER. Six delivered emails, zero failures,
+#       and it still had to be discovered by hand. NOTHING IN TERRAFORM FIXES
+#       THAT. It is an address/channel decision — a mailbox that is actually
+#       watched, or SMS/push instead of email — and it is the part of P5 this
+#       file cannot close. See runbooks/disaster-recovery.md.
+#
+# `var.owner_alert_email` is what (c) can be given in code: a REQUIRED, no-
+# default destination that an apply cannot omit, deliberately separate from the
+# `alarm_email` address that was already receiving mail nobody acted on. The
+# owner picks a channel they will actually see.
+#
+# AWS emails a confirmation link; the subscription stays `PendingConfirmation`
+# — and pages nobody — until that link is clicked. Confirm it, then run the
+# alarm drill in runbooks/disaster-recovery.md § Drills.
+resource "aws_sns_topic_subscription" "owner_alerts_email" {
+  topic_arn = aws_sns_topic.alerts.arn
+  protocol  = "email"
+  endpoint  = var.owner_alert_email
+
+  lifecycle {
+    # REFUSE TO PLAN rather than destroy the working subscription.
+    #
+    # SNS keys a subscription by (topic, protocol, endpoint), so subscribing an
+    # address that is already subscribed returns the EXISTING SubscriptionArn.
+    # If this resource and `alerts_email` above named the same address, both
+    # would own one ARN, and any apply that dropped one of them would call
+    # Unsubscribe on the ARN the other still claims — leaving zero subscribers
+    # while Terraform's state says there is one. That is issue #1818's own
+    # failure mode, manufactured by its fix, so it is made impossible instead
+    # of merely commented.
+    #
+    # It is also the wrong configuration on the merits: finding (c) above is
+    # that mail to the already-subscribed address did not reach the owner, so
+    # a second copy to the same mailbox changes nothing. If you genuinely want
+    # one address, retire `alarm_email` in a separate change with a
+    # `terraform state mv` — do not let the two resources collide.
+    precondition {
+      condition     = var.owner_alert_email != var.alarm_email
+      error_message = "owner_alert_email must differ from alarm_email. Both would resolve to ONE SNS subscription ARN (SNS keys by topic+protocol+endpoint) and a later apply dropping either resource would unsubscribe the other, leaving the topic with no subscriber while state says otherwise. On the merits too: #1818 P5's measured finding is that six alarm emails WERE delivered to the alarm_email address on 2026-09-03 and still did not reach the owner, so a duplicate to the same mailbox is not the fix. Pick a channel you will actually see."
+    }
+  }
 }
 
 # ── EC2 (application host) ───────────────────────────────────────────────────
@@ -69,16 +144,38 @@ resource "aws_cloudwatch_metric_alarm" "alb_unhealthy_hosts" {
   # task can read unhealthy for >3 minutes — 5 sustained minutes separates
   # real outages from every deploy. 5xx-count (zero false fires) remains the
   # fast tripwire.
+  #
+  # RE-TUNED AGAIN 2026-09-03 (issue #1818 P5, owner call): back to 2 minutes.
+  # MEASURED, not inferred (CloudWatch, read 2026-09-03): the incident began at
+  # 13:29Z; UnHealthyHostCount on this target group read 0 through 13:30Z and
+  # first read 2 at 13:31Z; this alarm went OK -> ALARM at 13:38:46Z. So the
+  # 9m46s decomposes as ~2 min before the ALB itself saw anything, 5 min of
+  # 5-of-5 window, and ~2m46s of evaluation/publication lag.
+  #
+  # 2-of-2 removes three of the five one-minute datapoints, so it fires about
+  # THREE minutes earlier — not the six an earlier draft of this comment
+  # claimed, which had quietly assumed the retuned alarm evaluates with no lag
+  # while the 5-of-5 alarm demonstrably lagged its own window by 2m46s.
+  # Modest, and worth being clear-eyed about: three minutes was not what made
+  # this a 94-minute outage.
+  #
+  # KNOWN COST, stated rather than discovered: the 2026-08-21 flapping was real
+  # and this brings some of it back. `deployment_minimum_healthy_percent = 100`
+  # (ecs.tf) means every rollout registers new targets — `initial` state counts
+  # as unhealthy — while old ones drain, so expect transient fires on deploys,
+  # and they go to a mailbox that already has an attention problem. If the
+  # noise proves worse than the three minutes, revert `datapoints_to_alarm` here
+  # — that trade is the owner's, and the numbers on both sides are now known.
   alarm_name          = "${var.project_name}-alb-unhealthy-hosts"
-  alarm_description   = "One or more backend targets are unhealthy."
+  alarm_description   = "One or more backend targets are unhealthy for 2 min (#1818 P5)."
   namespace           = "AWS/ApplicationELB"
   metric_name         = "UnHealthyHostCount"
   statistic           = "Maximum"
-  comparison_operator = "GreaterThanThreshold"
-  threshold           = 0
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = 1
   period              = 60
-  evaluation_periods  = 5
-  datapoints_to_alarm = 5
+  evaluation_periods  = 2
+  datapoints_to_alarm = 2
   dimensions = {
     LoadBalancer = aws_lb.main.arn_suffix
     TargetGroup  = aws_lb_target_group.backend.arn_suffix
@@ -164,6 +261,246 @@ resource "aws_cloudwatch_metric_alarm" "aurora_connections_high" {
   threshold           = 80
   period              = 300
   evaluation_periods  = 2
+  dimensions          = { DBClusterIdentifier = aws_rds_cluster.main.cluster_identifier }
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+  treat_missing_data  = "missing"
+  tags                = { Project = var.project_name }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Detection gaps — issue #1818 P5 (P0 incident 2026-09-03)
+#
+# Read the subscription note at the top of this file first: two alarms DID fire
+# and six emails WERE delivered on 2026-09-03. What follows narrows the two
+# gaps that are actually in Terraform's reach — when the fleet becomes
+# detectable, and which signals are watched at all. It does not, and cannot,
+# fix the third gap (the delivered page did not reach the owner).
+#
+# The wedge was a DDL lock chain, not saturation, so it presented as numbers
+# the existing alarms are shaped wrong for:
+#
+#   metric (incident timeline)              existing alarm          verdict
+#   ────────────────────────────────────    ────────────────────    ───────────
+#   Aurora connections 16 → 33, flat 11.5h  fires above 80          blind   → aurora_connections_wedge
+#   ECS MemoryUtilization 39% → 100%/90min  no ECS alarm at all     blind   → ecs_service_memory_high
+#   Target 5xx: four, 13:31-13:33Z          alb_5xx_rate_high       FIRED 13:39:16Z
+#     (the same four)                       alb_5xx_high (Sum > 10) stayed OK — four is not > 10
+#   ELB-generated 5xx: none at all, all day nothing watched it      unwatched → alb_elb_5xx_count
+#   UnHealthyHostCount = 2 from 13:31Z      fired at 13:38:46Z      slow    → retuned above to 2 min
+#   Aurora CPU ~4%, ECS CPU ~3%             cpu alarms              correctly quiet — never saturation
+#
+# HONESTY NOTE, because "we added alarms" is the kind of claim that rots.
+# Replayed against the incident, THREE of the five would have fired and two
+# would not:
+#
+#   ~03:48  aurora_connections_wedge   connections reached 33 at ~03:33 and the
+#                                      alarm needs 15 min of >30. THIS IS THE
+#                                      ONE THAT MATTERS — it fires nearly TEN
+#                                      HOURS before the first alarm that
+#                                      actually fired on the day (13:38:46),
+#                                      while the fleet is still serving.
+#   ~13:36  alb_unhealthy_hosts        2-of-2 instead of 5-of-5 drops three of
+#                                      the five one-minute datapoints, so it
+#                                      fires ~3 min earlier. Measured:
+#                                      UnHealthyHostCount first breached 13:31Z
+#                                      and the 5-of-5 alarm transitioned at
+#                                      13:38:46Z. Useful, small.
+#   ~14:39  ecs_service_memory_high    the 39% → 100% ramp runs 13:31–15:01, so
+#                                      85% is crossed ~68 min in — a real
+#                                      detector, but 70 min into a 94-minute
+#                                      outage. Do not sell it as early warning.
+#   never   alb_elb_5xx_count          the ELB-side metric had NO datapoints at
+#                                      all on 2026-09-03 — the balancer
+#                                      generated no 5xx of its own. The alarm
+#                                      sits OK via treat_missing_data =
+#                                      notBreaching. It is general ELB-side
+#                                      cover, NOT an #1818 detector.
+#   never   ecs_service_cpu_high       CPU was 3% throughout.
+#
+# The last two are general saturation cover — they catch the ordinary shapes
+# this incident happened not to be — not #1818 detectors.
+#
+# So the honest summary of this section: on a repeat of 2026-09-03 the fleet
+# becomes detectable at ~03:48 instead of 13:38:46. Whether anyone acts on that
+# is the subscription question, not this one.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# The ALB's OWN 5xx, which is a different question from `alb_5xx_high` above.
+# That alarm counts HTTPCode_Target_5XX_Count — 5xx the backend produced and
+# the ALB relayed. This one counts HTTPCode_ELB_5XX_Count — 5xx the balancer
+# generated itself (typically 504: no healthy target, or the one it tried
+# timed out). Nothing in this account watched the ELB-side metric before.
+#
+# WHAT 2026-09-03 ACTUALLY SHOWS. An earlier revision of this comment had this
+# backwards, so it is written out with the query that settles it. Re-derived
+# from CloudWatch, account 037613907429 / us-east-1,
+# LoadBalancer = app/archimedes-alb/955aeff03e643d11:
+#
+#   * The balancer generated NO 5xx that day. HTTPCode_ELB_5XX_Count and the
+#     _500_/_502_/_503_/_504_ breakdowns each return ZERO datapoints for the
+#     whole of 2026-09-03, while RequestCount returns datapoints over the same
+#     minutes — so the metric was queried correctly and simply never published.
+#   * The only 5xx were four TARGET-side responses:
+#     HTTPCode_Target_5XX_Count = 2 / 1 / 1 at 13:31 / 13:32 / 13:33Z.
+#   * The target side was therefore NOT blind. `alb_5xx_rate_high` below
+#     (issue #418, metric math 100 * target_5xx / requests) went OK -> ALARM at
+#     13:39:16Z on exactly those four. `alb_5xx_high` stayed OK only because
+#     its threshold is 10 and four is not more than ten — not for want of a
+#     signal.
+#
+# So this alarm would NOT have fired on 2026-09-03 and it is NOT an #1818
+# detector. It is added as general ELB-side cover for a real recurring signal
+# that nothing watched: the same metric carried 1,254 errors on UTC day
+# 2026-08-20 (387 of them in the 04:00Z hour alone) and 306 on 2026-09-01.
+#
+# Dimensioned on LoadBalancer alone: HTTPCode_ELB_5XX_Count has no TargetGroup
+# dimension (list-metrics returns LoadBalancer and LoadBalancer+AvailabilityZone
+# only). Adding one would silently select nothing and the alarm would sit in
+# INSUFFICIENT_DATA. treat_missing_data = "notBreaching" for the reason the
+# 2026-09-03 numbers make concrete: the metric is ABSENT, not zero, on a day
+# with no ELB-side errors.
+#
+# Window caveat, stated because it bounds the claim: CloudWatch evaluates fixed
+# 5-minute windows, so four errors in one window plus three in the next never
+# reaches this threshold. It is a burst detector, not a rate detector — the
+# rate question is `alb_5xx_rate_high` below (issue #418).
+resource "aws_cloudwatch_metric_alarm" "alb_elb_5xx_count" {
+  alarm_name          = "${var.project_name}-alb-elb-5xx-high"
+  alarm_description   = "The load balancer itself returned >= 5 5xx (typically 504 — no healthy target, or the target timed out) in 5 min (#1818 P5)."
+  namespace           = "AWS/ApplicationELB"
+  metric_name         = "HTTPCode_ELB_5XX_Count"
+  statistic           = "Sum"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = 5
+  period              = 300
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  dimensions = {
+    LoadBalancer = aws_lb.main.arn_suffix
+  }
+  alarm_actions      = [aws_sns_topic.alerts.arn]
+  ok_actions         = [aws_sns_topic.alerts.arn]
+  treat_missing_data = "notBreaching"
+  tags               = { Project = var.project_name }
+}
+
+# The ECS cluster/service, reached by NAME through data sources rather than by
+# reference to `aws_ecs_cluster.main` / `aws_ecs_service.backend` in ecs.tf.
+# The precedent is ecs.tf's own `data "aws_lb_target_group" "backend"`, and
+# here it is load-bearing rather than stylistic.
+#
+# MEASURED, not assumed (targeted plan, 2026-09-03): with the alarms below
+# referencing the ECS *resources*, `terraform plan -target=` on either alarm
+# pulled `aws_ecs_task_definition.backend` in as a dependency and proposed
+#
+#     aws_ecs_task_definition.backend must be replaced
+#       ~ PAPER_ADVANCE_ENABLED  "false" -> "true"
+#       ~ PLATFORM_ADMIN_WALLETS "0x2a29…5105" -> ""
+#
+# i.e. applying an OBSERVABILITY alarm would have re-enabled the paper-advance
+# loop that caused the 2026-09-03 outage (prod is currently pinned false — the
+# #1778/#1818 pull-back) and blanked the live admin-wallet list. Dropping the
+# two ECS alarms from the same command took the plan to "3 to add, 1 to change,
+# 0 to destroy". Data sources are reads: they keep the alarm targetable on its
+# own while still failing the plan loudly if the cluster or service is renamed,
+# which a hardcoded dimension string would not.
+data "aws_ecs_cluster" "main" {
+  cluster_name = aws_ecs_cluster.main.name
+}
+
+data "aws_ecs_service" "backend" {
+  service_name = "${var.project_name}-backend"
+  cluster_arn  = data.aws_ecs_cluster.main.arn
+}
+
+# ECS service memory. `Maximum`, not `Average`: the metric is aggregated across
+# the service's tasks, and on 2026-09-03 the ramp to 100% ran on the two OLD
+# (wedged) tasks while two fresh replacements sat near idle — an average across
+# four tasks would have read ~50% at the moment the OOM killer was about to
+# fire. The incident's own timeline reports this metric as "(max)" for that
+# reason. Container Insights is enabled on the cluster (ecs.tf), but
+# CPUUtilization/MemoryUtilization at ClusterName+ServiceName are plain AWS/ECS
+# metrics and do not depend on it — and the product-health dashboard below
+# already plots this exact metric for this cluster and service, which is the
+# evidence that these coordinates carry data rather than an assumption.
+resource "aws_cloudwatch_metric_alarm" "ecs_service_memory_high" {
+  alarm_name          = "${var.project_name}-ecs-backend-memory-high"
+  alarm_description   = "ECS backend task memory (max across tasks) > 85% for 5 min. On 2026-09-03 the wedged tasks ramped 39% → 100% over 90 min and the outage ended only when the OOM killer took one (#1818 P5)."
+  namespace           = "AWS/ECS"
+  metric_name         = "MemoryUtilization"
+  statistic           = "Maximum"
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 85
+  period              = 60
+  evaluation_periods  = 5
+  datapoints_to_alarm = 5
+  dimensions = {
+    ClusterName = data.aws_ecs_cluster.main.cluster_name
+    ServiceName = data.aws_ecs_service.backend.service_name
+  }
+  alarm_actions      = [aws_sns_topic.alerts.arn]
+  ok_actions         = [aws_sns_topic.alerts.arn]
+  treat_missing_data = "missing"
+  tags               = { Project = var.project_name }
+}
+
+# ECS service CPU. `Average` here, unlike memory above, and deliberately: the
+# service's target-tracking autoscaling policy (ecs.tf) tracks average CPU
+# against `var.ecs_autoscale_cpu_target` (60%). This alarm answers "the
+# autoscaler is out of room" — average CPU pinned above 90% for ten minutes
+# means scaling to `ecs_service_max_count` did not relieve it. `Maximum` would
+# instead page on one busy task: a generation averages ~65% of the task's vCPU
+# (measured 2026-08-20) and with GENERATION_MAX_CONCURRENT = 1 plus a queue of
+# 10 they run back to back, so one task can sit pinned for ten minutes while
+# the fleet is healthy and the queue is draining exactly as designed.
+#
+# Consequence, stated plainly: this alarm would NOT have fired on 2026-09-03
+# (CPU was 3%). It is general saturation cover, not an #1818 detector.
+resource "aws_cloudwatch_metric_alarm" "ecs_service_cpu_high" {
+  alarm_name          = "${var.project_name}-ecs-backend-cpu-high"
+  alarm_description   = "ECS backend service average CPU > 90% for 10 min — target-tracking autoscaling is at its ceiling and not relieving load (#1818 P5)."
+  namespace           = "AWS/ECS"
+  metric_name         = "CPUUtilization"
+  statistic           = "Average"
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 90
+  period              = 60
+  evaluation_periods  = 10
+  datapoints_to_alarm = 10
+  dimensions = {
+    ClusterName = data.aws_ecs_cluster.main.cluster_name
+    ServiceName = data.aws_ecs_service.backend.service_name
+  }
+  alarm_actions      = [aws_sns_topic.alerts.arn]
+  ok_actions         = [aws_sns_topic.alerts.arn]
+  treat_missing_data = "missing"
+  tags               = { Project = var.project_name }
+}
+
+# Aurora connections, at the level a WEDGE lives at rather than the level pool
+# exhaustion lives at. `aurora_connections_high` above fires over 80 and
+# `aurora_connections_pct_high` below fires over 80% of max — both are "we are
+# running out of connections" alarms. The 2026-09-03 signature is the opposite
+# shape: connections went 16 → 33 at 03:33 and sat FLAT at 33 for 11.5 hours
+# with CPU at 4%. Flat-and-elevated with idle CPU is not load, it is sessions
+# parked on a lock. 30 is chosen just under that observed floor of 33, so the
+# same wedge trips it; the healthy steady state this fleet returns to is 16.
+#
+# 15 minutes (3 × 5-min datapoints) is what makes it a wedge alarm rather than
+# a traffic alarm: a genuine burst of users drains back below 30 well inside
+# that window, a lock chain does not.
+resource "aws_cloudwatch_metric_alarm" "aurora_connections_wedge" {
+  alarm_name          = "${var.project_name}-aurora-connections-elevated"
+  alarm_description   = "Aurora DatabaseConnections > 30 for 15 min. Sustained-elevated-but-flat with idle CPU is the DDL-lock-wedge signature from 2026-09-03 — this fires ~03:48, nearly ten hours before the first alarm that actually fired that day (#1818 P5)."
+  namespace           = "AWS/RDS"
+  metric_name         = "DatabaseConnections"
+  statistic           = "Average"
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 30
+  period              = 300
+  evaluation_periods  = 3
+  datapoints_to_alarm = 3
   dimensions          = { DBClusterIdentifier = aws_rds_cluster.main.cluster_identifier }
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
@@ -1367,7 +1704,7 @@ resource "aws_cloudwatch_metric_alarm" "reveal_reconcile_pending_stuck" {
 variable "deploy_drift_repo_url" {
   description = "Git remote whose branch tip the deploy-drift probe compares the running image tag against. Public HTTPS clone URL; read anonymously via git's ref advertisement (no token)."
   type        = string
-  default     = "https://github.com/a-apin/archimedes"
+  default     = "https://github.com/aprin-labs/archimedes"
 }
 
 variable "deploy_drift_git_ref" {
@@ -1380,6 +1717,24 @@ data "archive_file" "deploy_drift" {
   type        = "zip"
   source_dir  = "${path.module}/lambda/deploy_drift"
   output_path = "${path.module}/lambda/deploy_drift.zip"
+
+  # `source_dir` sweeps in WHATEVER is in that directory, and running the
+  # module locally (a REPL import, a pytest collection) leaves a
+  # `__pycache__/` behind. That is not hypothetical: the zip live in Lambda
+  # today (downloaded 2026-09-03 via `aws lambda get-function`) contains
+  # `__pycache__/index.cpython-312.pyc` alongside a byte-identical
+  # `index.py`, so the deployed `source_code_hash` no longer matches what any
+  # clean checkout builds and every `terraform plan` reports the function as
+  # changed. `archive_file` is otherwise deterministic — verified 2026-09-03
+  # that its hash ignores file mtime but DOES track file mode and the file
+  # set — so this exclusion is the whole fix, and it is what keeps the drift
+  # gate (.github/workflows/terraform-drift.yml) from flapping on whether
+  # someone happened to import the module before applying.
+  #
+  # Excluding it does NOT change today's plan: the current diff is
+  # deployed-with-pycache -> repo-without-pycache either way. It goes away on
+  # the next untargeted apply and, with this line, cannot come back.
+  excludes = ["__pycache__"]
 }
 
 resource "aws_iam_role" "deploy_drift" {

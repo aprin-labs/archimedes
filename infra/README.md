@@ -184,7 +184,8 @@ Known operationally-set variables as of 2026-08-20 — re-grep `variables.tf` fo
 | `platform_admin_wallets` | `variables.tf:123` | `PLATFORM_ADMIN_WALLETS` env — `ecs.tf:589` | `""` | **Confirmed:** Dan applied a real value via `TF_VAR_platform_admin_wallets` on 2026-08-20. Not captured anywhere durable — the next bare apply reverts it to `""` and silently removes the admin-wallet publish bypass. |
 | `platform_admin_accounts` | `variables.tf` (added #1648) | `PLATFORM_ADMIN_ACCOUNTS` env — `ecs.tf` | `""` | Same landmine class as `platform_admin_wallets` directly above. Empty is safe *today* (the wallet list still grants admin on its own), but once admin is pinned to accounts a bare apply silently locks the owner out of `/api/metrics/private/*`. |
 | `archimedes_treasury_wallet` | `variables.tf:129` | `ARCHIMEDES_TREASURY_WALLET` env — `ecs.tf:590` | `""` | Same landmine class and same `ecs.tf` gating pattern as `platform_admin_wallets`. This PR did **not** confirm whether a real value is currently applied in prod — check with Dan before any apply that could touch it. |
-| `alarm_email` | `cloudwatch.tf:17` | SNS email subscription — `cloudwatch.tf:33-36` | `""` | Lower stakes: `cloudwatch.tf` is additive-only (see Monitoring section above), so reverting this only drops a page subscription, not a feature. Same rule applies if a real address has been set. |
+| `owner_alert_email` | `variables.tf` (added #1818 P5) | A second SNS email subscription — `cloudwatch.tf`'s `aws_sns_topic_subscription.owner_alerts_email` | **none** | **REQUIRED — `terraform plan` errors until it is set**, and a `precondition` also fails the plan if it equals `alarm_email`. Not landmine-shaped on purpose. #1818 P5 says "there was no alarm"; the account says two alarms fired on 2026-09-03 (13:38:46Z, 13:39:16Z) and the topic delivered six emails with zero failures — to `alarm_email` — during a 94-minute outage the owner then found by loading the site. So this variable names a channel he will actually see. Public repo ⇒ the real address lives only in your gitignored `terraform.tfvars`. AWS emails a confirmation link; it pages nobody until clicked. |
+| `alarm_email` | `cloudwatch.tf:17` | The pre-existing SNS email subscription — `cloudwatch.tf:33-36` | `""` | **CONFIRMED applied and working (2026-09-03): a real address is subscribed, confirmed, and delivering.** It is not captured in any tfvars, so this row is now the sharpest instance of this section's landmine — one bare apply without `TF_VAR_alarm_email` unsubscribes the only subscription this topic has. Get the value from Dan and put it in `terraform.tfvars`. |
 
 ### Admin Access (SSM Session Manager)
 
@@ -212,7 +213,7 @@ so an admin can apply or audit it declaratively (audit #10 / issues #519, #526).
 ./scripts/setup-branch-protection.sh            # dry-run: print the payload, apply nothing
 ./scripts/setup-branch-protection.sh --apply    # apply (needs repo admin)
 ./scripts/setup-branch-protection.sh --verify    # print the currently-applied protection
-# or, raw:  gh api repos/a-apin/archimedes/branches/main/protection
+# or, raw:  gh api repos/aprin-labs/archimedes/branches/main/protection
 ```
 
 What it enforces: the two hard-block CI checks (`Backend — unit tests`, `Ruff — format +
@@ -229,12 +230,31 @@ is a team decision (Chuan, as repo admin, owns it).
 
 ## Monitoring & Disaster Recovery
 
-- **`cloudwatch.tf`** — SNS alert topic + alarms (EC2 CPU/status, ALB 5xx /
-  unhealthy hosts / p95 latency, Aurora CPU / memory / connections) + an ops
-  dashboard. Additive: `terraform apply` only *creates* new CloudWatch objects,
-  it does not touch the existing EC2/ALB/Aurora/WAF resources. Set
-  `alarm_email` (tfvars) to get paged. **Authored 2026-06-12, not yet
-  `terraform plan`-verified** — review before applying.
+- **`cloudwatch.tf`** — SNS alert topic + alarms (ALB 5xx / unhealthy hosts /
+  p95 latency, ECS service CPU + memory, Aurora CPU / memory / connections, NAT,
+  Redis, WAF, runner liveness, deploy drift) + three dashboards. Additive:
+  `terraform apply` only *creates* new CloudWatch objects, it does not touch the
+  existing ALB/ECS/Aurora/WAF resources.
+- **Paging is now a required input, not a setting.** `owner_alert_email` has no
+  default and `terraform plan` errors until it is set — see the operational
+  variables table above. The reason is not the one #1818 P5 states: on
+  2026-09-03 two alarms *did* fire (13:38:46Z, 13:39:16Z) and the topic *did*
+  deliver six emails with zero failures, and the owner still found the
+  94-minute outage by loading the site. What failed was attention, not
+  plumbing, so the variable forces a deliberate choice of a channel that will
+  be seen — and a `precondition` refuses the plan if it duplicates the mailbox
+  that already failed. After the first apply, **click the confirmation link AWS
+  emails** — an unconfirmed subscription is indistinguishable, from Terraform's
+  side, from a working one — and then run the alarm drill in
+  `runbooks/disaster-recovery.md` § Drills. The alarms added alongside it make
+  a repeat of 2026-09-03 detectable at ~03:48 instead of 13:38:46.
+- **Applying the alarms on their own:** the exact `-target` list and the
+  expected `Plan: 5 to add, 1 to change, 0 to destroy` are in
+  `runbooks/disaster-recovery.md` § "2026-09-03 alarm set" → Applying them. If
+  that plan mentions `aws_ecs_task_definition.backend`, **stop** — an
+  observability apply is about to replace the task definition (measured
+  2026-09-03: `PAPER_ADVANCE_ENABLED "false" -> "true"`, which re-arms the loop
+  that caused the outage). The runbook explains the dependency edge.
 - **`runbooks/disaster-recovery.md`** — RTO/RPO targets, per-scenario response
   (host loss, DB corruption, WAF lockout), restore-order, and a drill checklist.
 - **`runbooks/aurora-backup-restore.md`** — exact PITR / snapshot-restore CLI

@@ -87,7 +87,10 @@ def test_the_check_actually_rejects_something() -> None:
     ``return None`` — or an import that silently resolved to a stub — would
     leave the bank test green while checking nothing at all.
     """
-    for junk in ("", "  ", "qq", "asdfgh lkjhgf", "123 456 789"):
+    # "" is absent on purpose since #1801: ``intent`` carries ``min_length=1``,
+    # so an empty brief is now refused by the request schema and a
+    # ``GenerateBrief(intent="")`` cannot be constructed to feed this at all.
+    for junk in ("  ", "qq", "asdfgh lkjhgf", "123 456 789"):
         verdict = cheap_brief_reject(GenerateBrief(intent=junk, risk_appetite="moderate", asset_classes=[]))
         assert verdict is not None, f"cheap_brief_reject accepted junk: {junk!r}"
         assert "reason" in verdict and "hint" in verdict

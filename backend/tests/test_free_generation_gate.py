@@ -49,6 +49,7 @@ from archimedes.models.free_generation_grant import (
     FreeGenerationGrantRecord,
     claim_free_grant,
     release_grant,
+    stamp_grant_job,
     used_count,
 )
 from archimedes.services import free_generations, generation_payment
@@ -680,3 +681,400 @@ def test_the_paywall_module_no_longer_claims_there_is_no_free_allowance():
     doc = inspect.getdoc(generation_payment) or ""
     assert "no free path" not in doc
     assert "#1643" in doc, "the docstring must say what replaced the old policy"
+
+
+# ── 7. A run that dies INSIDE the pipeline hands the slot back ───────────
+
+
+#: The literal reason ``generation_pipeline`` emits when the corpus is too thin
+#: to fuse — the owner's 2026-09-01 screenshot. Pinned against the source in
+#: ``test_the_corpus_failure_message_still_exists_in_the_pipeline`` so the
+#: stand-in below cannot drift away from the branch it stands in for.
+_CORPUS_REASON = "the corpus yielded <2 papers for this steer — the society cannot fuse"
+
+#: The owner's brief, verbatim in shape: a floating-rate carry steer whose
+#: corpus came back with fewer than two usable papers.
+_CARRY_BODY = {
+    "brief": {
+        "intent": "floating-rate carry with BKLN and FLOT",
+        "risk_appetite": "moderate",
+    }
+}
+
+
+class _EventfulStore:
+    """Stateful JobStore stand-in — status written by one call is visible to
+    the next ``get``, and the event log is real enough to be read back.
+
+    The ``_FakeStore`` in ``test_generation_timeout.py`` with ``list_events``
+    added, because that read is exactly what the guard under test performs.
+    """
+
+    def __init__(self) -> None:
+        self.status: str | None = "running"
+        self.error: str = ""
+        self.events: list[dict] = []
+
+    async def get(self, job_id: str) -> dict:
+        return {"id": job_id, "status": self.status, "error": self.error}
+
+    async def update_status(self, job_id: str, status: str, *, result=None, error: str = "") -> None:
+        self.status = status
+        self.error = error
+
+    async def update_terminal_status(self, job_id: str, status: str, *, result=None, error: str = "") -> bool:
+        await self.update_status(job_id, status, result=result, error=error)
+        return True
+
+    async def touch(self, job_id: str) -> bool:
+        return True
+
+    async def push_event(self, job_id: str, payload: dict) -> int:
+        self.events.append(payload)
+        return len(self.events)
+
+    async def list_events(self, job_id: str, *, after_id: int = 0) -> list[dict]:
+        return [{**e, "id": i} for i, e in enumerate(self.events, start=1)][after_id:]
+
+
+def _reset_gate(monkeypatch) -> None:
+    monkeypatch.setattr(generate_routes, "_GENERATION_GATE", None)
+    monkeypatch.setattr(generate_routes, "_GENERATION_GATE_LOOP", None)
+    monkeypatch.setattr(generate_routes, "_WAITING_GENERATIONS", 0)
+    monkeypatch.setenv("GENERATION_MAX_CONCURRENT", "1")
+    monkeypatch.setenv("GENERATION_MAX_QUEUE", "10")
+
+
+def _corpus_failure(reason: str = _CORPUS_REASON):
+    """A ``run_generation`` stand-in that fails the way the owner's run failed.
+
+    Not a bare ``raise``: it performs the two store writes the real branch
+    performs (``generation_pipeline.py`` — emit ``error``/``GENERATION_UNAVAILABLE``,
+    then ``update_status(job_id, "error", ...)``, then RETURN). That shape is
+    load-bearing here — the pipeline swallows this failure rather than raising,
+    so ``_run_with_cleanup`` sees a perfectly normal return and the only trace
+    of the failure is the status it left behind.
+    """
+
+    async def _run(*, job_id: str, **_kwargs) -> None:
+        store = generate_routes.get_job_store()
+        await store.push_event(
+            job_id,
+            {
+                "event": "error",
+                "data": {
+                    "job_id": job_id,
+                    "message": f"Generation is unavailable right now: {reason}.",
+                    "recoverable": True,
+                    "code": "GENERATION_UNAVAILABLE",
+                },
+            },
+        )
+        await store.update_status(job_id, "error", error=f"generation unavailable: {reason}")
+
+    return _run
+
+
+def _delivered_then_crashed(strategy_id: str = "strat-abc"):
+    """A run that persists the winner and only THEN dies.
+
+    Real path, not a contrivance: ``_persist_candidate`` writes the library row
+    and emits ``persisted``, and the cancel poll + backtest fan-out that follow
+    can both end the job non-``done``. The strategy is in the user's library;
+    the free generation was genuinely spent.
+    """
+
+    async def _run(*, job_id: str, **_kwargs) -> None:
+        store = generate_routes.get_job_store()
+        await store.push_event(
+            job_id,
+            {"event": "persisted", "data": {"job_id": job_id, "strategy_id": strategy_id}},
+        )
+        await store.push_event(
+            job_id,
+            {"event": "error", "data": {"job_id": job_id, "message": "boom", "code": "PIPELINE_CRASH"}},
+        )
+        await store.update_status(job_id, "error", error="boom")
+
+    return _run
+
+
+async def _run_job(monkeypatch, job_id: str, runner, store: _EventfulStore | None = None) -> _EventfulStore:
+    """Drive the exact coroutine ``/start`` spawns, with *runner* as the pipeline."""
+    _reset_gate(monkeypatch)
+    store = store or _EventfulStore()
+    with (
+        patch.object(generate_routes, "run_generation", runner),
+        patch.object(generate_routes, "get_job_store", return_value=store),
+    ):
+        await generate_routes._run_with_cleanup(job_id, MagicMock(), 1)
+    return store
+
+
+class TestAPipelineFailureReturnsTheFreeSlot:
+    """The owner's 2026-09-01 report, as an executable statement.
+
+    Sequence from the screenshots: two generations attempted, the second dying
+    inside the pipeline with "the corpus yielded <2 papers for this steer — the
+    society cannot fuse", and the Generate page then reporting **1 of 3 free
+    generation left**. The failed run had consumed a slot. ``/start``'s
+    ``except BaseException: release; raise`` only ever covered failures the
+    REQUEST could see (the entitlement gate, the enqueue); nothing released a
+    slot for a job that queued fine and then produced nothing.
+    """
+
+    async def test_the_owners_sequence_a_corpus_failure_leaves_the_allowance_whole(self, monkeypatch):
+        """Claim → the job fails with insufficient corpus → allowance back to 3.
+
+        Both halves in one test on purpose: the claim is made by the real
+        ``/start`` route (not seeded), and the release by the real background
+        coroutine, so a fix that only works when the two are wired together is
+        what is being measured.
+
+        MUTATION (the pre-fix code): drop
+        ``_release_free_slot_if_undelivered`` from ``_run_with_cleanup``'s
+        ``finally``. Red, reporting the owner's exact state — ``assert 2 == 3``.
+        """
+        _paywall_on(monkeypatch)
+        store = _EventfulStore()
+
+        with _as_account(wallet=None):
+            resp = _start(_CARRY_BODY, store=_mock_store("job-carry"))
+            assert resp.status_code == 202, resp.text
+            # Mid-flight: the slot IS spent. This is the state the owner saw
+            # and never got back.
+            assert [(r.status, r.job_id) for r in _grants()] == [(GRANT_USED, "job-carry")]
+            assert free_generations.remaining(USER) == 2
+
+            await _run_job(monkeypatch, "job-carry", _corpus_failure(), store=store)
+
+        assert store.status == "error"
+        assert _CORPUS_REASON in store.error
+        rows = _grants()
+        assert [r.status for r in rows] == [GRANT_RELEASED]
+        assert rows[0].job_id == "job-carry", "the ledger still shows which run burned the slot"
+        assert rows[0].released_at is not None
+        assert free_generations.remaining(USER) == 3, "the owner's counter must read 3 of 3 again"
+
+    async def test_two_attempts_that_both_fail_leave_all_three_slots(self, monkeypatch):
+        """The owner made two attempts. Neither delivered; neither may cost."""
+        _paywall_on(monkeypatch)
+
+        with _as_account(wallet=None):
+            for job_id in ("job-carry-1", "job-carry-2"):
+                assert _start(_CARRY_BODY, store=_mock_store(job_id)).status_code == 202
+                await _run_job(monkeypatch, job_id, _corpus_failure())
+
+        assert [r.status for r in _grants()] == [GRANT_RELEASED, GRANT_RELEASED]
+        assert free_generations.remaining(USER) == 3
+
+    def test_the_corpus_failure_message_still_exists_in_the_pipeline(self):
+        """The stand-in above is only faithful while the real branch says this.
+
+        Guards the test, not the product: if ``generation_pipeline`` reworded
+        or removed the insufficient-corpus branch, ``_corpus_failure`` would be
+        reproducing a failure that no longer happens and the reproduction above
+        would quietly stop meaning anything.
+        """
+        import inspect
+
+        from archimedes.agents import generation_pipeline
+
+        source = inspect.getsource(generation_pipeline)
+        assert _CORPUS_REASON in source
+        assert 'code="GENERATION_UNAVAILABLE"' in source
+
+
+class TestTheReleaseGuardRejects:
+    """CLAUDE.md's "a guard must be shown to REJECT something".
+
+    Four inputs the release must refuse, each one a slot that a naive
+    "non-``done`` ⇒ hand it back" would wrongly re-grant.
+    """
+
+    async def test_a_delivered_run_keeps_the_slot_spent(self, monkeypatch):
+        """The contrast pair for the reproduction: only the outcome differs."""
+        _paywall_on(monkeypatch)
+
+        async def _succeeds(*, job_id: str, **_kwargs) -> None:
+            store = generate_routes.get_job_store()
+            await store.push_event(job_id, {"event": "persisted", "data": {"strategy_id": "s1"}})
+            await store.push_event(job_id, {"event": "done", "data": {"job_id": job_id}})
+            await store.update_status(job_id, "done")
+
+        with _as_account(wallet=None):
+            assert _start(store=_mock_store("job-ok")).status_code == 202
+            await _run_job(monkeypatch, "job-ok", _succeeds)
+
+        assert [r.status for r in _grants()] == [GRANT_USED]
+        assert free_generations.remaining(USER) == 2
+
+    async def test_a_crash_AFTER_the_strategy_persisted_keeps_the_slot_spent(self, monkeypatch):
+        """The over-grant this guard exists to make impossible.
+
+        Terminal status ``error`` — the same status as the owner's corpus
+        failure — but the run already wrote a library row. Release it and the
+        account holds the strategy AND the free generation. Deleting the
+        ``persisted``-event check turns this input green in the wrong
+        direction, which is the whole point of testing it.
+
+        MUTATION: hard-code ``persisted = False`` in
+        ``_release_free_slot_if_undelivered`` (i.e. "non-``done`` ⇒ hand it
+        back", the paid path's rule). Red: ``assert ['released'] == ['used']``.
+        """
+        _paywall_on(monkeypatch)
+
+        with _as_account(wallet=None):
+            assert _start(store=_mock_store("job-late-crash")).status_code == 202
+            store = await _run_job(monkeypatch, "job-late-crash", _delivered_then_crashed())
+
+        assert store.status == "error"  # not "done" — the naive check would release here
+        assert [r.status for r in _grants()] == [GRANT_USED]
+        assert free_generations.remaining(USER) == 2
+
+    async def test_a_cancel_AFTER_the_strategy_persisted_keeps_the_slot_spent(self, monkeypatch):
+        """Same shape via the Cancel button.
+
+        ``_abort_if_cancel_requested`` runs at the ``backtest_persist`` stage
+        boundary, i.e. AFTER ``_persist_candidate`` — so a cancel really can
+        land on a run that already delivered a library row.
+        """
+        _paywall_on(monkeypatch)
+
+        async def _cancelled_after_persist(*, job_id: str, **_kwargs) -> None:
+            store = generate_routes.get_job_store()
+            await store.push_event(job_id, {"event": "persisted", "data": {"strategy_id": "s9"}})
+            await store.update_status(job_id, "cancelled", error="cancelled by client")
+
+        with _as_account(wallet=None):
+            assert _start(store=_mock_store("job-cancel-late")).status_code == 202
+            await _run_job(monkeypatch, "job-cancel-late", _cancelled_after_persist)
+
+        assert [r.status for r in _grants()] == [GRANT_USED]
+
+    async def test_an_unreadable_event_log_keeps_the_slot_spent_rather_than_guessing(self, monkeypatch):
+        """Silence is not evidence of non-delivery.
+
+        With the log unreadable there is no way to tell the owner's failure
+        apart from a delivered-then-crashed run, so the slot stays spent — the
+        recoverable direction, since the ledger row keeps its job id.
+
+        MUTATION: collapse ``_job_persisted_a_strategy``'s ``None`` onto
+        ``False``. Red: ``assert ['released'] == ['used']``.
+        """
+        _paywall_on(monkeypatch)
+        store = _EventfulStore()
+        store.list_events = AsyncMock(side_effect=RuntimeError("event log unreachable"))
+
+        with _as_account(wallet=None):
+            assert _start(store=_mock_store("job-blind")).status_code == 202
+            await _run_job(monkeypatch, "job-blind", _corpus_failure(), store=store)
+
+        assert [r.status for r in _grants()] == [GRANT_USED]
+
+    async def test_a_vanished_job_record_keeps_the_slot_spent_rather_than_guessing(self, monkeypatch):
+        """No record ⇒ no event log either ⇒ nothing to read a verdict out of.
+
+        MUTATION: replace the ``if job is None`` branch with the credit path's
+        ``status = (job or {}).get("status")`` — "a missing record reads as
+        undelivered". Red: ``assert ['released'] == ['used']``.
+        """
+        _paywall_on(monkeypatch)
+        store = _EventfulStore()
+        store.get = AsyncMock(return_value=None)
+
+        with _as_account(wallet=None):
+            assert _start(store=_mock_store("job-gone")).status_code == 202
+            await _run_job(monkeypatch, "job-gone", _corpus_failure(), store=store)
+
+        assert [r.status for r in _grants()] == [GRANT_USED]
+
+
+class TestTheReleaseIsIdempotentAndScoped:
+    async def test_releasing_the_same_job_twice_returns_exactly_one_slot(self, monkeypatch):
+        """A retried or duplicated cleanup must not mint a second free run.
+
+        MUTATION: drop ``status=GRANT_USED`` from ``release_grant_for_job``'s
+        filter. Red: ``assert True is False`` — the second call claims to have
+        released a slot it had already released.
+        """
+        _paywall_on(monkeypatch)
+
+        with _as_account(wallet=None):
+            assert _start(store=_mock_store("job-twice")).status_code == 202
+            await _run_job(monkeypatch, "job-twice", _corpus_failure())
+            assert free_generations.remaining(USER) == 3
+            # …and again, exactly as a re-delivered terminal callback would.
+            assert free_generations.release_for_job("job-twice") is False
+
+        assert [r.status for r in _grants()] == [GRANT_RELEASED]
+        assert free_generations.remaining(USER) == 3, "not 4 — one claim, one slot"
+
+    def test_a_job_that_never_spent_a_free_slot_is_a_no_op(self):
+        """A paid run, a flag-off run, an unknown job: no row matches, nothing moves."""
+        _seed_used(USER, 1)
+        assert free_generations.release_for_job("some-paid-job") is False
+        assert free_generations.release_for_job("") is False
+        assert [r.status for r in _grants()] == [GRANT_USED]
+
+    def test_one_users_failure_never_releases_anothers_slot(self):
+        """The lookup is by job id, and a job funds exactly one account's slot."""
+        with get_session() as session:
+            mine = claim_free_grant(session, user_id=USER, allowance=3)
+            theirs = claim_free_grant(session, user_id="user-free-2", allowance=3)
+            stamp_grant_job(session, mine.id, job_id="job-mine")
+            stamp_grant_job(session, theirs.id, job_id="job-theirs")
+            session.commit()
+
+        assert free_generations.release_for_job("job-mine") is True
+
+        assert [r.status for r in _grants(USER)] == [GRANT_RELEASED]
+        assert [r.status for r in _grants("user-free-2")] == [GRANT_USED]
+
+    def test_an_unstamped_slot_is_reported_as_not_released_rather_than_swept(self, monkeypatch):
+        """The boundary ``stamp_job``'s failure log now names.
+
+        If the job-id stamp never landed, the terminal path cannot find the row
+        — and it must say so (``False``) rather than release whichever row it
+        can reach.
+        """
+        with get_session() as session:
+            grant = claim_free_grant(session, user_id=USER, allowance=3)
+            assert grant.job_id is None
+            session.commit()
+
+        assert free_generations.release_for_job("job-unstamped") is False
+        assert [r.status for r in _grants()] == [GRANT_USED]
+
+    def test_a_ledger_failure_is_reported_false_never_claimed_as_released(self, monkeypatch):
+        """Quiet, but not dishonest: an unwritable ledger returns ``False``."""
+        monkeypatch.setattr(
+            free_generations,
+            "_session",
+            MagicMock(side_effect=RuntimeError("ledger unreachable")),
+        )
+        assert free_generations.release_for_job("job-any") is False
+
+
+class TestThePaidPathAlsoCostsNothingForAFailedRun:
+    """The $2 half of the owner's question, pinned rather than altered.
+
+    ``_release_credit_if_undelivered`` already restores a consumed credit on
+    every terminal state except ``done`` (#1441), so the paid path already
+    survives a pipeline-time corpus failure. This asserts that end to end for
+    the owner's exact failure, so the free-tier change cannot regress it and so
+    the claim in the PR body is measured rather than assumed.
+    """
+
+    async def test_a_corpus_failure_restores_the_paid_credit(self, monkeypatch):
+        with patch.object(generate_routes.generation_credits, "restore_for_job", return_value=True) as restore:
+            await _run_job(monkeypatch, "job-paid-carry", _corpus_failure())
+        restore.assert_called_once_with("job-paid-carry")
+
+    async def test_a_delivered_paid_run_keeps_the_credit_spent(self, monkeypatch):
+        async def _succeeds(*, job_id: str, **_kwargs) -> None:
+            await generate_routes.get_job_store().update_status(job_id, "done")
+
+        with patch.object(generate_routes.generation_credits, "restore_for_job", return_value=True) as restore:
+            await _run_job(monkeypatch, "job-paid-ok", _succeeds)
+        restore.assert_not_called()

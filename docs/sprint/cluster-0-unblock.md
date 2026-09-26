@@ -62,6 +62,13 @@ re-run, never during (collides with A7 and B4's `num_trials_source`).
 
 ## A6 diagnostic — one command, do it here
 
+> **Superseded 2026-09-01 (#1760).** The refresh loop this command greps for no longer exists —
+> `services/backtest_scheduler.py` was deleted, so `/ecs/archimedes-backend` will never emit
+> another `backtest refresh:` line. Curated backtests are produced by an explicit operator run
+> ([`../runbooks/curated-backtests.md`](../runbooks/curated-backtests.md)); the summary line to
+> grep for is `backtest run summary`. Kept as the historical record of the frozen-board
+> investigation.
+
 ```bash
 aws logs tail /ecs/archimedes-backend --since 7d \
   --filter-pattern '"backtest refresh"' | tail -40

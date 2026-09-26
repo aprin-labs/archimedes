@@ -18,6 +18,7 @@ Both run — a caller who passes the strategy gate still only sees the traces
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC
 
@@ -156,8 +157,6 @@ async def _assert_can_read(trace: dict, request: Request) -> None:
     runs in a worker thread: a blocking DB call made directly here stalls the
     whole event loop, every other in-flight request included (#1573).
     """
-    import asyncio
-
     from fastapi import HTTPException
 
     from archimedes.services.trace_visibility import can_read_trace
@@ -213,8 +212,6 @@ async def list_traces(
     derivation. The #1556 per-row filter still runs afterwards: passing the
     strategy gate grants no read on a trace you do not own.
     """
-    import asyncio
-
     from archimedes.services.redis_state import AgentStateStore
     from archimedes.services.trace_visibility import (
         MAX_TRACE_SCAN,
@@ -500,15 +497,93 @@ async def publish_trace(req: TracePublishRequest, _: None = Depends(require_inte
     )
 
 
+def _verify_consulted_papers(off_chain: dict) -> tuple[bool | None, dict | None]:
+    """Check a trace's ``consulted_paper_hashes`` against the live corpus (#1637).
+
+    This is the production caller ``services.source_tracker.verify_source_papers``
+    never had. Before it, ``/verify`` re-hashed the trace body and compared it to
+    the on-chain anchor — a real check, but only of the *body*. The papers the
+    trace claims to have consulted were never checked against anything, so
+    "verified" meant "these bytes are the bytes that were anchored", not "the
+    research this decision cites exists".
+
+    Returns ``(papers_verified, detail)``. ``papers_verified`` is **tri-state**:
+
+    * ``True`` / ``False`` — the corpus answered and every claimed id was, or
+      was not, found (and any non-empty claimed hash matched).
+    * ``None`` — nothing was checked. Two ways: the trace claims no papers
+      (``no_papers_claimed``), or the corpus is unreachable
+      (``corpus_unavailable``). An outage must not read as a provenance
+      failure, and it must not read as a pass either — that is the exact
+      failure #1359 fixed on the on-chain half of this endpoint.
+
+    **What ``True`` means, precisely: the corpus HAS these papers.** Claimed
+    hashes are empty in production (#1091: the corpus's ``content_hash`` /
+    ``pdf_sha256`` columns are unhydrated), so this is an EXISTENCE check, not
+    a hash comparison, and ``verify_source_papers`` says so by treating an
+    empty claim as "no hash asserted". Nothing here synthesizes a hash on
+    either side to make a comparison come out clean, and the ``mode`` field
+    exists so every renderer can state which check actually ran instead of
+    printing an unqualified "verified" (owner decision Q8 on #1688).
+    """
+    from archimedes.services.source_tracker import (
+        CorpusUnavailable,
+        corpus_content_hashes,
+        split_consulted_entry,
+        verify_source_papers,
+    )
+
+    claimed = [e for e in (off_chain.get("consulted_paper_hashes") or []) if isinstance(e, str) and e]
+    if not claimed:
+        return None, {
+            "mode": "no_papers_claimed",
+            "checked": 0,
+            "verified": None,
+            "missing": [],
+            "hash_mismatch": [],
+        }
+
+    arxiv_ids = [split_consulted_entry(e)[0] for e in claimed]
+    try:
+        resolved = corpus_content_hashes(arxiv_ids)
+    except CorpusUnavailable:
+        logger.warning("verify_trace: corpus unavailable — source papers NOT checked", exc_info=True)
+        return None, {
+            "mode": "corpus_unavailable",
+            "checked": 0,
+            "verified": None,
+            "missing": [],
+            "hash_mismatch": [],
+        }
+
+    corpus = [{"arxiv_id": aid, "content_hash": h} for aid, h in resolved.items()]
+    result = verify_source_papers(claimed, corpus)
+    return bool(result["verified"]), {
+        "mode": "checked",
+        "checked": len(claimed),
+        "verified": bool(result["verified"]),
+        "missing": result["missing"],
+        "hash_mismatch": result["hash_mismatch"],
+    }
+
+
 @traces_router.get("/{trace_id}/verify", response_model=TraceVerifyResponse)
 @limiter.exempt
 async def verify_trace(trace_id: str, request: Request):
-    """Verify a reasoning trace against its on-chain anchor.
+    """Verify a reasoning trace against its on-chain anchor AND its source papers.
 
     Ownership-gated (#1556) on the same predicate as the display routes: the
     response names the vault, the agent and the anchor timestamp, so an
     ungated verify is an enumeration oracle even though it carries no
     reasoning body.
+
+    Two independent checks, reported independently (#1637):
+    ``verification_mode``/``is_verified`` answer "were these bytes anchored";
+    ``papers_verified``/``source_paper_verification`` answer "does the corpus
+    have the papers this decision cites". Neither is folded into the other — a
+    trace can be correctly anchored while citing a paper that has since left
+    the corpus, and that is a fact a reader needs to see rather than have
+    averaged away into one boolean.
     """
     from fastapi import HTTPException
 
@@ -552,9 +627,19 @@ async def verify_trace(trace_id: str, request: Request):
                 vault=detail["vault"],
                 on_chain_timestamp=detail["timestamp"],
                 details="Hash is anchored on-chain — no off-chain trace body was stored, so no hashes were compared",
+                # No off-chain body means no cited set to check. Not a pass,
+                # not a failure — nothing was attempted (#1637).
+                papers_verified=None,
+                source_paper_verification=None,
             )
 
         await _assert_can_read(off_chain, request)
+
+        # to_thread: _verify_consulted_papers opens a synchronous SQLAlchemy
+        # session against the corpus, and a blocking DB call made directly here
+        # stalls the whole event loop — the same reason `_assert_can_read` above
+        # runs in a worker thread (#1573).
+        papers_verified, papers_detail = await asyncio.to_thread(_verify_consulted_papers, off_chain)
 
         trace_hash = off_chain.get("trace_hash", "")
         is_verified = False
@@ -607,6 +692,8 @@ async def verify_trace(trace_id: str, request: Request):
             trade_block_number=off_chain.get("trade_block_number"),
             reveal_block_number=off_chain.get("reveal_block_number"),
             temporal_binding_valid=off_chain.get("temporal_binding_valid"),
+            papers_verified=papers_verified,
+            source_paper_verification=papers_detail,
         )
     finally:
         await state.close()

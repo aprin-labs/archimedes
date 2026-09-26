@@ -26,10 +26,41 @@ logger = logging.getLogger(__name__)
 CIRCLE_API_BASE = "https://api.circle.com/v1/w3s"
 CIRCLE_BLOCKCHAIN = "ARC-TESTNET"
 
-# Transaction terminal states
+# Transaction terminal states. Circle's full enum is INITIATED, CLEARED, QUEUED, SENT,
+# STUCK, CONFIRMED, COMPLETE, FAILED, DENIED, CANCELLED (get-transaction API reference).
+# CONFIRMED is deliberately NOT terminal: Circle's blockchain-confirmations doc is explicit
+# that a transaction visible on a block explorer may still not be COMPLETE.
 _TERMINAL = {"COMPLETE", "FAILED", "DENIED", "CANCELLED"}
+
+# STUCK is its own case, and it is not in _TERMINAL because Circle does not call it a
+# failure: "STUCK is a signal for intervention, not a terminal failure" — and, crucially,
+# "if a transaction stays STUCK and you take no action, it can block subsequent
+# transactions from the same wallet" (transaction-limits-and-optimizations). For a caller
+# it is nonetheless the end of the road: nothing this process can do will unstick it, so
+# spinning out the full poll budget and then raising a generic timeout costs two minutes
+# and throws away the one fact the operator needs — WHICH transaction to accelerate or
+# cancel in the Circle Console, before it wedges the oracle's pushes from the same wallet.
+_STUCK = "STUCK"
+
 _POLL_INTERVAL = 2.0  # seconds
 _MAX_POLLS = 60  # 2 minutes max
+
+# Circle answers a contract-execution submit with 201 for a newly created transaction and
+# 200 when it recognises the idempotencyKey and replays the existing one
+# (create-developer-transaction-contract-execution). Our key is deterministic BY DESIGN —
+# uuid5 over wallet+contract+function+args (see execute_contract) — so a replay is the
+# expected shape of any retry, not a rarity. Treating 200 as a failure told the operator a
+# transaction that had succeeded had failed, and the tempting next move after that is to
+# force a second one.
+#
+# KNOWN DIVERGENCE, deliberate: oracle_updater.py does NOT come through this method — it
+# POSTs to the same endpoint itself — and it fixed this identical defect first, under #1525
+# ("Circle API error for sBTC (200): {'state': 'COMPLETE'}" every cycle for a push that had
+# landed). Its fix grades on the PAYLOAD (a usable id whose state is not a failure state);
+# this one grades on the STATUS and then requires a usable id below. Same outcome for the
+# shapes Circle actually returns, two implementations, one seam apart. Converging them is
+# its own change; until then, a fix here is not a fix there.
+_SUBMIT_ACCEPTED = frozenset({200, 201})
 
 # Bounded wall-clock ceiling on the wallet-address lookup (#1412). This runs
 # inside the agent tick's reveal-reconciliation pass, so an unbounded read
@@ -192,7 +223,9 @@ class CircleSigner:
             The on-chain transaction hash.
 
         Raises:
-            RuntimeError: If Circle credentials are missing or the tx fails.
+            RuntimeError: If Circle credentials are missing, the submit is rejected
+                (anything outside :data:`_SUBMIT_ACCEPTED`), the transaction reaches a
+                failing terminal state, goes ``STUCK``, or the poll budget runs out.
         """
         if not self.is_configured:
             raise RuntimeError("Circle credentials not configured (CIRCLE_API_KEY / CIRCLE_ENTITY_SECRET / WALLET_ID)")
@@ -245,10 +278,27 @@ class CircleSigner:
                 },
             ) as resp:
                 body = await resp.json()
-                if resp.status != 201:
+                if resp.status not in _SUBMIT_ACCEPTED:
                     raise RuntimeError(f"Circle contract execution failed ({resp.status}): {body}")
-                circle_tx_id = body["data"]["id"]
-                logger.info("Circle tx submitted: %s", circle_tx_id)
+                # A 2xx is not automatically a usable answer. ``body["data"]["id"]`` was an
+                # unguarded double subscript: a malformed success — an error envelope, a
+                # proxy's HTML, a 200 with no ``data`` — surfaced as ``KeyError: 'data'``
+                # from inside the signer instead of the RuntimeError every caller here is
+                # written to handle. Newly reachable now that 200 is accepted at all.
+                data = body.get("data") if isinstance(body, dict) else None
+                circle_tx_id = data.get("id") if isinstance(data, dict) else None
+                if not circle_tx_id:
+                    raise RuntimeError(
+                        f"Circle accepted the contract execution ({resp.status}) but the response carries "
+                        f"no transaction id to poll, so nothing can be confirmed: {body}"
+                    )
+                if resp.status == 200:
+                    # Not a new transaction — Circle recognised the idempotency key and
+                    # handed back the one it already has. Logged as such so a reader of
+                    # the logs can tell one submission from two.
+                    logger.info("Circle tx replayed (idempotent, HTTP 200): %s", circle_tx_id)
+                else:
+                    logger.info("Circle tx submitted: %s", circle_tx_id)
 
             # Poll until terminal state
             return await self._poll_transaction(session, circle_tx_id)
@@ -313,7 +363,13 @@ class CircleSigner:
             return tx_hash
 
     async def _poll_transaction(self, session: aiohttp.ClientSession, circle_tx_id: str) -> str:
-        """Poll Circle transaction until terminal state."""
+        """Poll Circle transaction until terminal state.
+
+        Returns the on-chain hash only for ``COMPLETE``. Every other end — a failing
+        terminal state, ``STUCK``, or exhausting the budget — raises, and the ``STUCK``
+        message names the transaction because that is what an operator has to type into
+        the Circle Console to clear it.
+        """
         for _ in range(_MAX_POLLS):
             # Scope the list to this wallet's transactions via the walletIds
             # filter. An unfiltered GET /transactions returns the newest txs
@@ -331,6 +387,17 @@ class CircleSigner:
                         if tx.get("id") == circle_tx_id:
                             state = tx.get("state", "UNKNOWN")
                             tx_hash = tx.get("txHash", "")
+
+                            if state == _STUCK:
+                                raise RuntimeError(
+                                    f"Circle tx {circle_tx_id} is STUCK "
+                                    f"(txHash {tx_hash or 'not yet assigned'}, wallet {self._wallet_id}): "
+                                    "Circle accepted and broadcast it but it is not being mined, and a "
+                                    "stuck transaction blocks every later transaction from the same "
+                                    "wallet — including the oracle's price pushes. Accelerate or cancel "
+                                    f"transaction {circle_tx_id} in the Circle Console (Transactions), "
+                                    "then re-run. Do NOT submit a replacement first."
+                                )
 
                             if state in _TERMINAL:
                                 if state == "COMPLETE":

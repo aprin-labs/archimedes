@@ -324,13 +324,11 @@ async def evaluate_rigor_gate(
         )
 
     # ── Collect real daily returns from persisted backtest results ──
-    from archimedes.db import get_session, init_db
+    from archimedes.db import get_session
     from archimedes.services.backtest_repository import (
         get_all_daily_returns,
         update_rigor_gate_fields,
     )
-
-    init_db()
 
     strategy_ids = [s.id for s in strategies]
 
@@ -728,12 +726,11 @@ def _generated_strategy_rigor(strategy_id: str, request: Request, strictness: in
     """
     from archimedes.api.account_auth import get_current_user
     from archimedes.api.auth_siwe import get_verified_wallet
-    from archimedes.db import get_session, init_db
+    from archimedes.db import get_session
     from archimedes.models.strategy_store import StrategyRecord
     from archimedes.services.backtest_repository import get_daily_returns, latest_backtests_by_strategy
     from archimedes.services.strategy_visibility import is_strategy_visible
 
-    init_db()
     with get_session() as session:
         row = session.query(StrategyRecord).filter_by(id=strategy_id).first()
         caller = get_verified_wallet(request)

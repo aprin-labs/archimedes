@@ -405,11 +405,211 @@ async def test_neither_board_carries_the_other_boards_numbers(monkeypatch):
         forward = (await client.get(LIVE_PAPER_URL)).json()
         research = (await client.get("/api/leaderboard?scope=own")).json()
 
+    # Unchanged by #1764, deliberately: the forward row gained the verdict of
+    # record (a dated four-state LABEL) and nothing else. `passes_rigor_gate`
+    # stays forbidden — a bare boolean beside a forward return is the field a
+    # consumer would blend or sort on — and no backtest METRIC may appear.
     forbidden_on_forward = {"conviction_score", "score_components", "passes_rigor_gate", "deflated_sharpe_ratio"}
     for row in forward["entries"]:
         assert not (forbidden_on_forward & set(row)), f"forward row leaked backtest fields: {set(row)}"
     assert "scoring_engine" not in forward
+    for row in forward["entries"]:
+        assert not ({"pbo_score", "out_of_sample_sharpe", "sharpe_ratio", "cagr"} & set(row))
+        # The verdict that IS carried never travels without its provenance:
+        # `graded_at` is what keeps it readable as a statement about the
+        # backtest rather than about the ledger beside it.
+        assert "rigor_gate_status" in row and "graded_at" in row
+    # And nothing ranks on it — the board's one sort is its one forward number.
+    assert forward["sort_by"] == "cumulative_return"
 
     forbidden_on_research = {"cumulative_return", "days_live", "inception_date"}
     for row in research["entries"]:
         assert not (forbidden_on_research & set(row)), f"research row leaked live-paper fields: {set(row)}"
+
+
+# ── 9. The verdict of record, beside the forward record (#1764) ─────────────
+#
+# Deploy is AT WILL: a strategy whose gate said `fail`, `pending` or
+# `degenerate` can be paper-traded, so a gate-REJECTED strategy can sit on this
+# board with a real forward return. Shown bare, that row reads as the board
+# endorsing the strategy. So every row carries the STORED verdict — read, never
+# recomputed, and never a fabricated pass.
+
+
+def _graded(strategy_id: str, **kwargs) -> None:
+    """A passport row for ``strategy_id``, with only the columns the test names."""
+    import archimedes.db as db
+    from archimedes.models.strategy_passport_record import StrategyPassportRecord
+
+    with db.get_session() as session:
+        session.add(StrategyPassportRecord(id=strategy_id, methodology_summary="probe", **kwargs))
+        session.commit()
+
+
+@pytest.mark.asyncio
+async def test_a_gate_failed_row_says_so_beside_its_forward_return(monkeypatch):
+    """THE guard for this surface. The row keeps its realised return AND states
+    the verdict the strategy was graded with, with the date that verdict was
+    recorded."""
+    _graded(
+        "s-fail",
+        rigor_gate_status="fail",
+        passes_rigor_gate=False,
+        graded_at=datetime(2026, 8, 30, 11, 22, 33),
+        gate_version="gate-v1-deadbeefdeadbeef",
+    )
+    _deploy("dep-fail", owner_user_id="user-a", strategy_id="s-fail", returns=[0.01, 0.02])
+
+    _sign_in(monkeypatch, "user-a")
+    async with _client() as client:
+        body = (await client.get(LIVE_PAPER_URL)).json()
+
+    (row,) = body["entries"]
+    assert row["rigor_gate_status"] == "fail"
+    assert row["graded_at"] == "2026-08-30T11:22:33"
+    assert row["gate_version"] == "gate-v1-deadbeefdeadbeef"
+    # Beside it, untouched: the forward number the verdict qualifies.
+    assert row["cumulative_return"] == pytest.approx(1.01 * 1.02 - 1.0)
+
+
+@pytest.mark.asyncio
+async def test_a_strategy_with_no_passport_row_reads_pending_never_a_pass(monkeypatch):
+    _deploy("dep-unknown", owner_user_id="user-a", strategy_id="s-never-graded", returns=[0.03])
+
+    _sign_in(monkeypatch, "user-a")
+    async with _client() as client:
+        (row,) = (await client.get(LIVE_PAPER_URL)).json()["entries"]
+
+    assert row["rigor_gate_status"] == "pending"
+    assert row["graded_at"] is None
+    assert row["gate_version"] is None
+
+
+@pytest.mark.asyncio
+async def test_the_board_and_the_deployment_payload_state_one_verdict(monkeypatch):
+    """Anti-split. ``/api/leaderboard/live-paper`` and ``/api/paper/deployments``
+    describe the same deployment on two pages; both READ the same passport row
+    through the same ``passport_loader`` derivation, so they cannot disagree.
+    A read-time re-grade on either would be the #1746/#1747 split on a new
+    surface."""
+    import archimedes.db as db
+    from archimedes.models.paper_store import PaperDeployment
+    from archimedes.services.paper_trading import deployment_summary
+
+    _graded(
+        "s-deg",
+        rigor_gate_status="degenerate",
+        graded_at=datetime(2026, 8, 30, 11, 22, 33),
+        gate_version="gate-v1-abc",
+    )
+    _deploy("dep-deg", owner_user_id="user-a", strategy_id="s-deg", returns=[0.01])
+
+    _sign_in(monkeypatch, "user-a")
+    async with _client() as client:
+        (row,) = (await client.get(LIVE_PAPER_URL)).json()["entries"]
+
+    with db.get_session() as session:
+        dep = session.query(PaperDeployment).filter_by(id="dep-deg").one()
+        card = deployment_summary(session, dep)
+
+    for key in ("rigor_gate_status", "graded_at", "gate_version"):
+        assert row[key] == card[key], f"the board and the deployment card disagree on {key}"
+
+
+@pytest.mark.asyncio
+async def test_a_broken_passport_read_degrades_the_verdict_not_the_board(monkeypatch):
+    """Per-FIELD degradation. The realised forward returns are this board's
+    subject and are already loaded; a passport read that blows up must not take
+    them down with it, and must never produce a pass."""
+    from archimedes.services import passport_loader
+
+    _graded("s-pass", rigor_gate_status="pass", passes_rigor_gate=True)
+    _deploy("dep-pass", owner_user_id="user-a", strategy_id="s-pass", returns=[0.01, 0.01])
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("strategy_passports.gate_version does not exist")
+
+    monkeypatch.setattr(passport_loader, "stored_rigor_verdicts", _boom)
+
+    _sign_in(monkeypatch, "user-a")
+    async with _client() as client:
+        body = (await client.get(LIVE_PAPER_URL)).json()
+
+    (row,) = body["entries"]
+    assert row["rigor_gate_status"] == "pending", "a broken verdict read must never serve a stale or fabricated pass"
+    assert row["cumulative_return"] == pytest.approx(1.01 * 1.01 - 1.0), "the ledger still serves"
+    assert body["degraded"] is False, "the VERDICT degraded, not the board — the returns are real"
+
+
+def test_the_builder_gives_every_row_a_verdict_even_with_none_loaded():
+    """The pure layer's half: no arm of the builder emits a row without the
+    verdict fields. A ledger with no verdict loaded renders the explicit
+    ungraded state, never an omitted field."""
+    from archimedes.services.leaderboard import UNGRADED_ENTRY_VERDICT
+
+    board = build_live_paper_leaderboard(
+        [
+            LivePaperLedger(
+                deployment_id="d1",
+                strategy_id="s1",
+                name="No verdict loaded",
+                inception=date(2026, 8, 1),
+                returns=[(date(2026, 8, 1), 0.01)],
+            ),
+            LivePaperLedger(
+                deployment_id="d2",
+                strategy_id="s2",
+                name="Graded",
+                inception=date(2026, 8, 1),
+                returns=[(date(2026, 8, 1), 0.02)],
+                verdict={
+                    "passes_rigor_gate": False,
+                    "rigor_gate_status": "fail",
+                    "graded_at": "2026-08-30T11:22:33",
+                    "gate_version": "gate-v1-abc",
+                },
+            ),
+        ]
+    )
+    ungraded, graded = board.entries[1], board.entries[0]
+    assert ungraded.rigor_gate_status == UNGRADED_ENTRY_VERDICT["rigor_gate_status"] == "pending"
+    assert ungraded.graded_at is None and ungraded.gate_version is None
+    assert graded.rigor_gate_status == "fail"
+    assert graded.graded_at == "2026-08-30T11:22:33"
+    # The boolean the deployment payload carries is dropped on the way in — a
+    # bare pass/fail beside a forward return is the field that would get blended.
+    assert not hasattr(graded, "passes_rigor_gate")
+
+
+def test_the_boards_ungraded_verdict_is_the_paper_surfaces_ungraded_verdict():
+    """Anti-drift across the layers. ``leaderboard.UNGRADED_ENTRY_VERDICT`` is a
+    copy (the pure layer must not import the ORM), so it is pinned to
+    ``passport_loader.UNGRADED_RIGOR_VERDICT`` here — a change to either that
+    made them disagree would put two different answers to "has a gate graded
+    this?" on the board and the deployment card."""
+    from archimedes.services.leaderboard import UNGRADED_ENTRY_VERDICT
+    from archimedes.services.passport_loader import UNGRADED_RIGOR_VERDICT
+
+    assert set(UNGRADED_ENTRY_VERDICT) < set(UNGRADED_RIGOR_VERDICT)
+    for key, value in UNGRADED_ENTRY_VERDICT.items():
+        assert UNGRADED_RIGOR_VERDICT[key] == value, key
+
+
+@pytest.mark.asyncio
+async def test_the_verdict_never_reorders_the_board(monkeypatch):
+    """The rank is realised forward return, and only that. A gate-FAILED
+    deployment that earned more outranks a gate-PASSED one that earned less —
+    the board reports what happened, and the verdict beside each row is what
+    lets a reader judge it."""
+    _graded("s-pass", rigor_gate_status="pass", passes_rigor_gate=True)
+    _graded("s-fail", rigor_gate_status="fail", passes_rigor_gate=False)
+    _deploy("dep-pass", owner_user_id="user-a", strategy_id="s-pass", returns=[0.01])
+    _deploy("dep-fail", owner_user_id="user-a", strategy_id="s-fail", returns=[0.05])
+
+    _sign_in(monkeypatch, "user-a")
+    async with _client() as client:
+        body = (await client.get(LIVE_PAPER_URL)).json()
+
+    assert [e["deployment_id"] for e in body["entries"]] == ["dep-fail", "dep-pass"]
+    assert [e["rigor_gate_status"] for e in body["entries"]] == ["fail", "pass"]
+    assert body["sort_by"] == "cumulative_return"

@@ -77,7 +77,7 @@ When a function accepts multiple input types (e.g. `_confirm_receipt` takes both
 `bytes` HexBytes), the test matrix must cover *every* type the production code path emits.
 The raw-key signer in `chain/executor.py` emits `HexBytes`; tests that only exercise the
 `str` branch leave the production path uncovered. Issue
-[#408](https://github.com/a-apin/archimedes/issues/408) was filed to backfill this specific
+[#408](https://github.com/aprin-labs/archimedes/issues/408) was filed to backfill this specific
 gap.
 
 ## Coverage targets and gates

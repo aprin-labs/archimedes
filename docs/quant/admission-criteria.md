@@ -14,7 +14,7 @@
 > Where this doc and those drift, **the spec and the code win** — the thresholds below are
 > transcribed from `passes_all` and `_PROFILES`, not invented.
 >
-> **Reconciled 2026-08-31 ([#1598](https://github.com/a-apin/archimedes/issues/1598)):**
+> **Reconciled 2026-08-31 ([#1598](https://github.com/aprin-labs/archimedes/issues/1598)):**
 > against the live code and [`../adr/num-trials-self-containment.md`](../adr/num-trials-self-containment.md).
 > Two corrections landed — the threshold table is the **level-1 row of a five-level
 > strictness ladder**, not a set of literals (see below), and the promotion flow no longer
@@ -34,7 +34,7 @@ are exactly the conditions checked in `RigorGateResult.passes_all`:
 
 | # | Control | Function | Threshold at level 1 (Conservative — the Tier-1 bar) |
 |---|---|---|---|
-| 1 | Deflated Sharpe Ratio | `compute_dsr` | `dsr_p_value ≥ 0.90` (and not `None`) — recalibrated from 0.95 in PR #901 |
+| 1 | Deflated Sharpe Ratio | `compute_dsr` | `dsr_p_value ≥ 0.95` (and not `None`) — `rigor_profiles.DSR_P_BADGE_MIN`, the one definition of the bar (#1794) |
 | 2 | Probability of Backtest Overfitting | `compute_pbo` | `pbo_score < 0.5` (and not `None`) |
 | 3a | Walk-forward OOS Sharpe — absolute floor | `compute_oos_sharpe` | `oos_sharpe > 0` (and not `None`) |
 | 3b | Walk-forward OOS Sharpe — the cliff | `compute_oos_sharpe` | `oos_sharpe / in_sample_sharpe ≥ 0.5` |
@@ -56,7 +56,7 @@ Three of the six rows move with the level and three do not:
 
 | Row | Moves with strictness? | Level-1 → level-5 |
 |---|---|---|
-| 1 — `dsr_p_min` | **yes** (`dsr_p_min`) | `0.90 → 0.50` |
+| 1 — `dsr_p_min` | **yes** (`dsr_p_min`) | `0.95 → 0.50` |
 | 2 — `pbo_max` | **yes** (`pbo_max`) | `0.50 → 0.70` |
 | 3b — OOS/IS cliff | **yes** (`oos_is_ratio_min`) | `0.50 → 0.30` |
 | 3a — OOS absolute floor | no — always-on correctness floor (`OOS_ABS_FLOOR = 0.0`) | `> 0` at every level |
@@ -71,13 +71,13 @@ live path.
 
 Notes on each threshold, with the *why* behind the number:
 
-### 1. DSR p-value ≥ 0.90
+### 1. DSR p-value ≥ 0.95
 
 The published statement of the gate — the wording the app carries on the Architecture
 page, which these thresholds must match:
 
 > Over 20+ years of backtested returns net of realistic commission, a strategy's excess Sharpe
-> must be positive at 90% one-sided confidence under standard errors robust to non-normality
+> must be positive at 95% one-sided confidence under standard errors robust to non-normality
 > and autocorrelation, and must stay positive on a 30% chronological holdout. On the generated
 > path, the Sharpe is additionally deflated against that strategy's own candidate pool.
 >
@@ -87,8 +87,12 @@ page, which these thresholds must match:
 The Deflated Sharpe Ratio (Bailey & López de Prado 2014) returns a probability that the
 excess Sharpe is positive under standard errors robust to non-normality and
 autocorrelation, *and*, where a candidate pool exists, after deflating by the expected
-best-of-`N` under the null. The bar was recalibrated from `0.95` to **`0.90` in PR #901**:
-admission requires 90% one-sided confidence.
+best-of-`N` under the null. Admission requires **95% one-sided confidence**. PR #901
+briefly lowered the bar; [#1794](https://github.com/aprin-labs/archimedes/issues/1794)
+retired that path on 2026-09-03 (owner call) because the Generate pipeline and every public
+rigor page had gone on quoting 95% throughout — two bars, and which one graded you depended
+on which code path reached you. The number now exists in exactly one place,
+`rigor_profiles.DSR_P_BADGE_MIN`, which the ladder's level-1 row *is*.
 
 **What `N` is, and is not.** On the **generated** path `num_trials` is that strategy's own
 candidate pool — specifically the debate's own assembled pool, `pool_size = len(pool)`, the
@@ -248,7 +252,7 @@ thresholds is an explicit anti-goal).
 
 ### A. Diversification benefit vs. a marginally lower DSR
 
-A strategy that *just* misses the `0.90` DSR bar but is **genuinely
+A strategy that *just* misses the DSR bar but is **genuinely
 decorrelated** from the rest of the validated set can be more valuable to the
 portfolio than a higher-DSR strategy that duplicates an existing bet. The portfolio
 math is the justification: adding a low-correlation sleeve lowers portfolio variance
@@ -330,7 +334,7 @@ no longer passes returns to `CANDIDATE` automatically.
 ## Summary
 
 - Admission = all four controls pass in `RigorGateResult.passes_all` **at strictness
-  level 1**, the badge rung: DSR `p ≥ 0.90`, PBO `< 0.5`, OOS Sharpe `> 0` and
+  level 1**, the badge rung: DSR `p ≥ 0.95`, PBO `< 0.5`, OOS Sharpe `> 0` and
   OOS/IS `≥ 0.5` (plus CPCV `positive_fraction ≥ 0.5` when computable), look-ahead
   `PASS`. Three of those move down the ladder for a user's own deployment strictness;
   the OOS floor, the CPCV majority, the look-ahead audit and `DSR_P_FLOOR = 0.50`

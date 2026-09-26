@@ -43,12 +43,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LEDGER = REPO_ROOT / "docs" / "claims-ledger.md"
-DOCS_INDEX = REPO_ROOT / "docs" / "README.md"
+DOCS_INDEX = REPO_ROOT / "docs" / "doc-index.md"
 
 # The statuses a row is allowed to carry. Adding one is a deliberate act — a new word is a
 # new promise to the reader about what the row means — so it goes here and in the ledger's
 # own "How to read a row" table, together.
-ALLOWED_STATUSES = frozenset({"TRUE", "CHANGED", "RETRACTED", "OVER-CLAIMED", "PENDING ADR MERGE"})
+ALLOWED_STATUSES = frozenset({"TRUE", "CHANGED", "RETRACTED", "OVER-CLAIMED", "PENDING VENDOR CUTOVER"})
 
 # A citation: a backticked repo-relative path, optionally `:line` or `:line-line`. The
 # extension list is what keeps `GET /api/selection-bias/gate` and other backticked
@@ -119,6 +119,10 @@ _SYMBOL_PINS: tuple[tuple[str, str], ...] = (
     ("infra/ecs.tf", '{ name = "GENERATION_PAYMENT_REQUIRED", value = "true" }'),
     ("infra/ecs.tf", '{ name = "GENERATION_PAYMENTS_DRY_RUN", value = "false" }'),
     ("ui/test/roadmap-copy.test.js", "EXECUTION_CLAIM_PATTERN"),
+    # Paper-trading row (2026-09-03, #1807). The ledger says the "carries to mainnet"
+    # retraction is guarded by a word-level ban over four named files; PAPER_SURFACES is
+    # that list. Renaming or deleting it leaves the row asserting a guard that is gone.
+    ("ui/test/no-mainnet-track-record.test.js", "const PAPER_SURFACES"),
 )
 
 # The ledger records that board-level FDR MOVED to the leaderboard (#1564/#1580), so the
@@ -126,6 +130,17 @@ _SYMBOL_PINS: tuple[tuple[str, str], ...] = (
 # still *mentions* the old field names in the comment that records the move, and a blunt
 # substring ban would fail on that comment while proving nothing.
 _ABSENCE_PIN = ("backend/archimedes/api/selection_bias_routes.py", "class BoardLevelFdr")
+
+# The paper-trading row says the "carries to mainnet" retraction reached the machine and doc
+# surfaces too. Those four are outside `ui/test/no-mainnet-track-record.test.js`, which pins
+# ui files only, so without this the row could rot back to false with every suite green —
+# the phrase reappearing in a docstring a `git grep` would find and no test would.
+_RETRACTED_PHRASE_PINS: tuple[tuple[str, str], ...] = (
+    ("docs/api/paper-trading.md", "carries to mainnet"),
+    ("backend/archimedes/models/paper_store.py", "carries to mainnet"),
+    ("backend/archimedes/services/paper_marks.py", "carries to mainnet"),
+    ("backend/migrations/versions/e41c7a9b2d63_add_paper_marks.py", "carries to mainnet"),
+)
 
 # The sentences the ledger's OVER-CLAIMED rows say are still live. See the module
 # docstring: fixing one of these SHOULD break this test.
@@ -301,6 +316,58 @@ class TestPendingExemptionsRetireThemselves:
         )
 
 
+# `{ name = "<var>", value = "<value>" }` — the shape every env entry in the ECS container
+# definitions takes (see infra/ecs.tf). Matched against committed text only, same as every
+# other check in this file: no import of archimedes, no reading of the live task definition.
+_ECS_ENV_VAR_RE = re.compile(r'\{\s*name\s*=\s*"(?P<name>[^"]+)"\s*,\s*value\s*=\s*"(?P<value>[^"]*)"\s*\}')
+
+
+def _pinned_env_value(hcl_text: str, var_name: str) -> str | None:
+    """The value pinned for `var_name` in an ECS container `environment` block, or None if unpinned."""
+    for m in _ECS_ENV_VAR_RE.finditer(hcl_text):
+        if m.group("name") == var_name:
+            return m.group("value")
+    return None
+
+
+class TestVendorCutoverStillPending:
+    """Self-retiring pin for the claims-ledger row 'Paid analysis runs on licensed data'.
+
+    That row is `PENDING VENDOR CUTOVER`: the ADR is merged and the Tiingo secret is wired
+    (#1798), but nothing has pointed a seam's default vendor at it. Since #1798 the daily
+    seam reads `MARKET_DATA_DAILY_PROVIDER`, falling back to `MARKET_DATA_PROVIDER`
+    (`market_data_provider.py::provider_name`), and defaults to `"yfinance"` when neither is
+    set. `infra/ecs.tf` pins neither today. The moment it pins either to something other
+    than `"yfinance"`, the owner has performed the cutover and this pin goes red — on
+    purpose, so the ledger row cannot rot true by silent drift the way the equivalent
+    file-existence exemption above already did once.
+    """
+
+    def test_ecs_tf_pins_no_non_yfinance_daily_provider(self):
+        ecs_tf = (REPO_ROOT / "infra" / "ecs.tf").read_text()
+        for var in ("MARKET_DATA_DAILY_PROVIDER", "MARKET_DATA_PROVIDER"):
+            value = _pinned_env_value(ecs_tf, var)
+            assert value in (None, "yfinance"), (
+                f"infra/ecs.tf now pins {var}={value!r} — the Tiingo cutover has happened. "
+                "Re-point docs/claims-ledger.md's 'Paid analysis runs on licensed data' row "
+                "off PENDING VENDOR CUTOVER and onto the verified-pull record "
+                "(scripts/verify_market_data.py)."
+            )
+
+    def test_the_env_var_parser_is_not_vacuous(self):
+        """Anti-vacuity for the parser: proven against a fixture that DOES pin a cutover,
+        so the assertion above is known to be capable of going red rather than
+        vacuously matching `None` forever."""
+        fixture = (
+            "environment = [\n"
+            '  { name = "AWS_REGION", value = "us-east-1" },\n'
+            '  { name = "MARKET_DATA_DAILY_PROVIDER", value = "tiingo" },\n'
+            "]"
+        )
+        assert _pinned_env_value(fixture, "MARKET_DATA_DAILY_PROVIDER") == "tiingo"
+        assert _pinned_env_value(fixture, "MARKET_DATA_PROVIDER") is None
+
+
 class TestLedgerRowsSayOnlyWhatTheyMay:
     def test_every_row_carries_a_declared_status(self):
         bad = [(row[0][:70], row[1]) for row in _claim_rows() if row[1].strip("`") not in ALLOWED_STATUSES]
@@ -359,6 +426,38 @@ class TestLedgerClaimsMatchTheTree:
             "leaderboard. Either the move was reverted or the ledger row is wrong."
         )
 
+    def test_retracted_phrases_have_not_come_back(self):
+        """The RETRACTED rows are absences, and an absence rots silently unless it is pinned."""
+        back = [
+            f"{path} :: {phrase!r}"
+            for path, phrase in _RETRACTED_PHRASE_PINS
+            if phrase in (REPO_ROOT / path).read_text(encoding="utf-8", errors="replace")
+        ]
+        assert not back, (
+            "claims-ledger.md marks these RETRACTED, but the phrase is in the tree again: "
+            + "; ".join(back)
+            + ". The Arc mainnet cutover is cancelled (#1240) — say what is true today (a paper "
+            "track record on Arc testnet, no real funds), or move the ledger row off RETRACTED."
+        )
+
+    def test_the_retracted_phrase_pins_are_not_vacuous(self):
+        """A pin that names a file with no such phrase to begin with proves nothing.
+
+        Each pinned path must be a file that still *discusses* the paper record, so the
+        absence being asserted is an absence from the surface that carried the claim rather
+        than from an unrelated file that would trivially never contain it.
+        """
+        assert _RETRACTED_PHRASE_PINS, "the retracted-phrase pins were emptied out"
+        contextless = [
+            path
+            for path, _ in _RETRACTED_PHRASE_PINS
+            if "paper track record" not in (REPO_ROOT / path).read_text(encoding="utf-8", errors="replace")
+        ]
+        assert not contextless, (
+            "these pinned paths no longer carry the corrected sentence, so the absence they assert "
+            "is vacuous: " + ", ".join(contextless)
+        )
+
     def test_the_published_exit_code_table_covers_every_code_the_cli_defines(self):
         """Successor to ``test_published_exit_codes_still_omit_incomplete``.
 
@@ -405,7 +504,26 @@ class TestLedgerClaimsMatchTheTree:
 
 class TestLedgerIsIndexed:
     def test_docs_index_links_the_ledger(self):
-        """`docs/README.md` says a doc not listed there does not exist. Hold it to that."""
+        """`docs/doc-index.md` says a doc not listed there does not exist. Hold it to that."""
         assert "claims-ledger.md" in DOCS_INDEX.read_text(encoding="utf-8"), (
-            "docs/README.md has no row for claims-ledger.md — add one in the same commit"
+            "docs/doc-index.md has no row for claims-ledger.md — add one in the same commit"
+        )
+
+    def test_no_index_row_is_two_rows_glued_together(self):
+        """A `||` inside a table row silently eats the rest of the line in GFM.
+
+        This is how the ledger's own index row came to exist twice: one copy glued onto the
+        end of the row above it with `||`, where the renderer reads the surplus cells as
+        extra columns and drops them. The row looks present in the file and is absent on the
+        page — the exact rot an index is supposed to be immune to. An empty cell is `| |`.
+        """
+        glued = [
+            f"{n}: {line.strip()[:90]}"
+            for n, line in enumerate(DOCS_INDEX.read_text(encoding="utf-8").splitlines(), start=1)
+            if line.lstrip().startswith("|") and "||" in line
+        ]
+        assert not glued, (
+            "docs/doc-index.md has table rows with `||`, which renders as dropped columns: "
+            + "; ".join(glued)
+            + ". Split them into separate rows, or write an empty cell as `| |`."
         )

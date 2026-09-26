@@ -62,7 +62,7 @@ current architecture — [`docs/architecture.md`](../architecture.md) is.
 | [`agora-2026-05/design.md`](agora-2026-05/design.md) | The original design document. |
 | [`agora-2026-05/infra-setup.md`](agora-2026-05/infra-setup.md) | Infrastructure and CI/CD setup as it stood at submission. |
 | [`agora-2026-05/chuan-architecture-survey.md`](agora-2026-05/chuan-architecture-survey.md) | Chuan's survey of `backend/archimedes/`. Predates the Chuan → Dan ownership transition. |
-| ``agora-2026-05/demo-script-pitch-deck-outline.md`` (routed to the private docs repo, 2026-08-19) | Demo script and pitch-deck outline. Current demo script: [`docs/demo-script-lepton.md`](../demo-script-lepton.md). |
+| ``agora-2026-05/demo-script-pitch-deck-outline.md`` (routed to the private docs repo, 2026-08-19) | Demo script and pitch-deck outline. Archived demo script: [`demo-script-lepton.md`](demo-script-lepton.md). |
 | [`agora-2026-05/portfolio-advisor-demo-cues.md`](agora-2026-05/portfolio-advisor-demo-cues.md) | 60-second Portfolio Advisor demo cue card. |
 | ``agora-2026-05/claude-design-prompts.md`` (routed to the private docs repo, 2026-08-19) | Design prompts used to generate the submission UI; routed because its slide prompts embed competitive comparisons, market-sizing figures, and judging strategy. |
 | [`agora-2026-05/traction-logging.md`](agora-2026-05/traction-logging.md) | `arc-canteen` traction-logging cheat sheet. |

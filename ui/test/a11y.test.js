@@ -752,7 +752,13 @@ test("knowledge-graph pan and zoom have single-pointer alternatives", () => {
 
 test("the generate form's fields are programmatically labelled", () => {
 	assert.match(generate, /<label className="label mb-1 block" htmlFor="generate-brief">/);
-	assert.match(generate, /id="generate-brief"\s+aria-describedby="generate-brief-help"/);
+	// The description widened with the 600-character bound (#1801): the live
+	// counter is announced WITH the field, not left visual-only, so a
+	// screen-reader user learns why the textarea stopped accepting keystrokes.
+	assert.match(
+		generate,
+		/id="generate-brief"\s+aria-describedby="generate-brief-help generate-brief-count"/,
+	);
 	assert.match(generate, /htmlFor="generate-strategy-name"/);
 	assert.match(generate, /aria-label="Search assets"/);
 });

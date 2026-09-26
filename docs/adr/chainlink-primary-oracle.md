@@ -7,14 +7,14 @@
 > **Supersedes:** —
 > **Superseded-by:** —
 > **Question being decided:** Where does the on-chain USD price that feeds vault collateral math come from — our admin-set `PriceOracle`, a well-validated external oracle (Chainlink), or some composition of the two?
-> **Related issues/PRs:** [#724](https://github.com/a-apin/archimedes/pull/724) (Chainlink-first read path **+ the #724-review hardening**), [#731](https://github.com/a-apin/archimedes/pull/731) (owner≠agent non-custodial vaults — closed the drain vector). Feed-outage telemetry/alerting is operational follow-up.
+> **Related issues/PRs:** [#724](https://github.com/aprin-labs/archimedes/pull/724) (Chainlink-first read path **+ the #724-review hardening**), [#731](https://github.com/aprin-labs/archimedes/pull/731) (owner≠agent non-custodial vaults — closed the drain vector). Feed-outage telemetry/alerting is operational follow-up.
 
 > **✅ Update 2026-07-01 — RATIFIED as Chainlink-only.** This ADR is now **Accepted**. We
 > commit to **one well-validated decentralized feed (Chainlink) as primary + the thin,
 > bounded admin fallback** — explicitly **not** a multi-source composition. A multi-source
 > **quorum / medianizer** (on-chain median of Chainlink + Stork + Pyth; explored in **PR
-> [#840](https://github.com/a-apin/archimedes/pull/840)**) and a **standalone Stork
-> `AggregatorV3` adapter** (**PR [#828](https://github.com/a-apin/archimedes/pull/828)**) were
+> [#840](https://github.com/aprin-labs/archimedes/pull/840)**) and a **standalone Stork
+> `AggregatorV3` adapter** (**PR [#828](https://github.com/aprin-labs/archimedes/pull/828)**) were
 > both **considered and CLOSED** to reduce complexity — *"we need any one validated feed, not
 > all of them"* (Bogdan). One audited feed per asset is simpler to reason about and review
 > than an N-feed medianizer, and sufficient for our trust model. This settles the "some

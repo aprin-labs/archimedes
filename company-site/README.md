@@ -11,7 +11,7 @@ chosen) and deployed on its own.
 - Discord invite URL and X handle don't exist yet. They're placeholders (`''`) in the
   `LINKS` config at the top of `index.html`'s `<head>` — an empty value renders nothing
   (no dead links, no dangling icons), by design.
-- GitHub is the one live link today: `https://github.com/a-apin`.
+- GitHub is the one live link today: `https://github.com/aprin-labs`.
 
 ## What's here
 

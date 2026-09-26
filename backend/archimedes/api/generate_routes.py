@@ -422,16 +422,16 @@ async def start_generation(
             },
         )
 
-    # Cheap, deterministic brief prelude (Lane 1.3c: "never charge for a
-    # brief we can cheaply reject"). Deliberately BEFORE the payment gate —
-    # a caller must never be charged for a brief that is obviously invalid
-    # (empty / gibberish). Shares its exact criteria with the real (LLM)
-    # validator's own prelude in generation_pipeline._validate_brief via
+    # Deterministic brief screen (Lane 1.3c: "never charge for a brief we can
+    # cheaply reject"). Deliberately BEFORE the payment gate — a caller must
+    # never be charged for a brief that is empty, gibberish, over-length, or
+    # carrying a prompt-injection payload. Shares its exact criteria with the
+    # LLM validator's own prelude in generation_pipeline._validate_brief via
     # `cheap_brief_reject` — see that function's docstring for why the two
-    # call sites can never drift apart. Anything this misses (off-topic but
-    # grammatical text, jailbreak attempts) still gets the expensive LLM
-    # check post-payment, exactly as before — that outcome legitimately
-    # consumes work, so it stays a credit spend, not a pre-payment refusal.
+    # call sites can never drift apart. What this still misses is SEMANTIC
+    # (off-topic but grammatical text): that gets the LLM check post-payment,
+    # exactly as before — that outcome legitimately consumes work, so it
+    # stays a credit spend, not a pre-payment refusal.
     cheap_reject = cheap_brief_reject(req.brief)
     if cheap_reject is not None:
         raise HTTPException(
@@ -441,6 +441,10 @@ async def start_generation(
                 "code": "BRIEF_INVALID",
                 "message": _invalid_brief_message(cheap_reject.get("reason")),
                 "hint": cheap_reject.get("hint") or "Mention an asset class, a goal, or a risk appetite.",
+                # Machine-readable code from services.brief_screen's versioned
+                # vocabulary (#1801). Additive — the four keys above are
+                # unchanged, so no existing client moves.
+                "reason_code": cheap_reject.get("code") or "",
             },
         )
 
@@ -539,6 +543,12 @@ async def start_generation(
     # gate can raise 402 and the enqueue can error, and either would leave the
     # allowance spent on a generation that never ran. Same shape, and the same
     # reason, as _paywall_with_credit's `except BaseException: void; raise`.
+    # This covers only what THIS request can see fail. Everything that goes
+    # wrong after the enqueue — the corpus yielding too few papers to fuse, a
+    # pipeline crash, a cancel — is released by
+    # `release_entitlements_if_undelivered` in the run's own `finally`, keyed on
+    # the job id stamped below. That seam, not this helper's caller, is what
+    # makes the release reach BOTH run paths (#1793).
     try:
         # Paid-tier gating (T1.8): a premium (Anthropic) model requires a
         # wallet-connected entitlement. Enforced BEFORE the job is enqueued so a
@@ -584,7 +594,9 @@ async def start_generation(
 
     # The free slot is bound to its generation only now, once the job is queued
     # — the same "spend only what was delivered" point at which a paid credit is
-    # consumed below.
+    # consumed below. The stamp is also what the terminal-failure release finds
+    # the row by, so an unstamped slot cannot be handed back later (see
+    # `free_generations.stamp_job`, which says so where it fails).
     if free_grant_id is not None:
         free_generations.stamp_job(free_grant_id, job_id=job_id)
 
@@ -713,6 +725,185 @@ async def _release_credit_if_undelivered(job_id: str, store) -> None:
         logger.exception("could not evaluate credit release for job %s", sanitize_log_value(job_id))
 
 
+async def _job_persisted_a_strategy(job_id: str, store) -> bool | None:
+    """Did this run put a strategy in the caller's library? ``None`` = cannot tell.
+
+    ``status == "done"`` is NOT the same question. A run can persist the
+    winning strategy (``generation_pipeline`` § "K=1 persistence") and only
+    then die — the backtest fan-out crashing, the user cancelling at the
+    ``backtest_persist`` stage boundary, the process rolling — which leaves a
+    terminal status of ``error``/``cancelled`` beside a strategy that is
+    genuinely in the library. Handing a free generation back for that run would
+    give the account the strategy AND the slot.
+
+    The oracle is the ``persisted`` event the pipeline pushes immediately after
+    ``_persist_candidate`` returns a real ``strategy_id``. Read-only: this is a
+    consumer of the event log, and nothing here writes to it.
+
+    Three-valued on purpose. The event log has a shorter TTL than the job
+    record, the read can fail, and a store double may not expose the surface at
+    all (the same "a store that predates this surface is skipped" allowance
+    ``_abort_if_cancel_requested`` makes). Collapsing any of those onto
+    ``False`` would report "nothing was delivered" on no evidence, and the
+    caller would hand back a slot that may have bought a library row.
+    ``None`` says only what is true — we could not look — and the caller keeps
+    the slot spent, which is recoverable: the ledger row is on disk with its
+    job id.
+    """
+    lister = getattr(store, "list_events", None)
+    if lister is None:
+        logger.debug("free-slot release: store exposes no event log for job %s", sanitize_log_value(job_id))
+        return None
+    try:
+        events = await lister(job_id)
+    except Exception:
+        logger.warning(
+            "free-slot release: could not read the event log for job %s",
+            sanitize_log_value(job_id),
+            exc_info=True,
+        )
+        return None
+    for ev in events:
+        if ev.get("event") != "persisted":
+            continue
+        data = ev.get("data")
+        if isinstance(data, dict) and data.get("strategy_id"):
+            return True
+    return False
+
+
+async def _release_free_slot_if_undelivered(job_id: str, store) -> None:
+    """Give a free generation back unless the job actually delivered (#1643).
+
+    The free-tier sibling of :func:`_release_credit_if_undelivered`, and the
+    fix for what the owner saw on 2026-09-01: a brief whose corpus yielded
+    fewer than two papers failed INSIDE the pipeline with "the society cannot
+    fuse", and the allowance still went 3 → 2. ``/start`` only ever released a
+    slot for failures it could see itself (the entitlement gate, the enqueue —
+    its ``except BaseException: release; raise``); every failure after the
+    enqueue kept the slot spent on a generation that produced nothing.
+
+    Two states keep the slot spent, and only two:
+
+    ``done``
+        The run delivered. Checked first and cheaply.
+    a persisted strategy
+        The run put a strategy in the library and died afterwards. Giving the
+        slot back here would hand out the strategy and the free generation.
+        Deliberately stricter than the paid path, which restores on every
+        non-``done`` status (see :func:`_release_credit_if_undelivered`) —
+        money erring toward the payer is the right direction for an accounting
+        bug on a paywall, but re-granting an allowance that DID buy a library
+        row is just an over-grant.
+
+    …and one more that keeps it spent without deciding anything: a job record
+    or event log this cannot read. Silence is not evidence of non-delivery.
+
+    Idempotent through ``release_grant_for_job``: only a ``used`` row with this
+    ``job_id`` moves, so a retried cleanup cannot mint a second free slot out of
+    one claim. A paid or flag-off run matches no row and this is a no-op.
+
+    Fail-safe: this runs in a background task's ``finally`` with nobody to
+    report to, so it logs and returns. A read failure leaves the slot spent —
+    the honest direction when we cannot tell whether the run delivered, and
+    recoverable, since the ledger row is still on disk with its job id.
+    """
+    try:
+        job = await store.get(job_id)
+        if job is None:
+            # Deliberately NOT the credit path's "reads as undelivered". This
+            # runs in the run's own `finally`, so a job record that is already
+            # gone means the store lost it, not that time passed — and with no
+            # record there is no event log either, so "no strategy persisted"
+            # would be an inference from missing data rather than a reading of
+            # it. The slot stays spent and says so; the ledger row keeps its
+            # job id, so it can still be released by hand.
+            logger.warning(
+                "job %s has no job record at cleanup — the free generation stays spent (undecidable)",
+                sanitize_log_value(job_id),
+            )
+            return
+        status = job.get("status")
+        if status == "done":
+            return
+        persisted = await _job_persisted_a_strategy(job_id, store)
+        if persisted is None:
+            logger.warning(
+                "job %s ended as %s and its event log could not be read — the free generation "
+                "stays spent rather than being handed back on no evidence",
+                sanitize_log_value(job_id),
+                sanitize_log_value(str(status)),
+            )
+            return
+        if persisted:
+            logger.info(
+                "job %s ended as %s but persisted a strategy — the free generation stays spent",
+                sanitize_log_value(job_id),
+                sanitize_log_value(str(status)),
+            )
+            return
+        if free_generations.release_for_job(job_id):
+            logger.warning(
+                "job %s ended as %s with no strategy — free generation returned to the account",
+                sanitize_log_value(job_id),
+                sanitize_log_value(str(status)),
+            )
+    except Exception:
+        logger.exception(
+            "could not evaluate the free-generation release for job %s — the slot stays spent",
+            sanitize_log_value(job_id),
+        )
+
+
+async def release_entitlements_if_undelivered(job_id: str, store) -> None:
+    """Every refund an undelivered run owes, in ONE place both run paths call.
+
+    Two code paths run a generation, and only one of them used to clean up:
+
+    * ``_run_with_cleanup`` — the serving task's background coroutine, spawned
+      by ``POST /api/generate/start``;
+    * ``scripts/run_generation_job.run_job`` — the out-of-process entrypoint
+      that ``docs/adr/lambda-generation-offload.md`` ADOPTED (an
+      ``ecs:RunTask``, a Lambda invocation, or an operator's ``python -m``).
+
+    The enqueue spends the caller's entitlements *before* either of them
+    starts, so both owe the same refunds when the run then delivers nothing.
+    The refunds lived inside ``_run_with_cleanup``'s ``finally``, which the
+    script never enters, so on that path every post-enqueue failure — thin
+    corpus, crash, cancel, timeout — kept the caller's credit, and after #1785
+    their free slot, spent (#1793).
+
+    **A new release goes HERE, not into a caller's ``finally``.** That is the
+    whole point of the seam, and it is enforced rather than asked for:
+    ``test_run_generation_job.py::TestBothRunPathsReleaseTheSameThings``
+    discovers every release helper in this module and fails if one of them is
+    not reached through this function. #1785's
+    ``_release_free_slot_if_undelivered`` — the free tier's equivalent — landed
+    on main in ``_run_with_cleanup``'s ``finally``, i.e. the serving path only,
+    which is the very shape that test fails on; moving it into this function is
+    what gives the offload entrypoint the free slot back too.
+
+    **The limit of that discovery, stated where the next author will read it:**
+    it matches a NAMING CONVENTION —
+    ``_(release|void|refund|restore)_<thing>_(if|when)_undelivered`` on this
+    module — not reachability. A refund helper named outside that pattern is
+    invisible to the tripwire and can be given to one run path only without
+    anything going red. Name a new one ``_release_<thing>_if_undelivered``.
+
+    ``store`` is a parameter rather than a ``get_job_store()`` call because the
+    offload worker binds its store from the environment *as it is at run time*
+    — ``get_job_store()``'s singleton reads a ``REDIS_URL`` frozen at import,
+    which for that worker is the localhost default. See
+    ``run_generation_job``'s module docstring for why no import ordering can
+    win that race.
+    """
+    await _release_credit_if_undelivered(job_id, store)
+    # …and the free-tier equivalent. Both run: a run is funded by a credit or
+    # by a free slot, never both, and each helper is a no-op for the funding it
+    # does not own.
+    await _release_free_slot_if_undelivered(job_id, store)
+
+
 async def _run_with_cleanup(
     job_id: str,
     brief: GenerateBrief,
@@ -810,7 +1001,11 @@ async def _run_with_cleanup(
         heartbeat_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await heartbeat_task
-        await _release_credit_if_undelivered(job_id, store)
+        # ONE seam, both run paths (#1793). A new refund goes INSIDE
+        # `release_entitlements_if_undelivered`, never on the next line here:
+        # a release added to this `finally` is a release the offload
+        # entrypoint does not get. That is how #1785 arrived.
+        await release_entitlements_if_undelivered(job_id, store)
 
 
 @generate_router.get("/stream/{job_id}")

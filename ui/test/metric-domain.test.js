@@ -354,7 +354,12 @@ test("an empty metric cell always carries a reason, never a bare em-dash", () =>
 	const rows = [
 		{ rigor_gate_status: "pending", passes_rigor_gate: false },
 		{ is_backtest_placeholder: true, passes_rigor_gate: false },
-		{ status: "pending_backtest", passes_rigor_gate: false },
+		// Was `{ status: "pending_backtest", ... }`. That status was a client-side
+		// invention retired with the verdict of record, so nothing emits it and
+		// the row proved nothing. The real shape it stood in for: a strategy the
+		// gate GRADED and failed, whose backtest computed no number for this
+		// cell. Its dash must still carry a reason.
+		{ rigor_gate_status: "fail", passes_rigor_gate: false },
 		{ passes_rigor_gate: null },
 		{ rigor_gate_status: "degenerate", passes_rigor_gate: false },
 		{ rigor_gate_status: "pass", passes_rigor_gate: true },

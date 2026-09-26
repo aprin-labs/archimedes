@@ -258,6 +258,16 @@ def claim_legacy_wallet_data(
     stale reclaim from a rename would wrongly slam that door shut with no
     un-claim path) or adopt a PII-bearing profile on a caller who has only
     proven a stale wallet link, not fresh signature control.
+
+    RELEASE (#1283, the adoption migration's mirror). The stamp above filters
+    on ``owner_user_id IS NULL``, so it cannot reach a row the platform
+    legacy account has already adopted. ``release_platform_adopted_rows``
+    closes exactly that gap: any row the adoption migration took *because
+    this address had never been linked to an account* is handed to
+    ``user_id`` here, the first time that address is proven. Scoped to the
+    same tables this call was asked to stamp, so a narrowed claim stays
+    narrow. Without it, adopting an orphan would be a one-way door and the
+    real wallet holder could never recover their own rows.
     """
     from archimedes.models.chat import VaultMetadata
     from archimedes.models.strategy_passport_record import StrategyPassportRecord
@@ -276,6 +286,15 @@ def claim_legacy_wallet_data(
             wallet_column == address,
             model.owner_user_id.is_(None),
         ).update({model.owner_user_id: user_id}, synchronize_session=False)
+
+    from archimedes.models.legacy_adoption import release_platform_adopted_rows
+
+    release_platform_adopted_rows(
+        session,
+        user_id,
+        address,
+        table_names=tuple(model.__tablename__ for model, _ in (models if models is not None else default_models)),
+    )
 
     if include_profile:
         existing_profile = session.query(UserProfile).filter(UserProfile.owner_user_id == user_id).first()
@@ -441,6 +460,11 @@ def _wallet_has_unclaimed_legacy_data(session, user_id: str, address: str) -> bo
     for exactly the wallets that back real data. This predicate mirrors the
     claim loop's models and filters one-for-one, so the relink prompt fires
     iff linking would actually attach something (#1194 revision e).
+
+    That mirror has TWO halves since #1283's adoption. The loop below mirrors
+    the ``owner_user_id IS NULL`` stamp; the ledger check after it mirrors
+    ``release_platform_adopted_rows``, which the claim also performs. Both are
+    required for the invariant above to hold — see the ledger block's comment.
     """
     from archimedes.models.chat import VaultMetadata
     from archimedes.models.strategy_passport_record import StrategyPassportRecord
@@ -456,6 +480,19 @@ def _wallet_has_unclaimed_legacy_data(session, user_id: str, address: str) -> bo
     ):
         if session.query(model).filter(wallet_column == address, model.owner_user_id.is_(None)).first() is not None:
             return True
+
+    # #1283 adoption: a row the platform took is no longer `owner_user_id
+    # IS NULL`, so the loop above cannot see it — but linking WILL hand it
+    # back (`release_platform_adopted_rows`, called from the same
+    # `claim_legacy_wallet_data` this predicate mirrors), so the prompt must
+    # still fire. Omitting this is what would make adoption hide the row from
+    # its real owner: `/api/wallet/check` is the sole gate on the relink
+    # banner, and a `false` here means the one UI that tells them their
+    # strategies are recoverable never renders.
+    from archimedes.models.legacy_adoption import platform_adopted_row_count
+
+    if platform_adopted_row_count(session, address) > 0:
+        return True
 
     # The claim loop only attaches a legacy profile when the account has none —
     # mirror that condition so the prompt never promises a claim that the link
@@ -557,6 +594,12 @@ def check_wallet_legacy_data(
     proven control of the address. Session-gated, so it cannot be used to
     anonymously sweep addresses for "has data" signals at scale beyond what
     the caller's own rate limits allow.
+
+    Still ``true`` after #1283's adoption migration has stamped those rows
+    with the platform account: the predicate counts the adoption ledger too,
+    so the banner keeps inviting exactly the users whose rows the platform is
+    holding for them. Adoption changes who holds the row, never who can claim
+    it — and this endpoint is the only thing that tells them so.
     """
     with get_session() as session:
         return {"has_legacy_data": _wallet_has_unclaimed_legacy_data(session, user.id, address.lower())}

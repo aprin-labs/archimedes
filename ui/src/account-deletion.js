@@ -33,6 +33,7 @@ export const DELETION_ERASED = [
   { table: 'wallet_link_challenges', label: 'any wallet-link challenge still outstanding' },
   { table: 'user_profiles', label: 'your profile row, including the encrypted contact email stored in it' },
   { table: 'paper_deployments', label: 'your paper-trading deployments and the daily returns recorded under them' },
+  { table: 'auth_email_deliveries', label: 'the record of verification and password-reset emails we sent to your address, including the address itself' },
 ]
 
 // Rows that survive with `owner_user_id` set to NULL, because other

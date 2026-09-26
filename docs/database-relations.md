@@ -5,8 +5,8 @@
 > **updated:** 2026-08-31
 > **superseded-by:** —
 
-> **Amended 2026-08-31.** [PR #1438](https://github.com/a-apin/archimedes/pull/1438)
-> **merged** (`526f99e7`), followed by [#1429](https://github.com/a-apin/archimedes/pull/1429)
+> **Amended 2026-08-31.** [PR #1438](https://github.com/aprin-labs/archimedes/pull/1438)
+> **merged** (`526f99e7`), followed by [#1429](https://github.com/aprin-labs/archimedes/pull/1429)
 > (`f2eb22ea`) reconciling the account-deletion policy with #1438's `paper_deployments` FK.
 > The "**Nothing in § 2 is live**" paragraph below and the `pending merge` status were
 > written while the PR sat in draft and are **no longer true** — § 2 describes shipped
@@ -18,7 +18,7 @@ Companion to [`database-architecture.md`](database-architecture.md) (the two-sto
 overview). This doc is scoped narrower: the **relational structure between identity,
 ownership, and money tables** — where a foreign key or an index is missing, what an
 audit of that gap found once every claim was checked against the actual code, and what
-[PR #1438](https://github.com/a-apin/archimedes/pull/1438) introduces in response.
+[PR #1438](https://github.com/aprin-labs/archimedes/pull/1438) introduces in response.
 
 **Nothing in § 2 is live.** PR #1438 is an unmerged draft — Dan reviews any migration
 touching prod before it merges. Everything below describes what that PR *would* do if
@@ -48,7 +48,7 @@ gap, originally labeled G2, was re-examined during review and found not to hold 
 ### 1.2 One gap the original audit missed — since closed on `main`
 
 **G1 — Generation revenue was not persisted anywhere. Closed by
-[PR #1456](https://github.com/a-apin/archimedes/pull/1456), not by this PR.**
+[PR #1456](https://github.com/aprin-labs/archimedes/pull/1456), not by this PR.**
 
 As originally audited (2026-08-20),
 [`services/generation_payment.py`](../backend/archimedes/services/generation_payment.py)
@@ -324,7 +324,7 @@ on `main` on 2026-08-21 (below). The rest remains unbuilt.
 The proposal was a `generation_payments` table (payer, amount, transaction reference,
 strategy/job linkage, timestamp) written where `generation_payment.py` only logged. It
 shipped as `payment_receipts` in
-[PR #1456](https://github.com/a-apin/archimedes/pull/1456) (revision `1752121b8d7c`) on
+[PR #1456](https://github.com/aprin-labs/archimedes/pull/1456) (revision `1752121b8d7c`) on
 2026-08-21, while this PR was still an open draft — see § 1.2 for the verified shape and
 for the two caveats that survive it (the write is fail-safe, and `user_id` has no FK yet).
 **Nothing is left of G1 for Phase 2 to build.** Its remaining relational residue — an FK

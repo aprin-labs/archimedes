@@ -5,7 +5,7 @@ import {
   TRACE_REGISTRY_ABI, NEW_CONTRACTS,
 } from '../config'
 import { regimeMeta } from '../regime'
-import { anchorState, blockOrderCopy, referencedStrategyId, verificationTone } from '../trace-binding'
+import { anchorState, blockOrderCopy, referencedStrategyId, sourcePapersCopy, verificationTone } from '../trace-binding'
 
 
 
@@ -403,6 +403,44 @@ function OnChainTraces({ onNavigate, highlightTraceId }) {
                       {vResult.details}
                     </span>
                   )}
+
+                  {/* The SECOND, independent check /verify now runs (#1637):
+                      do the papers this decision cites exist in the corpus?
+                      Rendered as its own line, never merged into the hash
+                      badge above — "anchored" and "the cited research is
+                      there" are different facts and a reader needs both.
+
+                      Copy lives in src/trace-binding.js:sourcePapersCopy and
+                      says "exists in the corpus", not "verified": the corpus
+                      stores no per-paper content hash yet (#1091), so the
+                      backend checks existence and compares nothing. The
+                      tri-state `mode` is surfaced in the tooltip rather than
+                      only returned (owner decision Q8 on #1688). */}
+                  {vResult && vResult.papers_verified !== undefined && (() => {
+                    const papers = sourcePapersCopy(vResult)
+                    return (
+                      <span
+                        className={`caption flex items-center gap-1 w-full ${papers.tone === 'verified' ? 'positive' : papers.tone === 'failed' ? 'negative' : ''}`}
+                        title={papers.detail}
+                      >
+                        <span
+                          // Icons reused from this file's existing set (and
+                          // the uno safelist) rather than new lucide names: an
+                          // icon class that does not resolve renders as an
+                          // invisible span, which would silently drop the
+                          // whole line.
+                          className={
+                            papers.tone === 'verified'
+                              ? 'i-lucide-check w-3 h-3'
+                              : papers.tone === 'failed'
+                                ? 'i-lucide-x w-3 h-3'
+                                : 'i-lucide-file-text w-3 h-3'
+                          }
+                        />
+                        {papers.label}
+                      </span>
+                    )
+                  })()}
 
                   {/* Why does this matter? disclosure — always available,
                       not gated behind clicking Verify. */}

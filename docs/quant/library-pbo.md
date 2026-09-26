@@ -11,7 +11,7 @@
 > the 0.047 headline is a 22-strategy figure, and because CSCV PBO is a property of the
 > selection set, **every library addition changes it** — do not quote this number as the
 > library PBO of a larger shelf. One pass-count phrasing was retracted in place on
-> 2026-08-31 ([#1598](https://github.com/a-apin/archimedes/issues/1598)). These numbers do
+> 2026-08-31 ([#1598](https://github.com/aprin-labs/archimedes/issues/1598)). These numbers do
 > **not** replace the per-cohort `pbo_score` values
 > in `backtest_fixtures.json` (different data vintage, different selection
 > set; the fixture file is add-only). Whether/how to promote library PBO into
@@ -95,7 +95,7 @@ Notable details:
   both hold a ~0.77 median OOS rank quantile when selected — that, together with
   `moreira_muir`, `tsmom` and risk parity (the #537 near-miss) holding the top
   joint-window Sharpes, is what a *stable* top shelf looks like.
-  *(Retracted 2026-08-31, [#1598](https://github.com/a-apin/archimedes/issues/1598): this
+  *(Retracted 2026-08-31, [#1598](https://github.com/aprin-labs/archimedes/issues/1598): this
   bullet used to identify those strategies by how many of them cleared the gate.
   `CLAUDE.md` forbids quoting a curated-library pass count anywhere; the corrected count is
   **unestablished**, and the ranking stability this bullet is actually about does not depend

@@ -24,6 +24,7 @@ from archimedes.chain.executor import chain_executor
 from archimedes.chain.oracle_updater import OracleUpdater
 from archimedes.chain.v_check import VCheck
 from archimedes.db import get_session
+from archimedes.execution.core import compute_trades as runner_compute_trades
 from archimedes.interfaces.math import IRegimeDetector
 from archimedes.marketplace import payments, spend_cap
 from archimedes.marketplace.config import payments_halted
@@ -36,7 +37,7 @@ from archimedes.marketplace.tick_registry import (
     TickStep,
 )
 from archimedes.models.marketplace import MarketplaceAgent, SettlementIntent, SubscriberLiability, SubscriberTickLog
-from archimedes.models.portfolio import Portfolio, RiskProfile, TargetAllocation, TradeDirection, TradeOrder
+from archimedes.models.portfolio import Portfolio, RiskProfile, TargetAllocation, TradeOrder
 from archimedes.models.regime import EnsembleConsensus, RegimeClassification
 from archimedes.services.gmm_regime_detector import GmmRegimeDetector
 from archimedes.services.portfolio_constructor import PortfolioConstructor
@@ -49,7 +50,10 @@ from archimedes.services.vix_regime_detector import VixRegimeDetector
 
 logger = logging.getLogger(__name__)
 
-_DRIFT_THRESHOLD = 0.15
+# Drift threshold: NOT redefined here. The marketplace used to carry its own
+# `_DRIFT_THRESHOLD = 0.15` beside its copy of the diff loop — two constants
+# that had to be kept equal by hand. The single one now lives with the single
+# implementation, `execution.core.DRIFT_THRESHOLD` (#1719, #1410).
 _USDC_FLOOR = float(os.getenv("AGENT_USDC_FLOOR", "0.20"))
 FLAT_FEE_PER_ACTION = int(os.getenv("FLAT_FEE_PER_ACTION", "100"))  # raw 6-dec USDC
 CHARGE_BATCH_SIZE = int(os.getenv("CHARGE_BATCH_SIZE", "10"))  # concurrent Circle signing calls per batch
@@ -92,50 +96,42 @@ def compute_trades(
     target_weights: dict[str, float],
     token_addresses: dict[str, str] | None = None,
 ) -> list[TradeOrder]:
-    """PORT of StrategyRunner._compute_trades (agent_runner.py:806).
+    """Marketplace adapter over the CANONICAL runner implementation.
 
-    Diff current portfolio vs target weights → trade list.
-    token_addresses maps symbol → checksummed contract address (includes USDC).
+    This used to be a hand-ported copy of ``StrategyRunner._compute_trades``,
+    and it drifted: the runner grew the #1080 unpriced-holding skip and this
+    copy never did, so a marketplace vault holding a synth whose oracle price
+    could not be read saw that holding's weight as a real 0 (it is 0 BY
+    CONSTRUCTION) and sized a full-weight BUY against it, every tick, forever
+    (#1719).
+
+    It is no longer a copy. The diff loop, the drift threshold and the #1080
+    skip all live in :func:`archimedes.execution.core.compute_trades`; this
+    function only adapts the marketplace's calling convention to it:
+
+    * in — a ``symbol -> weight`` dict plus a separate ``symbol -> address``
+      map, instead of the runner's pre-built ``TargetAllocation`` list;
+    * out — trades for symbols that resolved to no contract address are
+      dropped. The vault runner cannot hit that case (it resolves addresses
+      while building its targets); the marketplace can, because ``addr_map``
+      comes from a per-publisher universe lookup that may not cover a held
+      symbol. Filtering the RESULT is exactly equivalent to the old in-loop
+      ``continue`` — nothing else in the loop reads ``token_addr`` — so this
+      keeps the marketplace-only guard without forking the loop to hold it.
     """
     addr_map = token_addresses or {}
-    current_weights = portfolio.weights_dict
-    target_map = {
-        sym: TargetAllocation(symbol=sym, weight=w, token_address=addr_map.get(sym, ""))
-        for sym, w in target_weights.items()
-    }
+    targets = [
+        TargetAllocation(symbol=sym, weight=w, token_address=addr_map.get(sym, "")) for sym, w in target_weights.items()
+    ]
 
-    trades: list[TradeOrder] = []
-    all_symbols = set(target_map.keys()) | set(current_weights.keys())
-
-    for sym in all_symbols:
-        current_w = current_weights.get(sym, 0.0)
-        target = target_map.get(sym)
-        target_w = target.weight if target else 0.0
-        token_addr = target.token_address if target else ""
-
-        # Skip unresolved symbols — no address means we cannot trade them
-        if not token_addr and sym != "USDC":
-            logger.warning("no token address for %s; skipping", sym)
+    tradeable: list[TradeOrder] = []
+    for trade in runner_compute_trades(portfolio, targets):
+        if not trade.token_address and trade.symbol != "USDC":
+            logger.warning("no token address for %s; skipping", trade.symbol)
             continue
+        tradeable.append(trade)
 
-        drift = target_w - current_w
-        if abs(drift) < _DRIFT_THRESHOLD:
-            continue
-
-        usdc_value = abs(drift) * portfolio.total_value_usdc
-        direction = TradeDirection.BUY if drift > 0 else TradeDirection.SELL
-
-        trades.append(
-            TradeOrder(
-                symbol=sym,
-                token_address=token_addr,
-                direction=direction,
-                amount=round(usdc_value, 6),
-                estimated_usdc_value=round(usdc_value, 2),
-            )
-        )
-
-    return trades
+    return tradeable
 
 
 @dataclass

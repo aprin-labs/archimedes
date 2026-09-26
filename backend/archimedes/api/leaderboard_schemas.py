@@ -355,11 +355,71 @@ class LivePaperEntry(BaseModel):
     # not do is go false while a disagreement stands.
     drift_detected: bool = False
 
+    # ── The verdict of record, beside the forward record (#1764) ────────────
+    #
+    # This board's every row is a paper deployment's realised return, and
+    # deploy is AT WILL: a strategy whose rigor gate said `fail`, `pending` or
+    # `degenerate` can be paper-traded exactly like one that passed. That
+    # freedom is only honest if the verdict travels with the number — a
+    # "+12.4% since inception" row for a gate-REJECTED strategy, with nothing
+    # on the row saying so, reads as an endorsement of the strategy instead of
+    # as evidence about the gate.
+    #
+    # This is NOT the blended board the split forbids, and the shape is what
+    # keeps the two apart:
+    #
+    #   * it is a LABEL with its provenance (a four-state word plus the date
+    #     and the gate version that produced it), never a backtest performance
+    #     number — no DSR, no conviction score, no Sharpe reaches this row;
+    #   * `passes_rigor_gate` is deliberately ABSENT. A bare boolean beside a
+    #     forward return is the field a consumer would blend or sort on; the
+    #     dated four-state cannot be mistaken for a property of the forward
+    #     record. `sort_by` stays `cumulative_return`, the only forward number
+    #     this board has;
+    #   * it is a pure READ of `strategy_passports`
+    #     (docs/adr/rigor-verdict-of-record.md), served exactly as
+    #     `GET /api/paper/deployments` serves it and derived by the same
+    #     `passport_loader` code — never a recompute, so this board and the
+    #     deployment card can never show two verdicts for one strategy.
+    #
+    # A row whose strategy has no passport row, or whose passport read failed,
+    # carries "pending" — never a fabricated pass.
+    rigor_gate_status: str = Field(
+        "pending",
+        description=(
+            "The STORED four-state verdict of record for this row's strategy: pass | fail | pending | degenerate. "
+            "'pending' also covers 'never graded'. A backtest-era LABEL with its provenance beside it, not a "
+            "backtest metric: it is never ranked on, never blended, and never recomputed here."
+        ),
+    )
+    graded_at: str | None = Field(
+        None,
+        description=(
+            "ISO timestamp the verdict was recorded — the provenance that keeps it readable as a statement about "
+            "the BACKTEST rather than about the forward ledger. Null when the strategy was never graded."
+        ),
+    )
+    gate_version: str | None = Field(
+        None,
+        description=(
+            "Digest of the gate that produced the verdict. The literal 'legacy-derived' means the verdict was "
+            "INFERRED by the verdict-of-record migration rather than produced by a gate run."
+        ),
+    )
+
 
 class LivePaperLeaderboardResponse(BaseModel):
     """The forward board. Deliberately carries NO conviction score and no
     backtest metric: the two bases never share a row, never share a sort, and
-    are never averaged into one number."""
+    are never averaged into one number.
+
+    The one backtest-era thing a row does carry is the VERDICT OF RECORD
+    (#1764) — a four-state label with the date and gate version that produced
+    it — because deploy is at will and a forward return for a gate-rejected
+    strategy, shown bare, reads as an endorsement. It is a labelled statement,
+    not a number: nothing ranks or sorts on it (``sort_by`` is fixed), and no
+    backtest METRIC (DSR, PBO, Sharpe, conviction) reaches this response at
+    all. See ``LivePaperEntry``."""
 
     entries: list[LivePaperEntry]
     total: int = Field(..., description="Qualifying rows BEFORE `limit` — deployments with ledger data, nothing else")

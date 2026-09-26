@@ -273,10 +273,11 @@ class PaperMark(Base):
     """One intraday mark-to-market of one deployment's open position set.
 
     **Marks are NOT the track record.** ``paper_daily_returns`` stays
-    append-only-by-law and stays the thing that carries to mainnet. This table
-    is a DECORATION WITH A TTL and is safe to delete wholesale — that single
-    sentence is what makes the aggressive retention policy below safe, and it
-    is why the third tier of that policy is ``DELETE`` rather than a rollup.
+    append-only-by-law and stays the recorded paper track record (Arc testnet,
+    no real funds). This table is a DECORATION WITH A TTL and is safe to delete
+    wholesale — that single sentence is what makes the aggressive retention
+    policy below safe, and it is why the third tier of that policy is
+    ``DELETE`` rather than a rollup.
     Beyond 90 days there is nothing worth aggregating to: the daily close is
     already stored, authoritatively and permanently, one table over. Rolling
     marks up to daily would be a second, less-trustworthy source of truth for

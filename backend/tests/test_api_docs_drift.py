@@ -124,6 +124,10 @@ _SIDECAR_ONLY_DOCS: dict[Pair, str] = {
     ("POST", "/api/auth/sign-out"): "Better Auth Node sidecar route, not a FastAPI route (auth-and-accounts.md)",
     ("GET", "/api/auth/get-session"): "Better Auth Node sidecar route, not a FastAPI route (auth-and-accounts.md)",
     ("GET", "/api/auth/verify-email"): "Better Auth Node sidecar route, not a FastAPI route (auth-and-accounts.md)",
+    (
+        "GET",
+        "/api/auth/verification-status",
+    ): "auth sidecar's own route (auth/server.js, #1748) — not a FastAPI route (auth-and-accounts.md)",
     ("GET", "/api/auth/providers"): "Better Auth Node sidecar route, not a FastAPI route (auth-and-accounts.md)",
     ("POST", "/api/auth/sign-in/social"): "Better Auth Node sidecar route, not a FastAPI route (auth-and-accounts.md)",
     (
@@ -156,15 +160,17 @@ _UNDOCUMENTED: dict[Pair, str] = {
         "POST",
         "/api/agent/bootstrap-liquidity",
     ): "internal-key gated (X-Internal-Agent-Key); agent-runner-only, never browser-facing",
-    # agent_manifest_routes.py / rigor_verify_routes.py — both fully documented at
-    # docs/agent-api.md, which is a separate written surface with its own drift guard
+    # agent_manifest_routes.py — fully documented at docs/agent-api.md, which is a
+    # separate written surface with its own drift guard
     # (backend/tests/test_agent_discovery.py asserts every route string there resolves
     # against the running app), not docs/api/.
+    # (POST /api/rigor/verify came OFF this list with #1803 — it now has its own
+    # `### POST /api/rigor/verify` section in docs/api/strategies-and-rigor.md, which
+    # is what documents the strict input contract and its rejection codes.)
     (
         "GET",
         "/api/agent/manifest",
     ): "documented at docs/agent-api.md, guarded by test_agent_discovery.py, not docs/api/",
-    ("POST", "/api/rigor/verify"): "CLI `verify` command backend, documented at docs/agent-api.md, not docs/api/",
     # agent_routes.py status/health introspection — internal system health, distinct
     # concept from agent_manifest_routes.py's external-agent-facing /manifest.
     ("GET", "/api/agent/status"): "agent-runner status introspection; not yet in docs/api/",

@@ -3,8 +3,12 @@
 No DB, no network. Two properties, both of which exist so a placeholder cannot
 read as a measurement:
 
-* ``_display_metrics_source`` names which link of the ``s.real_* -> bt.* ->
-  s.stub_*`` fallback chain actually supplied the display metrics.
+* ``curated_metrics.display_metrics_source`` names which link of the
+  ``s.real_* -> bt.* -> s.stub_*`` fallback chain actually supplied the display
+  metrics. (It moved out of ``strategies_routes`` with #1746 / PR-B, which made
+  the chain a WRITE-side resolution: the passport sync stores the answer and the
+  read surfaces serve it. The link-naming rule is unchanged and still lives in
+  exactly one place, which is what these cases pin.)
 * ``LeaderboardEntry`` carries ``backtest_engine`` / ``cost_model_id`` /
   ``metrics_source`` through from ``StrategyResponse``, since the board is the
   one surface where rows from different engines sit side by side.
@@ -15,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from archimedes.api.schemas import StrategyResponse
-from archimedes.api.strategies_routes import _display_metrics_source
+from archimedes.services.curated_metrics import display_metrics_source as _display_metrics_source
 from archimedes.services.leaderboard import _entry
 
 

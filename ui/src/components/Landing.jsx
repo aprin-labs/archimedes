@@ -25,8 +25,9 @@ const CORE_CONTRACT_FIELDS = [
 // a disclaimer bolted on afterwards — it is the differentiator: every check
 // below states what it does NOT prove, in the same card, at the same weight.
 // Each `limit` is quoted from the code that computes the check:
-//   DSR   — rigor_profiles.py:67-79 ("say 'deflated-Sharpe evidence at the 0.90
-//           level', not 'statistically proven'"); level-1 dsr_p_min = 0.90.
+//   DSR   — rigor_profiles.py's DSR_P_BADGE_MIN note ("say 'deflated-Sharpe
+//           evidence at the 95% one-sided level', not 'statistically proven'");
+//           level-1 dsr_p_min IS that constant — one bar, one definition (#1794).
 //   PBO   — _rigor_helpers.compute_pbo docstring, "Known limitations": CSCV is
 //           a selection-set property, so a neighbour entering the set can flip it.
 //   OOS   — _rigor_helpers.compute_oos_sharpe:567-574, "a single chronological
@@ -46,7 +47,7 @@ const RIGOR_CRITERIA = [
 		method:
 			"Deflates the Sharpe by how many candidates the search actually tried, and corrects for returns that are skewed or fat-tailed rather than normal.",
 		limit:
-			"The Verified bar is deflated-Sharpe evidence at the 0.90 level — real, not overwhelming.",
+			"The Verified bar is deflated-Sharpe evidence at the 95% one-sided level — real, not proof.",
 	},
 	{
 		code: "PBO",
@@ -558,7 +559,7 @@ function EvidenceLedger() {
 				<nav className="public-proof-strip__links" aria-label="Evidence links">
 					<a href="/architecture">System architecture</a>
 					<a
-						href="https://github.com/a-apin/archimedes"
+						href="https://github.com/aprin-labs/archimedes"
 						target="_blank"
 						rel="noreferrer"
 					>
@@ -736,7 +737,7 @@ function PublicFooter() {
 					<a href="/llms.txt">Agent API</a>
 					<a href="/.well-known/agent.json">Agent manifest</a>
 					<a
-						href="https://github.com/a-apin/archimedes"
+						href="https://github.com/aprin-labs/archimedes"
 						target="_blank"
 						rel="noreferrer"
 					>
@@ -746,7 +747,7 @@ function PublicFooter() {
 				<nav aria-label="Project links">
 					<strong>Project</strong>
 					<a
-						href="https://github.com/a-apin/archimedes/blob/main/LICENSE"
+						href="https://github.com/aprin-labs/archimedes/blob/main/LICENSE"
 						target="_blank"
 						rel="noreferrer"
 					>

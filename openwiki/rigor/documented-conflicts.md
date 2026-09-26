@@ -28,10 +28,20 @@ generated: { by: "claude-code", at: "2026-08-31T05:55:43.566Z" }
 
 # Conflicts inside the quant docs
 
+> **STALE ON ONE NUMBER — regenerate.** This page was generated 2026-08-31 and is the
+> *evidence record* of what that run found, so it deliberately reproduces the strings the
+> quant-docs guards forbid. On 2026-09-03, [#1794](https://github.com/aprin-labs/archimedes/issues/1794)
+> retired the lower DSR bar: the badge bar is **0.95**, defined once as `DSR_P_BADGE_MIN` in
+> `backend/archimedes/services/rigor_profiles.py`. Every `0.90` below is the retired bar,
+> and conflicts 1 and 3 — both of which turn on which bar is live — were resolved by that
+> call. The body is left exactly as generated, so the `generated:` provenance above stays
+> true and the record of what the run saw is not rewritten after the fact. The next openwiki
+> run supersedes this page.
+
 > ## ⚠ RESOLVED 2026-08-31 — hand-annotated, not regenerated
 >
 > *This block is a human edit to a generated page, added by
-> [#1598](https://github.com/a-apin/archimedes/issues/1598). Everything below it is the
+> [#1598](https://github.com/aprin-labs/archimedes/issues/1598). Everything below it is the
 > generator's output, preserved verbatim as the evidence record of what the 2026-08-31
 > 05:55 run found.*
 >
@@ -64,7 +74,7 @@ generated: { by: "claude-code", at: "2026-08-31T05:55:43.566Z" }
 > documents disagree; it cannot find that both are wrong. See Önder's eighth conflict on
 > #1598 — a stale `N_eff` formula that every doc in the slice reproduced *consistently*,
 > and which only a check against the code could catch (fixed separately in
-> [#1614](https://github.com/a-apin/archimedes/pull/1614)).
+> [#1614](https://github.com/aprin-labs/archimedes/pull/1614)).
 
 This page exists so a reader does not resolve a contradiction by trusting whichever page
 they happened to open first. Everything below is a disagreement **inside this slice**,

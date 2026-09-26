@@ -1,6 +1,6 @@
 # Archimedes backend — floors shared by every consumer (issue #1522).
 #
-# This file is the single owner of the 32 non-torch package floors. Both
+# This file is the single owner of the 33 non-torch package floors. Both
 # `backend/requirements.txt` (Docker / CI) and the `pip:` block of
 # `environment.yml` (local conda dev) pull it in with `-r`, so a Dependabot bump
 # lands here once instead of being mirrored by hand into a second file.
@@ -25,7 +25,17 @@ fastapi>=0.141.1
 # backend imports neither GZipMiddleware nor FileResponse (checked 2026-08-30).
 starlette>=1.6.0
 uvicorn[standard]>=0.52.4
-sqlalchemy>=2.0.52
+# Upper-bounded 2026-09-25: 2.1.0 (released after this floor was set) changes the
+# DEFAULT driver a bare `postgresql://` URL resolves to — `create_engine()` now
+# imports `sqlalchemy.dialects.postgresql.psycopg` (psycopg **3**) instead of
+# `...postgresql.psycopg2`, and this repo only installs psycopg2 (see below).
+# Every bare-scheme call site (`db.py`'s `DATABASE_URL`, `migrations/env.py`, the
+# alembic offline-SQL tests) broke with `ModuleNotFoundError: No module named
+# 'psycopg'` on a fresh CI install the moment pip could resolve 2.1.x — reproduced
+# in an isolated venv both directions (2.0.52 clean, 2.1.1 breaks) before pinning.
+# Raise this ceiling only alongside either installing `psycopg` (v3) or making
+# every DATABASE_URL construction say `postgresql+psycopg2://` explicitly.
+sqlalchemy>=2.0.52,<2.1
 # Schema migration tool (issue #1028) — replaces the hand-rolled idempotent
 # `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` patches in db.py for retrofitting
 # the already-populated prod Postgres DB. MIT license, maintained by the
@@ -57,19 +67,29 @@ alembic>=1.19.1
 # environment.yml). Do not "fix a slow build" by putting -binary back.
 psycopg2>=2.9.12
 redis>=8.1.0
-pydantic>=2.13.4
-pydantic-settings>=2.14.2
+pydantic>=2.13.5
+# Declared because backend code IMPORTS IT DIRECTLY — `PydanticCustomError` in
+# `api/rigor_verify_routes.py`, which is how that route's refusals carry a stable
+# machine-readable `type` (#1803). pydantic exposes no public re-export of it
+# (`pydantic.PydanticCustomError` does not exist in 2.x; only the private
+# `pydantic.types` re-export does), so the honest fix for import-guard's DEP001
+# is to declare the package we import rather than reach through a private path.
+# pydantic pins pydantic-core EXACTLY (`pydantic 2.13.4` -> `pydantic-core==2.46.4`),
+# so this floor never selects the version — pydantic's own pin does. It exists so
+# the dependency is declared where every consumer of this file can see it.
+pydantic-core>=2.46.4
+pydantic-settings>=2.15.0
 python-dotenv>=1.2.3
 
 # Data + numerics
-numpy>=2.5.2,<3.0
+numpy>=2.5.3,<3.0
 # 3.0.4 was yanked from PyPI after the dependabot bump (#798) merged, so
 # `pandas>=3.0.4` became unsatisfiable and broke every fresh CI install +
 # Docker build (latest available is 3.0.3). Floor lowered to the newest
 # non-yanked release. (NB: environment.yml still floors pandas>=2.2 — a
 # pre-existing local-vs-prod major drift to reconcile separately.)
 pandas>=3.0.5
-scipy>=1.18.0
+scipy>=1.18.1
 scikit-learn>=1.9.0  # GaussianMixture + StandardScaler for the data-driven GmmRegimeDetector (issue #661); BSD-3-Clause
 
 # Market data
@@ -153,6 +173,6 @@ arxiv>=4.0.1
 pypdf>=6.16.2
 
 # AWS / S3
-boto3>=1.43.82
+boto3>=1.43.92
 # Imported directly for AWS exceptions/config; boto3 constrains compatibility.
-botocore>=1.43.81
+botocore>=1.43.88

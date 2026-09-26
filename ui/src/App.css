@@ -6323,16 +6323,50 @@ body:has(.public-site) {
 	color: var(--accent-text, var(--accent));
 }
 
+/* The hero must be visible in every animation state, by construction — issue
+   #1750.
+
+   What broke: this keyframe entered from `opacity: 0`, and nothing else in the
+   hero declares an opacity at all — the only `opacity` anywhere in the hero
+   block was that `from` frame. So opacity 0 was the only opacity the
+   stylesheet ever stated for the eyebrow, `#public-hero-title`, the lede, the
+   CTA row and the product screenshot, and the hero was visible only as a
+   consequence of the animation actually running. Every state that holds the
+   first frame paints the hero at opacity 0 over `.public-hero__stage`'s own
+   near-black `--public-stage` (#0c0c11): the before phase, and — the one that
+   never ends — a play-pending animation whose start time never resolves,
+   which is what a suspended document timeline in a background tab, a bfcache
+   restore before the first style commit, or a compositor stall produce. That
+   is the solid black void in #1750.
+
+   No fill mode fixes that. `backwards` and `both` are *defined* as applying
+   the first frame throughout the before phase, and `none`/`forwards` do not
+   help either: three of the five animated elements have no delay, so their
+   pending hold time lands on active time 0 — which is the `from` frame again.
+   The fill mode only ever changed the far end, where the underlying value is
+   opacity 1 already.
+
+   The fix is to take opacity out of the entrance entirely. The hero animates
+   `transform` only, so its opacity is 1 in every state there is: pending,
+   before phase, active, finished, idle, cancelled, reduced motion, a stale
+   bundle, a stylesheet that failed to load. An entrance that never starts now
+   leaves the hero sitting 10px low and completely readable. The fade is gone
+   — that is the accepted cost; the slide stays.
+
+   Guard: ui/test/public-hero-visible-at-rest.test.js. */
 @keyframes public-arrive {
 	from {
-		opacity: 0;
 		transform: translateY(10px);
+	}
+
+	to {
+		transform: none;
 	}
 }
 
 @media (prefers-reduced-motion: no-preference) {
 	.public-hero__copy > * {
-		animation: public-arrive 360ms both;
+		animation: public-arrive 360ms backwards;
 	}
 
 	.public-hero__copy > :nth-child(2) {
@@ -6345,7 +6379,22 @@ body:has(.public-site) {
 
 	.public-hero__copy > :nth-child(4),
 	.public-product-frame {
-		animation: public-arrive 400ms 120ms both;
+		animation: public-arrive 400ms 120ms backwards;
+	}
+}
+
+/* Reduced motion gets no entrance at all — a motion-preference courtesy, not
+   a visibility guard. It changes nothing today: the rules above already sit
+   inside a `prefers-reduced-motion: no-preference` block, so a `reduce`
+   preference never applies them. It is written down so that hoisting the
+   animation out of that media query, or adding another `public-arrive` user
+   outside it, cannot silently hand reduced-motion visitors a slide they asked
+   not to have. Since the entrance no longer touches opacity, deleting this
+   block could not reintroduce #1750. */
+@media (prefers-reduced-motion: reduce) {
+	.public-hero__copy > *,
+	.public-product-frame {
+		animation: none;
 	}
 }
 

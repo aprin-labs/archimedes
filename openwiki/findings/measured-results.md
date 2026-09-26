@@ -18,6 +18,15 @@ generated: { by: "claude-code", at: "2026-08-31T05:55:43.566Z" }
 
 # Measured results and their vintage
 
+> **STALE ON ONE NUMBER — regenerate.** This page was generated 2026-08-31 from the quant
+> slice as it then stood. On 2026-09-03, [#1794](https://github.com/aprin-labs/archimedes/issues/1794) retired
+> the lower DSR bar: the badge bar is **0.95**, defined once as `DSR_P_BADGE_MIN` in
+> `backend/archimedes/services/rigor_profiles.py`. The measured numbers below are unaffected
+> — they are diagnostics with a stamped vintage, not gate verdicts — but the calibration
+> caveat's sentence about which bar is current asserted the *inverse* of the truth and was
+> corrected in place; the rest of the body is as generated, so the `generated:` provenance
+> above stays true. The next openwiki run supersedes this page.
+
 Three findings notes in this slice report numbers that were actually computed, not
 asserted. All three were run on **2026-06-11** against then-current market data. Every
 number below is a *diagnostic from that run*, not a served value: none of them was
@@ -180,10 +189,11 @@ Sweeping it on that strategy's real returns gives DSR p-values of 0.999 → 0.96
 `num_trials` 1–13, 0.941 at 22 (the full library), and 0.896 at 50.
 
 Two warnings before reusing that table. First, its column header asks whether the value
-passes **p ≥ 0.95**, which is the pre-recalibration bar; the gate has since moved to
-0.90 (see [`documented-conflicts`](../rigor/documented-conflicts.md)). Second, the note
-is emphatic that this calibration question is *not* what blocks the other eight
-strategies — they fail on performance, not on the penalty.
+passes **p ≥ 0.95** — which, after #1794, is once again the live badge bar
+(`rigor_profiles.DSR_P_BADGE_MIN`), so the header needs no adjustment; the intermediate
+lower bar it was written against is retired. Second, the note is emphatic that this
+calibration question is *not* what blocks the other eight strategies — they fail on
+performance, not on the penalty.
 
 ---
 

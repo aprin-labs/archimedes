@@ -7,7 +7,7 @@ duplicating content here.
   Archimedes itself): start at [`CLAUDE.md`](CLAUDE.md) — the engineering rules, review
   gates, and agent discipline for this repo. It deliberately holds only what you would get
   wrong by default; for everything else it points at
-  [`docs/README.md`](docs/README.md), the documentation index — architecture in
+  [`docs/doc-index.md`](docs/doc-index.md), the doc register — architecture in
   [`docs/architecture.md`](docs/architecture.md), decisions in [`docs/adr/`](docs/adr/README.md),
   team and ownership in [`docs/team.md`](docs/team.md), and how to file a new doc in
   [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md).
@@ -60,7 +60,7 @@ add a row there for each generation wave. Any edit to `.openwikiignore` must be 
 with `node scripts/check_openwiki_ignore.mjs`.
 
 Pages publish to **`docs.archimedes-arc.com`**, served from our own infrastructure rather
-than GitHub Pages ([#1634](https://github.com/a-apin/archimedes/issues/1634)); the
+than GitHub Pages ([#1634](https://github.com/aprin-labs/archimedes/issues/1634)); the
 `mkdocs build --strict` wiring from #1624 is the build step and stays.
 
 <!-- OPENWIKI:END -->

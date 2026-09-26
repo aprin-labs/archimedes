@@ -1,6 +1,6 @@
 # Docs Site — S3 + CloudFront at `docs.archimedes-arc.com`
 
-> **Status:** runbook. **Owner:** Dan Browne. **Updated:** 2026-08-31.
+> **Status:** runbook. **Owner:** Dan Browne. **Updated:** 2026-09-01.
 
 `docs/` **and the agent-generated `openwiki/` tree** are built into a static
 site by [`mkdocs.yml`](../../mkdocs.yml) (theme: mkdocs-material) and published
@@ -80,6 +80,17 @@ which now includes the docs-site statements (`s3:ListBucket` /
 ./infra/scripts/setup-github-oidc.sh --apply
 ```
 
+> **Also re-run it after any org/repo rename or transfer.** The same script owns
+> the role's *trust* policy, and the OIDC `sub` claim GitHub mints carries the
+> repository's current identity — in this repo's case the **id-qualified** form
+> (`repo:aprin-labs@284008417/archimedes@1236816811:ref:refs/heads/main`), not
+> the plain `repo:ORG/REPO` one. On 2026-09-01 the `a-apin` → `aprin-labs`
+> rename broke every deploy for ~3h on
+> `Not authorized to perform sts:AssumeRoleWithWebIdentity`, docs-site publish
+> included. The dry run prints the exact subjects it will trust; compare them
+> against CloudTrail (`AssumeRoleWithWebIdentity` → `userIdentity.userName` on
+> the failed event). The script's own header has the full story.
+
 Skipping this does not break the build. It does **not** silently skip either:
 once the bucket exists, a role that cannot read it gets a 403 from
 `head-bucket`, and the workflow fails with "the OIDC role is missing the
@@ -117,7 +128,7 @@ equivalent — for the first apply, for a rollback, or when Actions is down:
 
 ```bash
 # from the repo root
-pip install mkdocs-material==9.7.7          # pin matches docs-site.yml
+pip install -r docs/requirements.txt        # the same file docs-site.yml installs
 mkdocs build --strict --site-dir _site
 
 BUCKET="$(terraform -chdir=docs-site/infra output -raw bucket)"
@@ -159,9 +170,16 @@ here cannot move anything in the product stack.
 ## Local preview
 
 ```bash
-pip install mkdocs-material==9.7.7   # pin matches docs-site.yml; see its comment
+pip install -r docs/requirements.txt   # mkdocs-material, the git-date plugin, pymdown-extensions
 mkdocs serve
 ```
+
+`docs/requirements.txt` is the single pin: the build job installs that file, and
+so should you. The `git-revision-date-localized` plugin in it reads each page's
+last commit for the footer date, so a page you have created but not committed
+yet has no date to read — `mkdocs build --strict` will say so. Commit the file
+(or `git add` it) and rebuild; the workflow checks out with `fetch-depth: 0` for
+the same reason.
 
 Serves at `http://127.0.0.1:8000` with live reload on any `docs/**` or
 `mkdocs.yml` edit. `mkdocs build --strict` (what CI runs) writes the static
@@ -172,6 +190,33 @@ gitignored-equivalent scratch output, not something to commit.
 default, so `mkdocs.yml` adds `watch: [openwiki]` to pick up wiki edits too.
 Editing the hook itself still needs a **restart**, not just a save: mkdocs
 `lru_cache`s hook modules for the life of the process.
+
+## Adding a page: publication is default-deny
+
+A file under `docs/` does **not** publish because it exists. Since #1751 the
+build keeps it only if [`../../mkdocs.yml`](../../mkdocs.yml) says so, in one
+of three ways:
+
+| Put it in | Effect |
+|---|---|
+| `nav:` | Published, and listed in the left rail. This is the normal answer. |
+| `not_in_nav:` | Published with no nav entry. The site's own assets only — the patterns name file types (`assets/*.svg`), never directories, so it cannot admit a page. |
+| `exclude_docs:` | Never built. Records that the file is internal; port it to the private docs repo first ([`../CONVENTIONS.md`](../CONVENTIONS.md) § Content routing). |
+
+A file in none of the three is off the site, and two things say so out loud:
+`backend/tests/test_docs_default_deny.py` fails on every PR, and
+[`../../.github/scripts/mkdocs_hooks.py`](../../.github/scripts/mkdocs_hooks.py)'s
+`deny_unlisted` logs a `WARNING` that `--strict` turns into a failed build.
+
+It reads backwards from how mkdocs works, and that is the point. Nav removal
+never unpublished anything: `/team/`, `/runbooks/cost-kill-switch/` and
+`/api/admin-private/` were all live with no nav entry on 2026-09-01, and
+`exclude_docs` on its own is a deny-list — it can only catch the pages someone
+already thought of, so a new runbook was public the day it was committed.
+
+**To publish a new page:** add the file, add one nav row in the same commit,
+and run `mkdocs build --strict` (below). The row is the review step — a page
+goes in front of readers because a person put it there.
 
 ## `mkdocs --strict` is the gate
 
@@ -207,7 +252,7 @@ served a 404 to anyone who clicked them.
 The scaffold's answer was to drop `--strict` and live with the noise. The
 answer now is [`.github/scripts/mkdocs_hooks.py`](../../.github/scripts/mkdocs_hooks.py),
 which rewrites those targets **at build time** to
-`https://github.com/a-apin/archimedes/blob/main/<path>` (preserving `#Lnn`
+`https://github.com/aprin-labs/archimedes/blob/main/<path>` (preserving `#Lnn`
 line anchors, and using `/tree/` for directories). No committed markdown was
 touched — the ~47 unique out-of-tree targets stay exactly as written, correct
 on GitHub, and now also correct on the site.
@@ -232,11 +277,12 @@ to `warn` is the change that would force it.
 |---|---|
 | [`../../mkdocs.yml`](../../mkdocs.yml) | Site config: theme, nav, repo/site URLs, hooks. `site_url` is the canonical host, and `ui/test/docs-link.test.js` holds the UI links to it. |
 | [`../../docs-site/infra/main.tf`](../../docs-site/infra/main.tf) | The bucket, OAC, CloudFront distribution + directory-index function, ACM cert and Route 53 alias. Standalone root, own state key. |
-| [`../../.github/scripts/mkdocs_hooks.py`](../../.github/scripts/mkdocs_hooks.py) | Mounts `openwiki/` into the build, stamps its provenance banner, and repoints out-of-`docs_dir` links at GitHub. |
+| [`../../.github/scripts/mkdocs_hooks.py`](../../.github/scripts/mkdocs_hooks.py) | Mounts `openwiki/` into the build, enforces default-deny publication (`deny_unlisted`), stamps the provenance banner, and repoints out-of-`docs_dir` links at GitHub. |
 | [`../../.github/workflows/docs-site.yml`](../../.github/workflows/docs-site.yml) | Build + publish workflow. The build always runs; the publish no-ops until the terraform is applied. |
 | [`../../.github/workflows/infra-gate.yml`](../../.github/workflows/infra-gate.yml) | `terraform fmt` + `validate` over every root, including `docs-site/infra`. |
 | [`../../infra/scripts/setup-github-oidc.sh`](../../infra/scripts/setup-github-oidc.sh) | The CI role and its permissions, including the docs-site publish grants. |
 | [`../agent-wiki.md`](../agent-wiki.md) | Provenance note for the agent-generated section, and the section's index page. |
 | [`../../backend/tests/test_docs_site.py`](../../backend/tests/test_docs_site.py) | Drift guard: nav ↔ tree, the provenance label, the workflow's `paths:` filter and `--strict` flag, the link rewriter, and that the site is still served from our own infra. |
-| [`../CONVENTIONS.md`](../CONVENTIONS.md) | Where a new doc goes — the site just publishes what's already there. |
+| [`../CONVENTIONS.md`](../CONVENTIONS.md) | Where a new doc goes in the repository, and the public/internal routing rule the `exclude_docs` block applies. |
+| [`../../backend/tests/test_docs_default_deny.py`](../../backend/tests/test_docs_default_deny.py) | Publication guard: every file under `docs/` must be in the nav, `not_in_nav` or `exclude_docs`, and the hook must actually deny the rest. |
 | [`../../.github/workflows/docs-gate.yml`](../../.github/workflows/docs-gate.yml) | The blocking link/index checker this runbook defers to for `docs/**`'s real (in-repo) links. |

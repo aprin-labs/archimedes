@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
-"""Index-completeness check: every doc must be reachable from docs/README.md.
+"""Index-completeness check: every doc must be reachable from docs/doc-index.md.
 
 Blocking check for .github/workflows/docs-gate.yml. Self-contained.
 
-docs/README.md opens with "A doc not listed here does not exist." This script
+docs/doc-index.md opens with "A doc not listed here does not exist." This script
 is what makes that sentence true instead of aspirational. Without it the index
 is correct only until the next person adds a file, which is exactly how the
 tree got into the state phases 1-5 dug it out of — eleven files landed with no
 structure in the four weeks before the cleanup started.
 
+The register moved out of docs/README.md on 2026-09-02: docs/README.md and
+docs/index.md cannot coexist in an mkdocs build (`--strict` aborts with
+"Excluding README.md from the site because it conflicts with index.md"), and
+the site needed index.md to be a front door rather than a register. The rule is
+unchanged; only the file holding it moved.
+
 Coverage rule: a `docs/**/*.md` file is covered if it is linked from
-docs/README.md, or from a sub-index that docs/README.md itself links to
+docs/doc-index.md, or from a sub-index that docs/doc-index.md itself links to
 (adr/README.md, archive/README.md, quant/README.md, and any other
 `*/README.md` the root index points at — discovered, not hardcoded, so a new
 section only has to be linked once).
@@ -32,7 +38,7 @@ from docs_links import INLINE_LINK, REF_DEF, is_external, strip_code  # noqa: E4
 
 # Files that are structural rather than content: they are the index itself, or
 # they are conventions the index links to as prose. They never need a row.
-ALWAYS_COVERED = {"docs/README.md"}
+ALWAYS_COVERED = {"docs/doc-index.md"}
 
 
 def link_targets(path: Path, root: Path) -> set[str]:
@@ -62,9 +68,9 @@ def main() -> int:
 
     root = Path(args.root).resolve()
     docs = root / "docs"
-    index = docs / "README.md"
+    index = docs / "doc-index.md"
     if not index.is_file():
-        print("::error::docs/README.md is missing — the index is the contract; restore it.")
+        print("::error::docs/doc-index.md is missing — the register is the contract; restore it.")
         return 1
 
     root_targets = link_targets(index, root)
@@ -90,8 +96,8 @@ def main() -> int:
 
     for o in orphans:
         msg = (
-            "not listed in docs/README.md or any sub-index it links to. "
-            "Add a row to the index, or move the file under a directory whose "
+            "not listed in docs/doc-index.md or any sub-index it links to. "
+            "Add a row to the register, or move the file under a directory whose "
             "sub-index lists it, or delete it."
         )
         if args.format == "github":

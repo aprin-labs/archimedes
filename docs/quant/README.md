@@ -25,7 +25,7 @@ are authoritative.
 
 ## Findings notes — dated, historical, not living references
 
-*(Table added 2026-08-31, [#1598](https://github.com/a-apin/archimedes/issues/1598): these
+*(Table added 2026-08-31, [#1598](https://github.com/aprin-labs/archimedes/issues/1598): these
 four were in the directory but not in this index, and they carry the numbers most likely to
 be quoted.)* **Every one of them is a measurement at a stated vintage, not a current
 statement.** Each was run against the library, gate threshold, and `num_trials` convention
@@ -42,7 +42,8 @@ rigor gate is the only authority on which strategies clear it.
 | [`../analysis/faber-dsr-finding.md`](../analysis/faber-dsr-finding.md) | 2026-05-27 | Why Faber 2007 fails on DSR (p = 0.612) despite a raw Sharpe near TSMOM's — the clearest worked example of DSR beating raw Sharpe as an admission test. Lives in `analysis/`, listed here because the quant docs cite it constantly. |
 
 Two conventions changed under all four notes and are the usual reason a number in them does
-not reproduce: the DSR bar was recalibrated `0.95 → 0.90` (PR #901), and `num_trials`
+not reproduce: the DSR bar moved down in PR #901 and back to `0.95` in #1794 (where it is
+now a single named constant), and `num_trials`
 stopped counting the library size on 2026-07-09
 ([`../adr/num-trials-self-containment.md`](../adr/num-trials-self-containment.md), ratified
 2026-08-31). Fixture-era series also do not reproduce on current data (yfinance vintage

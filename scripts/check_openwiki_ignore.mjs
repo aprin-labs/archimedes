@@ -121,7 +121,7 @@ const ALLOWED = [
   ["docs/quant/methodology.md", false],
   ["docs/quant/README.md", false],
   ["docs/quant/admission-criteria.md", false],
-  ["docs/README.md", false],
+  ["docs/doc-index.md", false],
   ["docs/architecture.md", false],
   ["docs/api", true],
   ["docs/api/generation.md", false],

@@ -65,6 +65,20 @@ export const resendVerificationEmail = (email, callbackURL) => authRequest('/api
   body: JSON.stringify({ email, callbackURL }),
 })
 
+// #1748 item 2 — what actually happened to the mail the call above requests.
+//
+// Deliberately takes NO argument. The endpoint reports on the SESSION's own
+// address and reads no address from the request; passing one here would imply
+// otherwise. That self-only shape is what lets it be specific (`suppressed` vs
+// `sent`) without becoming the per-address oracle Better Auth's constant-time
+// floor on /send-verification-email exists to prevent — see
+// auth/verification-status.js's header.
+//
+// 401 when signed out and 503 when the auth service has no delivery log wired;
+// both surface as a thrown error with `.status`, and the callers render
+// nothing rather than inventing a state.
+export const getVerificationStatus = () => authRequest('/api/auth/verification-status')
+
 // ── #1420 follow-up: explicit account linking (Account Settings → Connected
 // accounts) ────────────────────────────────────────────────────────────
 //

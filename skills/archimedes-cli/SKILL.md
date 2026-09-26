@@ -71,17 +71,43 @@ What actually happens, in order (cli.py:187-253):
    a crash (cli.py:231-235, the `ValueError` branch). No `user.email` in the
    response → fails as `session_not_confirmed` (cli.py:239-246) and, again,
    nothing is cached.
-5. Only then: `save_session(...)` writes
-   `~/.config/archimedes/session.json` — [`session.py`](../../cli/src/archimedes_cli/session.py):59-76,
-   opened via `os.open(..., 0o600)` (never briefly world-readable) and
-   `chmod(0o600)` again afterward in case the path pre-existed with looser
-   permissions (session.py:62-65 comment explains why the second chmod isn't
-   redundant).
+5. Only then: `save_session(...)` writes the session cache — by default
+   `~/.config/archimedes/session.json`, or wherever `--session-file` /
+   `ARCHIMEDES_SESSION_FILE` points (see "One session file per lane" below) —
+   [`session.py`](../../cli/src/archimedes_cli/session.py):218-250, opened via
+   `os.open(..., 0o600)` (never briefly world-readable) and `chmod(0o600)` again
+   under the write lock, in case the path pre-existed with looser permissions
+   (the docstring there explains why the second chmod isn't redundant).
 
 The password is sent once, on that one request, and is never written to disk
 (cli.py docstring, lines 180-182). Linking a crypto wallet is a separate, later,
 optional step for on-chain vault actions — it is not part of `login` and does
 not authenticate you (cli.py:183-185).
+
+### One session file per lane
+
+`login`, `meter`, `verify` and `generate` all take `--session-file PATH`, and all read
+`ARCHIMEDES_SESSION_FILE` when the flag is absent (the flag wins;
+[`session.py`](../../cli/src/archimedes_cli/session.py):129-142 is the whole precedence
+rule — flag, then env var, then `~/.config/archimedes/session.json`).
+
+```bash
+ARCHIMEDES_SESSION_FILE=~/.archimedes/lane-a.json archimedes login   # agent A
+ARCHIMEDES_SESSION_FILE=~/.archimedes/lane-b.json archimedes login   # agent B
+archimedes meter --session-file ~/.archimedes/lane-a.json            # still agent A
+```
+
+**If you are driving more than one agent on one machine, give each one its own file.**
+A shared file is a shared identity: the second `login` overwrites the first, and the
+first lane keeps getting clean `200`s as somebody else. That is
+[#1752](https://github.com/aprin-labs/archimedes/issues/1752), observed live on
+2026-09-01, and before the flag existed the only lever was a fabricated `$HOME`.
+
+The file is mode `600` wherever you point it, and every read and write takes an advisory
+`flock` on it (`session.py`:150-170), so even a shared file never yields a half-written
+read. The MCP server (`mcp-server/`) loads this same cache through
+`archimedes_cli.session`, so `ARCHIMEDES_SESSION_FILE` in an `mcpServers` env block moves
+that agent's credential too.
 
 ### `archimedes meter`
 
@@ -185,15 +211,17 @@ the CPCV-honesty pattern documented in `skills/verdict-api/SKILL.md` (lands with
 honestly reported as `NOT_RUN`, not silently absent") — same principle, applied
 here to PBO and look-ahead.
 
-**The pass rule accounts for this:** `passes` is `True` **iff no evaluable
-check failed AND at least one check was evaluable**
-(rigor_verify_routes.py:202-204). A request where every check comes back
-`not_evaluable` (e.g. a series too short for either DSR or OOS to run) must
-**not** read as passing by vacuous truth — it renders 4×`[N/A]`, zero
-`[PASS]`/`[FAIL]`, and `FAILS`/exit 1
-(`test_not_evaluable_rendering_when_nothing_could_run`, test_cli.py:513-525;
-backend-side: `test_too_short_series_neither_evaluable_check_runs_and_passes_is_false`,
-[`backend/tests/test_rigor_verify_routes.py`](../../backend/tests/test_rigor_verify_routes.py):161).
+**The pass rule accounts for this:** `passes` is `True` **iff every RUNNABLE
+leg — DSR *and* walk-forward OOS — actually ran and passed**: a quorum, not
+"no evaluable check failed" (#1481, `rigor_verify_routes.py:803`). A request
+where every check comes back `not_evaluable` (a zero-variance series, say —
+since #1803 a series too SHORT to grade is refused outright with
+`window_too_short` rather than answered) must **not** read as passing by
+vacuous truth — it renders 4×`[N/A]`, zero `[PASS]`/`[FAIL]`, and
+`FAILS`/exit 1 (`test_not_evaluable_rendering_when_nothing_could_run`,
+cli/tests/test_cli.py:663; backend-side:
+`test_zero_evaluable_legs_never_read_as_a_pass`,
+[`backend/tests/test_rigor_verify_routes.py`](../../backend/tests/test_rigor_verify_routes.py):194).
 
 DSR and OOS reuse the **exact same functions and threshold constants**
 (`compute_dsr_hac_and_iid`, `compute_oos_sharpe`, `DSR_P_FLOOR`,

@@ -483,7 +483,7 @@ function RigorGateSection({ leaderboard, leaderboardError }) {
 			<p className="body mb-4">
 				Most backtests lie by selection: try enough ideas and one will look
 				brilliant by chance. Over 20+ years of backtested returns net of
-				realistic commission, a strategy's excess Sharpe must be positive at 90%
+				realistic commission, a strategy's excess Sharpe must be positive at 95%
 				one-sided confidence under standard errors robust to non-normality and
 				autocorrelation, and must stay positive on a 30% chronological holdout.
 				On the generated path, a strategy's Sharpe is additionally deflated

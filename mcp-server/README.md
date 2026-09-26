@@ -19,7 +19,7 @@ the answer to it.
 ## Install
 
 Both distributions live in this repo and neither is on PyPI yet
-([D6](https://github.com/a-apin/archimedes/pull/1653)):
+([D6](https://github.com/aprin-labs/archimedes/pull/1653)):
 
 ```bash
 pip install -e ./cli -e ./mcp-server
@@ -46,12 +46,18 @@ archimedes-mcp --help 2>/dev/null || true   # it speaks MCP over stdio; a client
 `archimedes login` caches at `~/.config/archimedes/session.json` (mode `600`), loaded
 through `archimedes_cli.session.load_session` — imported, not copied.
 
+`ARCHIMEDES_SESSION_FILE` in the same `env` block moves that file. Running more than one
+agent on a machine? Give each one its own path (`"ARCHIMEDES_SESSION_FILE":
+"/home/agent/.archimedes/lane-a.json"`, and `archimedes login --session-file` that same
+path). One file per agent is what keeps two agents from sharing one identity — the failure
+[#1752](https://github.com/aprin-labs/archimedes/issues/1752) reported.
+
 ## Authentication
 
 | Order | Source | Sent as |
 | --- | --- | --- |
 | 1 | `ARCHIMEDES_API_KEY` | `Authorization: Bearer <key>` |
-| 2 | `~/.config/archimedes/session.json` | the `better-auth.session_token` cookie |
+| 2 | `~/.config/archimedes/session.json`, or `$ARCHIMEDES_SESSION_FILE` | the `better-auth.session_token` cookie |
 
 **Exactly one credential goes on the wire.** When both exist the key wins here and no
 `Cookie` header is sent, so the server-side precedence rule (cookie wins) can never decide
@@ -62,7 +68,7 @@ The credential is resolved per call, not per process: a long-lived stdio server 
 immediately rather than living on in a captured variable.
 
 **Status of the bearer lane, honestly.** Scoped API keys are owner decision **D3** on
-[#1653](https://github.com/a-apin/archimedes/pull/1653), implemented on branch
+[#1653](https://github.com/aprin-labs/archimedes/pull/1653), implemented on branch
 `dbrowneup/1653-scoped-api-keys` and **not merged to `main` at the time of writing**. The
 header is written to that branch's spec so this server works the day it merges; until then
 a bearer key `401`s and the `401` remedy says so rather than sending you hunting a key

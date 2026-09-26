@@ -3,7 +3,7 @@
 Covers:
   * rigor_profiles — the ladder table, monotonicity, fail-safe clamping, floors.
   * RigorGateResult — passes_at_level / min_passing_level / blocked_by_floor, and
-    that the level-1 badge stays the strictest bar (recalibrated to DSR 0.90).
+    that the level-1 badge stays the strictest bar (DSR ``DSR_P_BADGE_MIN``).
   * size_strategies — the strictness-derived deployable_ids override.
   * the deploy gate — refuses at the strictest level (badge), admits a curated
     strategy that only passes at a looser level, and never admits a floor-blocked
@@ -22,6 +22,7 @@ import pytest
 from archimedes.services.rigor_evaluator import RigorGateResult
 from archimedes.services.rigor_profiles import (
     DEFAULT_LEVEL,
+    DSR_P_BADGE_MIN,
     DSR_P_FLOOR,
     LOOSEST_LEVEL,
     STRICTEST_LEVEL,
@@ -50,9 +51,11 @@ def test_ladder_is_monotonic():
         assert b.oos_is_ratio_min <= a.oos_is_ratio_min
 
 
-def test_level_1_is_the_recalibrated_badge_bar():
+def test_level_1_is_the_one_badge_bar():
+    # #1794: the badge rung IS DSR_P_BADGE_MIN — not a copy of its value, so the
+    # ladder cannot drift away from what the Generate path and the docs quote.
     p1 = get_profile(1)
-    assert p1.dsr_p_min == 0.90  # recalibrated 0.95 → 0.90
+    assert p1.dsr_p_min is DSR_P_BADGE_MIN
     assert p1.pbo_max == 0.50
     assert p1.oos_is_ratio_min == 0.50
 
@@ -93,11 +96,15 @@ def test_strong_strategy_passes_badge():
     assert r.blocked_by_floor is False
 
 
-def test_recalibration_admits_dsr_between_090_and_095():
-    # 0.92 failed the old 0.95 badge; the recalibrated 0.90 badge admits it.
+def test_the_retired_090_band_no_longer_earns_the_badge():
+    # #1794 retired PR #901's lower bar. A candidate in the old [0.90, 0.95) band
+    # used to earn the badge here while the Generate path called the same numbers
+    # a failure. It is now a level-2 (Balanced) strategy: deployable into a user's
+    # own vault at their chosen strictness, never "Archimedes Verified".
     r = _mk(dsr_p_value=0.92)
-    assert r.passes_all is True
-    assert r.min_passing_level == 1
+    assert r.passes_all is False
+    assert r.min_passing_level == 2
+    assert r.blocked_by_floor is False  # statistically weak, not broken
 
 
 def test_dsr_ladder_maps_to_min_level():
@@ -246,7 +253,7 @@ def test_strictness_ladder_endpoint_discloses_full_ladder_and_floors():
     assert resp.badge_level == STRICTEST_LEVEL
     assert resp.default_level == DEFAULT_LEVEL
     assert resp.floors["dsr_p_floor"] == DSR_P_FLOOR
-    # Level 1 is the Conservative/Verified bar at the recalibrated 0.90.
+    # Level 1 is the Conservative/Verified bar — the one bar, DSR_P_BADGE_MIN.
     lvl1 = next(lvl for lvl in resp.levels if lvl.level == 1)
     assert lvl1.label == "Conservative"
-    assert lvl1.dsr_p_min == 0.90
+    assert lvl1.dsr_p_min == DSR_P_BADGE_MIN

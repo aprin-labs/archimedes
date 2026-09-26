@@ -21,7 +21,7 @@
 > `docs/architecture/` if it is to be maintained as the description of the live page, or to
 > `docs/archive/` with an `ARCHIVED` banner if `architecture.md` and the page itself become
 > the authority. Use `git mv` and update
-> [`../README.md`](../README.md) in the same commit.
+> [`../doc-index.md`](../doc-index.md) in the same commit.
 
 > Voice: confident, precise, honest. Claim-integrity is the #1 rule — nothing below claims
 > what the live path doesn't do. Draft copy is final-quality and ready to lift into JSX.
@@ -150,7 +150,7 @@ your own key, or run fully local against Ollama.
 **Body:** Most backtests lie by selection: try enough ideas and one will look brilliant by
 chance. Every strategy's badge is derived from four tests run on its real persisted returns:
 
-- **DSR** — Deflated Sharpe Ratio: the excess Sharpe tested at 90% one-sided confidence
+- **DSR** — Deflated Sharpe Ratio: the excess Sharpe tested at 95% one-sided confidence
   under standard errors robust to non-normality and autocorrelation, and — on the generated
   path only — deflated against that strategy's own candidate pool (Bailey & López de Prado
   2014). On the curated library `num_trials=1`, so DSR runs undeflated; the page states this

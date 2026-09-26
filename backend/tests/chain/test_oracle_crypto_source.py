@@ -165,12 +165,19 @@ class TestCryptoCascade:
         assert [(r.symbol, r.price_usd, r.source) for r in results] == [("sBTC", 64100.0, "yfinance")]
 
     async def test_provider_that_cannot_serve_intraday_is_named_then_falls_back(self, updater, monkeypatch, caplog):
-        """`TiingoProvider.get_intraday_quotes_batch` raises NotImplementedError
-        (daily bars only — the ADR's "live oracle push is not cutover-ready").
-        That refusal must be reported BY NAME, not swallowed, and must not
-        prevent CoinGecko from serving."""
+        """A seam vendor whose `get_intraday_quotes_batch` raises
+        NotImplementedError must be reported BY NAME, not swallowed, and must
+        not prevent CoinGecko from serving.
+
+        Since #1798 this is the belt-and-braces path rather than the Tiingo
+        one: the crypto leg asks the INTRADAY seam, `_VENDOR_SEAMS` does not
+        list Tiingo there, and `MARKET_DATA_PROVIDER=tiingo` therefore resolves
+        this seam to yfinance instead of breaking it (pinned in
+        `tests/services/test_market_data_seams.py`). What is still reachable —
+        and what this pins — is a vendor that declares the intraday seam and
+        then refuses one of its methods."""
         monkeypatch.setenv("ORACLE_CRYPTO_SOURCE", "provider")
-        monkeypatch.setenv("MARKET_DATA_PROVIDER", "tiingo")
+        monkeypatch.setenv("MARKET_DATA_PROVIDER", "yfinance")
         fake_provider = _provider(
             raises=NotImplementedError("TiingoProvider.get_intraday_quotes_batch is out of scope")
         )
@@ -185,14 +192,18 @@ class TestCryptoCascade:
             results = await updater._fetch_crypto(datetime.now(UTC))
 
         assert [(r.symbol, r.source) for r in results] == [("sBTC", "coingecko")]
-        assert "tiingo" in caplog.text
+        assert "yfinance" in caplog.text  # the seam's vendor, named
         assert "cannot serve intraday quotes" in caplog.text
 
     async def test_provider_only_with_tiingo_prices_nothing_and_never_fabricates(self, updater, monkeypatch):
         """Licensing-strict mode: a miss stays a miss. No CoinGecko fill-in, no
-        invented price — the symbol is simply absent, with a named reason."""
+        invented price — the symbol is simply absent, with a named reason.
+
+        Same #1798 note as the test above: the refusing vendor is now a
+        hypothetical intraday-declaring one, not Tiingo, which the seam keeps
+        away from this leg entirely."""
         monkeypatch.setenv("ORACLE_CRYPTO_SOURCE", "provider_only")
-        monkeypatch.setenv("MARKET_DATA_PROVIDER", "tiingo")
+        monkeypatch.setenv("MARKET_DATA_PROVIDER", "yfinance")
         fake_provider = _provider(raises=NotImplementedError("daily bars only"))
         session = _coingecko_session(payload={"bitcoin": {"usd": 64000.0}})
         with (
@@ -204,7 +215,7 @@ class TestCryptoCascade:
         assert results == []
         session.__aenter__.assert_not_awaited()
         reason = updater._source_miss_reasons["sBTC"]
-        assert "tiingo" in reason
+        assert "yfinance" in reason
         assert "does not implement intraday quotes" in reason
 
     async def test_every_source_exhausted_records_a_named_reason(self, updater, monkeypatch):

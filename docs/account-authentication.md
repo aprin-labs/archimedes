@@ -104,7 +104,7 @@ Independently of enforcement, disposable accounts are bounded by three layers:
 1. Better Auth's production rate limiter: `/sign-up/email` at 3 per 10 minutes, and
    `/request-password-reset` + `/send-verification-email` at 3 per minute — all three
    pinned in `auth/auth.js` `rateLimit.customRules`. **What the bucket is keyed on**
-   ([#1691](https://github.com/a-apin/archimedes/issues/1691), fixed): every bucket key is
+   ([#1691](https://github.com/aprin-labs/archimedes/issues/1691), fixed): every bucket key is
    `${ip}|${path}`, and Better Auth trusts a forwarded header only when it carries exactly
    one value. Behind CloudFront → ALB → nginx each hop appends one, so until #1691 *no*
    client IP resolved and the entire internet shared one bucket per path — three password

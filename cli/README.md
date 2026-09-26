@@ -45,10 +45,37 @@ archimedes manifest                   emit this tool's machine-readable contract
 ```
 
 `login` prompts for email and password (or reads `ARCHIMEDES_EMAIL` / `ARCHIMEDES_PASSWORD`
-for CI) and caches the session cookie at `~/.config/archimedes/session.json`, mode 600.
-`meter`, `generate`, and `verify` read that cache; run `login` first. `generate` also
-accepts an `ARCHIMEDES_API_KEY` environment variable, which it sends as an
-`Authorization: Bearer` header for non-interactive use.
+for CI) and caches the session cookie at `~/.config/archimedes/session.json`, mode 600 —
+or wherever `--session-file` / `ARCHIMEDES_SESSION_FILE` points, see below. `meter`,
+`generate`, and `verify` read that cache; run `login` first. `generate` also accepts an
+`ARCHIMEDES_API_KEY` environment variable, which it sends as an `Authorization: Bearer`
+header for non-interactive use.
+
+## One session file per lane
+
+The session cache is a path, not a fixed location. `--session-file PATH` on `login`,
+`meter`, `verify` and `generate` — or `ARCHIMEDES_SESSION_FILE` in the environment, which
+the flag overrides — decides which file that invocation reads and writes:
+
+```bash
+# Two agents, one runner, two identities.
+ARCHIMEDES_SESSION_FILE=~/.archimedes/lane-a.json archimedes login   # as agent A
+ARCHIMEDES_SESSION_FILE=~/.archimedes/lane-b.json archimedes login   # as agent B
+ARCHIMEDES_SESSION_FILE=~/.archimedes/lane-a.json archimedes meter   # still agent A
+
+archimedes meter --session-file ~/.archimedes/lane-b.json            # or per command
+```
+
+Give every concurrent lane its own file. Sharing one file means sharing one identity: the
+second `login` overwrites the first, and the first lane carries on getting clean `200`s as
+somebody else — which is exactly what happened on 2026-09-01, when `$HOME` was the only
+lever there was ([#1752](https://github.com/aprin-labs/archimedes/issues/1752)).
+
+Every file the CLI writes here is mode 600 wherever you point it, and reads and writes take
+an advisory `flock` on it, so a lane that *does* share a file with another still never reads
+a half-written one. The same variable moves the MCP server's credential — it loads this
+cache rather than reimplementing it — so a per-agent `ARCHIMEDES_SESSION_FILE` in an
+`mcpServers` env block isolates that agent too.
 
 ## Generate
 
@@ -186,8 +213,8 @@ too.
 
 ## Links
 
-- [Repository](https://github.com/a-apin/archimedes)
-- [Issues](https://github.com/a-apin/archimedes/issues)
+- [Repository](https://github.com/aprin-labs/archimedes)
+- [Issues](https://github.com/aprin-labs/archimedes/issues)
 - [archimedes-arc.com](https://archimedes-arc.com)
 
 Released into the public domain under the [Unlicense](https://unlicense.org).

@@ -16,7 +16,7 @@
 >
 > **Lineage to read together:**
 > - [`docs/user-stories.md`](../user-stories.md) — the locked product spine (execute → monitor is this society's lane)
-> - [issue #760](https://github.com/a-apin/archimedes/issues/760) — the "blueprint" concept this spec formalizes (Type‑2 Agent Readiness Dependency Map)
+> - [issue #760](https://github.com/aprin-labs/archimedes/issues/760) — the "blueprint" concept this spec formalizes (Type‑2 Agent Readiness Dependency Map)
 > - [`docs/specs/strategy-lifecycle-spec.md`](./strategy-lifecycle-spec.md) — `Deployed → Active → Completed`; this society drives those transitions
 > - [`docs/specs/vault-semantics-spec.md`](./vault-semantics-spec.md) + [`docs/specs/commit-reveal-trace-spec.md`](./commit-reveal-trace-spec.md) — the on-chain settlement + provenance contracts
 > - [`docs/specs/selection-bias-corrections-spec.md`](./selection-bias-corrections-spec.md) + [`docs/specs/xia-2026-protocols.md`](./xia-2026-protocols.md) — `V_check`, Source Tracking, Hierarchy of Truth (consumed here, enforced upstream)
@@ -294,7 +294,7 @@ operational independence in §0.
 ## §6. Metered‑compute / nanopayment tie‑in
 
 Each **rebalance run is a discrete, attributable unit of compute** — exactly the
-shape the nanopayment marketplace ([issue #713](https://github.com/a-apin/archimedes/issues/713),
+shape the nanopayment marketplace ([issue #713](https://github.com/aprin-labs/archimedes/issues/713),
 x402 + Circle Gateway, sub-cent USDC) prices. This society is the natural metering
 boundary.
 

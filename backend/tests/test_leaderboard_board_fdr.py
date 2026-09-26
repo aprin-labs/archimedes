@@ -270,6 +270,12 @@ async def test_leaderboard_route_serves_the_board_fdr_block(monkeypatch):
     against a route that computed nothing. ``n_tested > 0`` is asserted
     explicitly so the vacuum can never come back quietly.
 
+    THE GRADING RUN IS ALSO ON PURPOSE (#1746 / PR-B). The board no longer grades
+    on read: it serves each strategy's stored verdict, and the numbers this
+    correction runs over are the ones a real gate run wrote. The vacuum this
+    guards against therefore has a second door — an ungraded corpus — and
+    ``n_tested > 0`` closes both.
+
     Patching at ``backtest_repository.get_all_daily_returns`` is the honest
     boundary (CLAUDE.md § "Mock at boundaries, not internals"): it substitutes
     the DB read only. The real ``run_rigor_gate`` computes every DSR, and the
@@ -293,6 +299,18 @@ async def test_leaderboard_route_serves_the_board_fdr_block(monkeypatch):
         "archimedes.services.backtest_repository.get_all_daily_returns",
         lambda session, sids: {sid: list(returns[sid]) for sid in sids if sid in returns},
     )
+
+    # THE grading event. Since #1746 / PR-B the board READS each row's stored
+    # verdict instead of grading the cohort per request, so the `dsr_p_value`s
+    # the BH correction runs over have to exist before the request — which is
+    # what the real gate run below writes. The patched DB read above is still
+    # the only seam; the gate and the correction are both real.
+    from archimedes.db import get_session
+    from archimedes.services.curated_grading import grade_curated_library
+
+    with get_session() as session:
+        grade_curated_library(session, provider=strategy_provider())
+        session.commit()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/api/leaderboard?scope=curated&limit=200")

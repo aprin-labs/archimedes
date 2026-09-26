@@ -201,6 +201,9 @@ No action needed.
   `portfolio_constructor.py`, `__init__.py`): zero references outside the
   folder; fully superseded by `portfolio_optimizer.py` +
   `portfolio_agent.py`. → `onder/remove-deprecated-portfolio-services`
+  **DONE as of 2026-09-01.** The two modules were removed earlier; the empty
+  `__init__.py` package shell went in the audit P1-1 dead-module sweep. There is
+  no `services/_deprecated/` in the tree any more.
 - `backend/archimedes/scripts/migrate_to_unified_passport_store.py`: one-shot,
   already-run migration; referenced only by itself and an archived doc
   (`docs/archive/launch-execution-plan-2026-05-23.md`). →

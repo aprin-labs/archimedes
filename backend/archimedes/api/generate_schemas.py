@@ -35,13 +35,40 @@ _MAX_PAPERS_DEFAULT = 8  # == archimedes.agents.strategy_fusion.DEFAULT_MAX_PAPE
 # any control character that survives collapsing (NUL, ESC, DEL, …) is a
 # hard reject — those never belong in a display name.
 NAME_MAX_LEN = 80
-_NAME_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+#: Control characters that survive whitespace collapsing. Public because
+#: ``archimedes.services.brief_screen`` screens the BRIEF with the same rule —
+#: one definition, not two held together by a drift test (#1801).
+CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+_NAME_CONTROL_CHARS = CONTROL_CHARS  # back-compat alias for the private name
+
+# Brief length bounds (#1801). Before this the intent was UNBOUNDED: it lands
+# verbatim in the validator message and, as ``strategic_direction``, verbatim
+# in the fusion proposer prompt for every steer, so an unbounded intent is an
+# unbounded per-generation token bill and an unbounded injection surface.
+# 600 is ~3x the longest entry in the in-app Surprise Me bank (211 chars) and
+# ~3x the 90–200 char ceiling docs/writing-a-brief.md already recommends.
+# ``brief_screen`` reads INTENT_MAX_LEN from here so the schema bound and the
+# screener's ``shape.too_long`` can never drift apart; the UI's ``maxLength``
+# is pinned to the same number by ui/test/generate-brief-limits.test.js.
+INTENT_MIN_LEN = 1
+INTENT_MAX_LEN = 600
 
 
 class GenerateBrief(BaseModel):
     """User-supplied generation brief."""
 
-    intent: str = Field(..., description="Free-text strategy request")
+    intent: str = Field(
+        ...,
+        min_length=INTENT_MIN_LEN,
+        max_length=INTENT_MAX_LEN,
+        description=(
+            f"Free-text strategy request, {INTENT_MIN_LEN}\u2013{INTENT_MAX_LEN} characters. "
+            "Bounded because it is interpolated verbatim into every prompt the "
+            "generation spends on (#1801); content screening lives in "
+            "archimedes.services.brief_screen, which runs before the paywall."
+        ),
+    )
     risk_appetite: Literal["fixed_income", "conservative", "moderate", "aggressive", "hyper_risky"] = "moderate"
     asset_classes: list[str] | None = None
     capital_usdc: float | None = None

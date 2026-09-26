@@ -168,15 +168,92 @@ test("public shell lazy-loads wallet and protected application code", () => {
 	assert.match(authenticated, /from ["']\.\/config["']/);
 });
 
-test("anonymous browse pages resolve as app routes that allow no session (#1194 rev d)", () => {
-	for (const path of ["/app", "/app/explore", "/app/leaderboard", "/app/corpus"]) {
+test("anonymous browse pages resolve as app routes that allow no session (#1753)", () => {
+	for (const path of ["/app", "/app/explore", "/app/corpus"]) {
 		const route = resolveRoute(path);
 		assert.equal(route.kind, "app", path);
 		assert.equal(route.anonymousOk, true, path);
 	}
-	// Strategy DETAIL deep links are anonymous too — a leaderboard row must be
-	// openable by the skeptic who clicked it.
-	assert.equal(resolveRoute("/app/strategy/alpha").anonymousOk, true);
+});
+
+test("ANON_APP_PAGES is Explore and Corpus — the owner's decision, pinned (#1753)", () => {
+	// The owner's call on #1753 narrowed #1194 rev d: signed-out visitors
+	// browse Explore and Corpus, and nothing else. The per-path assertions
+	// above and below are both one-directional — this is the set itself, so
+	// widening it is a deliberate edit to a line that says whose call it is.
+	// Its server-side half (the nginx carve-outs) is pinned, and locked to
+	// this same set, by backend/tests/test_nginx_anonymous_carve_outs.py.
+	for (const page of ["explore", "corpus"]) {
+		assert.equal(isAnonymousAppPage(page), true, page);
+	}
+	for (const page of [
+		"leaderboard",
+		"strategy",
+		"library",
+		"paper",
+		"generate",
+		"account",
+		"insights",
+		"quant",
+		"reasoning",
+		"learnings",
+		"portfolio",
+		"marketplace",
+		"publish",
+		"subscriptions",
+	]) {
+		assert.equal(isAnonymousAppPage(page), false, page);
+	}
+});
+
+test("the leaderboard and the strategy passport are gated (#1753)", () => {
+	// Both WERE anonymous under #1194 rev d. The owner gated them, so a
+	// signed-out visitor opening either must be routed to sign-in rather than
+	// served the page — App.jsx keys that bounce off `anonymousOk`, and nginx
+	// answers the cold load with its own @sign_in 302 (next= preserved).
+	const board = resolveRoute("/app/leaderboard");
+	assert.equal(board.kind, "app");
+	assert.equal(board.anonymousOk, false);
+	const passport = resolveRoute("/app/strategy/alpha");
+	assert.equal(passport.kind, "app");
+	assert.equal(passport.page, "strategy");
+	assert.equal(passport.strategyId, "alpha");
+	assert.equal(passport.anonymousOk, false);
+});
+
+test("a gated deep link survives the round trip through sign-in (#1753)", () => {
+	// Gating the passport is only honest if the share link still lands where
+	// it pointed after the visitor signs in. nginx's @sign_in emits
+	// `302 /sign-in?next=$uri&$args` and App.jsx's redirect effect builds the
+	// same shape client-side; AuthPage feeds that query to postAuthPath.
+	assert.equal(
+		postAuthPath("?next=%2Fapp%2Fstrategy%2Falpha"),
+		"/app/strategy/alpha",
+	);
+	assert.equal(
+		postAuthPath("?next=%2Fapp%2Fstrategy%2Falpha%3Ftab%3Dbrief"),
+		"/app/strategy/alpha?tab=brief",
+	);
+	// The assertion above encodes `?tab=brief` INSIDE `next`, which is not the
+	// shape production emits: `return 302 /sign-in?next=$uri&$args` puts the
+	// deep link's args alongside `next` as SIBLING params, and a different
+	// branch of postAuthPath reassembles them onto the destination. That branch
+	// was reachable by no assertion here — deleting it whole left this test
+	// green — so the nginx shape is pinned literally.
+	assert.equal(
+		postAuthPath("?next=%2Fapp%2Fstrategy%2Fabc123&tab=brief&ref=twitter"),
+		"/app/strategy/abc123?tab=brief&ref=twitter",
+	);
+	assert.equal(postAuthPath("?next=%2Fapp%2Fleaderboard"), "/app/leaderboard");
+	// An off-site `next` is still refused — gating a page must not turn the
+	// sign-in redirect into an open redirect.
+	assert.equal(postAuthPath("?next=https%3A%2F%2Fevil.example%2Fapp"), "/app");
+	// ...and a refused `next` takes its sibling args down with it, rather than
+	// grafting an attacker's query onto the fallback destination.
+	assert.equal(
+		postAuthPath("?next=https%3A%2F%2Fevil.example%2Fapp&tab=x"),
+		"/app",
+	);
 });
 
 test("auth-required pages stay auth-required", () => {
@@ -286,12 +363,14 @@ test("Library's in-page Published tab hides with the marketplace surface it lead
 });
 
 test("the strategy passport's back control never signs out an anonymous visitor (#1370)", () => {
-	// The passport is deliberately deep-link reachable with no session
-	// (#1194 rev d), but 'library' is wallet-gated and not anonymous-OK —
-	// resolving the back button straight to onNavigate('library') tripped
-	// App.jsx's anonymous-page redirect and bounced a visitor who was never
-	// signed in out to /sign-in. The helper must resolve anonymous visitors
-	// to a page isAnonymousAppPage() actually allows.
+	// 'library' is wallet-gated and not anonymous-OK, so resolving the back
+	// button straight to onNavigate('library') tripped App.jsx's
+	// anonymous-page redirect and bounced a visitor who was never signed in
+	// out to /sign-in. Since #1753 the passport is itself gated, so the
+	// user == null branch is a FAIL-SAFE rather than a live flow — a control
+	// must not be able to eject a sessionless render whoever produced it.
+	// The helper must resolve anonymous visitors to a page
+	// isAnonymousAppPage() actually allows.
 	assert.equal(isAnonymousAppPage(passportBackPage(null)), true);
 	// A signed-in visitor keeps going back to their own Library.
 	assert.equal(passportBackPage({ id: "u1" }), "library");
@@ -343,13 +422,20 @@ test("the strategy passport component actually wires the back-navigation helpers
 test("anonymous nav shows browse + the Generate conversion path, nothing stateful", () => {
 	const nav = [
 		{ id: "explore" },
+		{ id: "corpus" },
+		{ id: "leaderboard" },
 		{ id: "generate" },
 		{ id: "portfolio" },
 		{ id: "marketplace" },
 		{ id: "account" },
 	];
+	// 'leaderboard' is filtered out as of #1753: it is no longer browsable,
+	// and a nav entry for a page canNavigateTo() refuses is an affordance that
+	// only ejects the visitor to /sign-in. 'generate' stays — it is the
+	// conversion path, and routing to sign-in is what clicking it MEANS.
 	assert.deepEqual(visibleNavigation(nav, { quant: true }, null), [
 		{ id: "explore" },
+		{ id: "corpus" },
 		{ id: "generate" },
 	]);
 });
@@ -367,8 +453,11 @@ test("canNavigateTo gates on ANON_APP_PAGES for a null user, always true when si
 	// anti-goal warns against gating on an id allowlist instead of this.
 	assert.equal(canNavigateTo("generate", null), false);
 	assert.equal(canNavigateTo("explore", null), true);
-	assert.equal(canNavigateTo("leaderboard", null), true);
 	assert.equal(canNavigateTo("corpus", null), true);
+	// 'leaderboard' and 'strategy' left ANON_APP_PAGES with #1753 and must
+	// now be refused for an anonymous visitor exactly like 'library'.
+	assert.equal(canNavigateTo("leaderboard", null), false);
+	assert.equal(canNavigateTo("strategy", null), false);
 	// Any page is navigable once a user is present — canNavigateTo does not
 	// re-derive ANON_APP_PAGES for the signed-in branch.
 	assert.equal(canNavigateTo("library", { id: "u1" }), true);

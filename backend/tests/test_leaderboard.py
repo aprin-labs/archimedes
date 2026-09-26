@@ -9,6 +9,7 @@ last, and the scoring-engine metadata is always intact.
 
 from __future__ import annotations
 
+import numpy as np
 from archimedes.api.schemas import StrategyResponse
 from archimedes.services.leaderboard import (
     OOS_TARGET,
@@ -382,30 +383,47 @@ async def test_leaderboard_not_degraded_when_curated_cohort_has_real_strategies(
     assert body["degraded"] is False
 
 
-async def test_leaderboard_batches_rigor_gate_once(monkeypatch):
-    """Regression for #912: the public leaderboard must run the rigor gate ONCE
-    over the whole cohort (batch), not recompute it per strategy. The per-
-    strategy path (_live_verdict_for_one + _live_rigor_result_for_one, 2 DB reads
-    + 2 gate runs each) on an unauth, unratelimited endpoint is a trivial DoS."""
-    from unittest.mock import MagicMock
+async def test_leaderboard_runs_no_rigor_gate_at_all(monkeypatch):
+    """Regression for #912, strengthened by #1746.
 
-    import archimedes.api.strategies_routes as sr
+    #912: the public leaderboard must not recompute the rigor gate per strategy —
+    two DB reads and two gate runs each, on an unauthenticated, unratelimited
+    endpoint, is a trivial DoS. The fix then was to batch it into one cohort run.
+
+    #1746 removed the run entirely: the verdict is graded once, when a curated
+    backtest runs, and this route READS it (one batched query over
+    ``strategy_passports``). Zero is the new one, and it is a stronger property
+    than "batched" — a board that grades nothing cannot disagree with the same
+    strategy's passport, which is what #1746 was about.
+
+    MUTATION: restore ``grade_cohort(strategies)`` in
+    ``leaderboard_routes._curated_cohort_responses``. The spy fires and this
+    reddens.
+    """
     from archimedes.main import app
+    from archimedes.services.rigor_evaluator import run_rigor_gate as _real_gate
     from httpx import ASGITransport, AsyncClient
 
-    batch = MagicMock(return_value={})
-    per_verdict = MagicMock()
-    per_result = MagicMock()
-    monkeypatch.setattr(sr, "_live_rigor_results_for_strategies", batch)
-    monkeypatch.setattr(sr, "_live_verdict_for_one", per_verdict)
-    monkeypatch.setattr(sr, "_live_rigor_result_for_one", per_result)
+    calls: list = []
+
+    def _counting(*args, **kwargs):
+        calls.append(kwargs.get("strategy_id"))
+        return _real_gate(*args, **kwargs)
+
+    monkeypatch.setattr("archimedes.services.rigor_evaluator.run_rigor_gate", _counting)
+    # Real persisted returns for every id — ANTI-VACUITY. With an empty returns
+    # map a reintroduced cohort run finds nothing to grade and calls the gate
+    # zero times anyway, so this guard would pass against the very code it
+    # exists to refuse (caught by running MUTATION 11 against the empty-map
+    # version of this test).
+    rng = np.random.default_rng(11)
+    monkeypatch.setattr(
+        "archimedes.services.backtest_repository.get_all_daily_returns",
+        lambda session, ids: {sid: rng.normal(0.001, 0.005, 300).tolist() for sid in ids},
+    )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/api/leaderboard")
 
     assert resp.status_code == 200
-    # Exactly one batched gate run for the whole board ...
-    assert batch.call_count == 1
-    # ... and never the per-strategy recompute.
-    assert per_verdict.call_count == 0
-    assert per_result.call_count == 0
+    assert calls == [], f"the public leaderboard ran the rigor gate {len(calls)} times; it must read a stored verdict"

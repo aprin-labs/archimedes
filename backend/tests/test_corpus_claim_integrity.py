@@ -78,7 +78,7 @@ def _repo_root() -> Path:
 #: nothing and the guard would pass vacuously.
 PUBLIC_SURFACES: tuple[str, ...] = (
     "README.md",
-    "docs/README.md",
+    "docs/doc-index.md",
     "docs/architecture.md",
     "docs/corpus-architecture.md",
     "docs/specs/architecture-page-design.md",
@@ -386,7 +386,7 @@ PRE_FIX_CORPUS_GRAPH_UI_STRING = (
         ("README § Status", PRE_FIX_README_STATUS_LINE, "embed_at_ingest"),
         ("README § Known Limitations", PRE_FIX_README_LIMITATION_LINE, "semantic_retrieval_is_live"),
         ("docs/architecture.md § corpus flow", PRE_FIX_ARCHITECTURE_DOC_LINE, "embed_at_ingest"),
-        ("docs/README.md doc index", PRE_FIX_DOCS_INDEX_CELL, "minilm_rerank_is_live"),
+        ("doc register row", PRE_FIX_DOCS_INDEX_CELL, "minilm_rerank_is_live"),
         ("CorpusGraph.jsx empty state", PRE_FIX_CORPUS_GRAPH_UI_STRING, "embeddings_are_live"),
     ],
 )

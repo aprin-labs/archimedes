@@ -43,8 +43,9 @@ pressure. Instead:
 
 - **Additive at the time of writing.** A new `backend/archimedes/agents/strategy_fusion.py`. (Since superseded by adoption: it is now imported by the API routes, the debate engine, and tests — this spec describes its introduction, not its current wiring.) Originally nothing imported it
   yet; wiring it into a route is a later, separately reviewable step.
-- **Flagged.** `ARCHIMEDES_FUSION_ENABLED` (default OFF). Flag-off is a hard inert path:
-  no LLM call, no corpus read, returns a self-describing sentinel.
+- **Flagged.** ~~`ARCHIMEDES_FUSION_ENABLED` (default OFF). Flag-off is a hard inert path:
+  no LLM call, no corpus read, returns a self-describing sentinel.~~ **RETIRED 2026-09-02
+  (deck Q4)** — see § The feature flag below. Fusion is unconditional.
 - **Revertible.** Deleting the module and the spec fully reverts the change. The architect,
   guardrail, construction-trace, and the on-chain flow are byte-for-byte untouched.
 - **Seam-faithful.** It mirrors the architect's `LLMBackend` Protocol seam, lazy `anthropic`
@@ -203,9 +204,20 @@ sentinel, never an exception.
   proposal. No crash, no fabricated papers.
 - Extra/unknown fields are ignored (forward-compatible with manifest schema growth).
 
-## The feature flag
+## The feature flag — RETIRED 2026-09-02 (deck Q4)
 
-`ARCHIMEDES_FUSION_ENABLED`, default **OFF**. Truthy = `{"1","true","yes","on"}`
+**There is no fusion flag any more.** Fusion is the unconditional generation path:
+the debate society is the sole pipeline and every proposer routes through
+`StrategyFusion.propose()`, so the OFF branch below could only make Generate
+silently return nothing while every deployed environment pinned the flag `true`.
+The reader, the OFF branch and every injection site were deleted;
+`backend/tests/test_fusion_flag_retired.py` fails if a fusion switch comes back
+under any name. `/health` no longer publishes `fusion_enabled` either — the key
+was dropped on 2026-09-03 rather than frozen at a constant `true`, since nothing
+consumed it.
+The rest of this section is kept as the historical description of what was removed.
+
+~~`ARCHIMEDES_FUSION_ENABLED`, default **OFF**.~~ Truthy = `{"1","true","yes","on"}`
 case-insensitively (the parsing convention shared with the rest of the env surface).
 Mechanism mirrors `ARCHIMEDES_STRATEGIES_DIR`: a plain `os.getenv` read, no central
 settings module (there is none in this codebase — env overrides are the established
@@ -259,11 +271,15 @@ at an in-memory `FusionProposal`. The eventual shape:
   `ReasoningTraceRegistry`, exactly as construction traces are anchored — *without
   modifying that flow now*. The anchor would bind *"this novel combination of these N
   papers was proposed at time T by this served model"*.
-- **IPFS-pin the full reasoning.** The full fusion reasoning + the resolved source paper
-  metadata pinned to IPFS, with the CID in the on-chain anchor — a public, permanent,
-  **falsifiable** novelty claim: anyone can fetch the papers, read the synthesis, and
-  argue the combination was in fact already published. Being falsifiable is the point;
-  it is the on-chain analogue of the McLean–Pontiff discipline.
+- **Public-storage pin of the full reasoning (owner-gated; not live).** The full fusion
+  reasoning + the resolved source paper metadata in a public store, with a pointer in
+  the on-chain anchor — a public, permanent, **falsifiable** novelty claim: anyone can
+  fetch the papers, read the synthesis, and argue the combination was in fact already
+  published. Being falsifiable is the point; it is the on-chain analogue of the
+  McLean–Pontiff discipline. Do not rebuild the deleted Pinata client to land this:
+  live reveal is hash-only (`docs/adr/ipfs-pinning-not-live.md`). Re-enablement needs
+  an owner-seeded JWT, `infra/ecs.tf` `secrets{}`, a rebuilt pin client, and a CID
+  proven on a public gateway.
 - **Novelty decay tracking.** Once anchored, a fusion's novelty is itself a decaying
   quantity (its own publication is the decay trigger). A future loop re-scores anchored
   fusions against newer corpus snapshots and rotates capital away from syntheses the
@@ -284,4 +300,5 @@ discipline by which this module is itself additive and flagged.
 - [x] Backend seam mirrors the architect (lazy `anthropic`, `extract_json`, fallback).
 - [x] Records `response.model` as `model`; keeps `requested_model` separately.
 - [x] Mocked-client tests; no network; self-contained fixture manifest.
-- [ ] (Future, not this PR) Route wiring, on-chain anchor, IPFS pin, novelty-decay loop.
+- [ ] (Future, not this PR) Route wiring, on-chain anchor, public-storage pin
+      (owner-gated; see `docs/adr/ipfs-pinning-not-live.md`), novelty-decay loop.

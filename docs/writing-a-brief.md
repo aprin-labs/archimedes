@@ -2,13 +2,15 @@
 
 > **status:** current
 > **owner:** Dan Browne
-> **updated:** 2026-08-31
+> **updated:** 2026-09-02
 > **superseded-by:** —
 
 The long-form guide to prompting the Generate page. The app itself carries a one-line hint
 and a link here; this is the version with the reasoning, the failure modes, and the worked
 examples. If you are looking for *what the endpoint accepts*, that is
-[`api/generation.md`](api/generation.md) — this doc is about what to type.
+[`api/generation.md`](api/generation.md); if you are looking for *what a brief may not
+contain* and why yours was refused, that is [`brief-guidelines.md`](brief-guidelines.md).
+This doc is about what to type.
 
 ## 1. The three parts of a brief that works
 
@@ -62,12 +64,15 @@ preservation`). That is the whole shape.
 4. **Asking for a specific number.** "Get me a Sharpe above 2" is not a mechanism, and the
    rigor gate exists precisely to stop that from being an instruction. Ask for a property
    (drawdown-capped, income-first, market-neutral), not a metric target.
-5. **Off-topic or adversarial text.** Rejected by the LLM validator, after the credit is
-   spent. Obviously-junk text — empty, a few characters, keyboard mash — is caught earlier
-   and for free by the deterministic pre-check
-   (`cheap_brief_reject`, `backend/archimedes/agents/generation_pipeline.py`), which is
-   deliberately permissive about *unfamiliar* vocabulary: "muni ladder" and non-English
-   text pass it.
+5. **Off-topic or adversarial text.** Two different things now, since #1801. *Adversarial*
+   text — instructions aimed at the model, links, code fences, encoded blobs, forged JSON
+   replies — and obviously-junk text — empty, a few characters, keyboard mash, over 600
+   characters — are caught before the paywall and for free, by the deterministic screen
+   (`backend/archimedes/services/brief_screen.py`); the full rule list and its reason codes
+   are [`brief-guidelines.md`](brief-guidelines.md). *Off-topic but grammatical* text (a
+   recipe) still reaches the model validator and is rejected after the credit is spent.
+   The screen stays deliberately permissive about *unfamiliar* vocabulary: "muni ladder",
+   "XIU.TO" and non-English text all pass it.
 
 ## 4. Length and specificity
 
@@ -76,6 +81,10 @@ deliberate ceiling rather than an accident: past a couple of clauses, briefs sta
 specifying implementation details ("rebalance on the third Friday") that the pipeline
 either ignores or, worse, over-fits toward. State the intent and let the fusion stage
 choose the mechanics.
+
+The **hard** limit is 600 characters, enforced by the request schema, by the screen, and by
+the textarea's own counter — roughly three times the longest bank entry, so it bites only
+on a paste. See [`brief-guidelines.md` § 2](brief-guidelines.md).
 
 ## 5. Worked upgrades
 
@@ -95,7 +104,7 @@ consecutive presses never repeat.
 Two honest notes about that bank, because it is easy to over-read:
 
 - **Only three entries have been run through the live pipeline** — the dogfood-proven
-  carry-overs from the 2026-07-04 bake-off ([PR #875](https://github.com/a-apin/archimedes/pull/875)).
+  carry-overs from the 2026-07-04 bake-off ([PR #875](https://github.com/aprin-labs/archimedes/pull/875)).
   Their per-entry status comments say so in the file.
 - **The rest are curated copy.** They are written to the shape in § 1, machine-checked
   against `cheap_brief_reject` (`backend/tests/test_surprise_briefs_quality.py`) and against

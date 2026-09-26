@@ -97,8 +97,9 @@ account (existence is private, same rule as the routes above).
 
 **Marks are the unsettled view, not the track record.** `series` on the
 deployment summary comes from `paper_daily_returns`, which is append-only by
-law and is what carries to mainnet. A mark is a decoration with a TTL: raw
-15-minute marks are kept 7 days, rolled up to one-per-hour for 90, then
+law and is the recorded paper track record — Arc testnet, no real funds. A
+mark is a decoration with a TTL: raw 15-minute marks are kept 7 days, rolled
+up to one-per-hour for 90, then
 **deleted** (there is nothing worth aggregating to past that — the daily close
 is already stored permanently in the ledger). A client must render the two
 distinguishably and must never present a mark as a settled return.
@@ -218,6 +219,10 @@ return this same shape (a bare list of it for `GET /deployments`):
 | `days` | int | Number of daily ledger rows written so far. |
 | `total_return` | float | Compounded return over the ledger, `equity_index - 1.0` on the last row (`0.0` with zero rows). |
 | `drift_detected_at` | str (datetime) \| null | Set the first time a fresh replay disagreed with an already-written ledger row; never cleared automatically once set. |
+| `rigor_gate_status` | str | The **verdict of record** — `pass` \| `fail` \| `pending` \| `degenerate`. Read from `strategy_passports`, never recomputed. `pending` when the strategy has no passport row at all: the read fails closed, so this key never reports a pass it did not find. |
+| `passes_rigor_gate` | bool \| null | The fail-closed boolean, DERIVED from `rigor_gate_status` (`== "pass"`), not copied from the stored column. `null` — never `false` — when no gate ever graded the strategy: `false` is a verdict ("the gate ran and this lost") and no gate ran. |
+| `graded_at` | str (datetime) \| null | When that verdict was produced. Naive UTC, so it carries **no offset** — read the calendar day it names rather than handing it to a local-time parser. `null` means never graded. |
+| `gate_version` | str \| null | WHICH gate produced the verdict (`services/rigor_gate_version.py`). Two deployments with different values were graded by different gates and are not comparable. The literal `legacy-derived` marks a verdict the verdict-of-record migration INFERRED from pre-existing columns rather than one a gate run produced. |
 | `series` | array | One entry per ledger day, oldest first — see below. |
 | `latest_mark` | object \| null | The most recent intraday mark, same shape as [`GET .../marks`](#get-apipaperdeploymentsdeployment_idmarks) returns, so a list view can render a live value without a second round trip. **`null` is a real state** (no mark yet) and must render as an em-dash with a reason, never `+0.00%`. Always a separate key from `total_return`, never folded into it: `total_return` is the settled track record; a mark is unsettled. |
 
@@ -238,6 +243,10 @@ Each `series` entry:
   "days": 3,
   "total_return": 0.0142,
   "drift_detected_at": null,
+  "rigor_gate_status": "fail",
+  "passes_rigor_gate": false,
+  "graded_at": "2026-08-30T11:22:33",
+  "gate_version": "gate-v1-4f2a9c1e07b3d5a8",
   "latest_mark": {
     "ts": "2026-08-30T14:45:00+00:00", "portfolio_value": 1.0347, "source": "yfinance",
     "is_delayed": true, "granularity": "raw", "prices": {"SPY": 512.34}
@@ -250,8 +259,60 @@ Each `series` entry:
 }
 ```
 
+## Deploy at will, with the verdict beside the record
+
+There is **no rigor precondition on deploying**. `POST /deployments` checks that
+the caller owns (or may read the reasoning of) the strategy and that its stored
+spec still validates — and nothing else. A strategy the rigor gate REJECTED can
+be paper-traded, deliberately: owner decision (Dan, 2026-09-01, issue #1764) is
+that a rejected strategy performing poorly forward is evidence about the gate's
+call, and a passed one tracking its backtest is evidence too. Vault / on-chain
+deployment is a different question and stays gated.
+
+That freedom is only honest if the verdict travels with the numbers, which is
+what the four fields above are for. A client rendering `total_return` **must**
+render the verdict beside it. Three rules the shipped UI follows and any other
+client should:
+
+1. **The verdict is a read, never a re-grade.** It is the grade stored at
+   backtest time (`docs/adr/rigor-verdict-of-record.md`). Do not recompute a
+   verdict from the DSR/PBO numbers on the passport — a client that did would
+   put a different answer on the deployment card than the strategy's own
+   passport shows.
+2. **All four states get their own answer.** `pending` is "no gate has graded
+   this", NOT a failure; `degenerate` is "the persisted series was flat, so the
+   gate had nothing it could legitimately score", NOT a failure either. Only a
+   literal `pass` may be rendered as one.
+3. **A missing verdict is rendered as missing.** If `rigor_gate_status` is
+   absent (an old server behind a new client), say so — never fall back to
+   silence beside the number, and never to a pass.
+
+**The same verdict is on the live-paper board.** `GET
+/api/leaderboard/live-paper` — the "Live paper trading" tab, whose rows are
+these same deployments ranked by realised forward return — carries
+`rigor_gate_status`, `graded_at` and `gate_version` on every row, read from the
+same passport row by the same code. It deliberately does NOT carry
+`passes_rigor_gate`: a bare boolean beside a forward return is the field a
+consumer would blend or sort on, and that board's whole point is that nothing
+backtest-era enters its ranking. See
+[`leaderboard-and-metrics.md`](leaderboard-and-metrics.md).
+
+**There is no `outside_window` field, and no deployment window.** #1764's
+acceptance asked for one; nothing in this product declares a deployment time
+window — not the DSL spec, not `strategy_store`, not `strategy_passports`, not
+`paper_deployments`. The only windows in the tree are the vault window
+(`docs/specs/vault-semantics-spec.md`, out of scope for the paper-only cut) and
+the BACKTEST window (`backtest_start` / `backtest_end`), which every forward
+paper deployment is outside of by construction — a flag that is always true is
+not a disclosure. What actually carries staleness is `graded_at` beside
+`deployed_at`: both are on this payload, and the gap between them is the honest
+quantity. If a declared deployment window is ever added to the strategy schema,
+this is where the flag belongs.
+
 ---
 
 See also: `backend/archimedes/services/paper_trading.py` (replay + ledger
-mechanics) and `docs/specs/strategy-dsl-spec.md` (the DSL the snapshot spec
-must validate against).
+mechanics), `backend/archimedes/services/passport_loader.py`
+(`stored_rigor_verdict` — the verdict read) and
+`docs/specs/strategy-dsl-spec.md` (the DSL the snapshot spec must validate
+against).

@@ -31,6 +31,19 @@ EXIT_CODES = {
     "8": "STILL_RUNNING — the CLI stopped waiting; the job is NOT cancelled and may still finish",
 }
 
+# Declared once and shared by every command that touches the session cache: the same
+# flag, the same env var, the same meaning on all four. Four copies of this prose would
+# be four places for it to drift (#1752).
+SESSION_FILE_INPUT = {
+    "env": "ARCHIMEDES_SESSION_FILE",
+    "default": "~/.config/archimedes/session.json",
+    "meaning": (
+        "which session cache this invocation reads/writes; the flag wins over the env var. "
+        "Give each concurrent agent its own file — two lanes sharing one file share one "
+        "identity, and the second `login` wins"
+    ),
+}
+
 MANIFEST: dict = {
     "tool": "archimedes",
     "version": __version__,
@@ -45,13 +58,14 @@ MANIFEST: dict = {
             "description": "Authenticate with an Archimedes account and cache the session cookie.",
             "inputs": {
                 "--api-url": {"env": "ARCHIMEDES_API_URL", "default": "https://archimedes-arc.com"},
+                "--session-file": SESSION_FILE_INPUT,
                 "--json": {"flag": True},
                 "email": {"env": "ARCHIMEDES_EMAIL", "prompted_if_absent": True},
                 "password": {"env": "ARCHIMEDES_PASSWORD", "prompted_if_absent": True, "hidden": True},
             },
             "output": {"ok": "bool", "email": "str"},
             "cost_class": "network: 2 HTTP calls (sign-in + session round-trip); no funds, no chain",
-            "side_effects": "writes ~/.config/archimedes/session.json (mode 600)",
+            "side_effects": "writes the session cache (mode 600) — see --session-file for where",
         },
         "meter": {
             "implemented": True,
@@ -61,6 +75,7 @@ MANIFEST: dict = {
                     "env": "ARCHIMEDES_API_URL",
                     "default": "the cached session's URL, else https://archimedes-arc.com",
                 },
+                "--session-file": SESSION_FILE_INPUT,
                 "--json": {"flag": True},
             },
             "output": {
@@ -82,6 +97,7 @@ MANIFEST: dict = {
                     "env": "ARCHIMEDES_API_URL",
                     "default": "the cached session's URL, else https://archimedes-arc.com",
                 },
+                "--session-file": SESSION_FILE_INPUT,
                 "--json": {"flag": True},
             },
             "output": {
@@ -117,6 +133,7 @@ MANIFEST: dict = {
                     "env": "ARCHIMEDES_API_URL",
                     "default": "the cached session's URL, else https://archimedes-arc.com",
                 },
+                "--session-file": SESSION_FILE_INPUT,
                 "--json": {"flag": True},
             },
             "output": {

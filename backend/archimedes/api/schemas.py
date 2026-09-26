@@ -153,16 +153,33 @@ class VaultListResponse(BaseModel):
 
 
 class PaperRefResponse(BaseModel):
-    """A single paper reference in a strategy passport."""
+    """A single paper reference in a strategy passport.
+
+    The wire projection of one ``assoc/v1`` association (#1637) — see
+    ``models/paper_assoc.py``. Every enrichment field is nullable and stays
+    null when unknown: authors, venue, year and DOI are structurally NULL for
+    generated strategies today, and ``null`` is the honest rendering of that.
+    """
 
     arxiv_id: str | None = None
-    title: str = ""
+    #: ``None``, not ``""``, when no title resolves — the renderer prints
+    #: "title unavailable — arXiv:<id>" rather than an empty pair of quotes.
+    title: str | None = None
     authors: list[str] = []
     doi: str | None = None
     venue: str | None = None
     year: int | None = None
     citation_count: int | None = None
     contribution: str | None = None
+    #: "cited" | "considered". ``papers[]`` carries only cited associations
+    #: today; the field is here so a consumer never has to assume.
+    role: str = "cited"
+    selection_rank: int | None = None
+    #: Reranker score at selection time. ``None`` whenever the rerank was
+    #: keyword-only or disabled — which is the common case. Never 0.0.
+    semantic_score: float | None = None
+    #: Corpus content hash. NULL in production until #1091 hydrates it.
+    content_hash: str | None = None
 
 
 class StrategyResponse(BaseModel):
@@ -267,15 +284,26 @@ class StrategyResponse(BaseModel):
     # ── Metric provenance (A3 / #1187) ──────────────────────────────────────
     # Which source produced the RIGOR numbers above (deflated_sharpe_ratio,
     # dsr_p_value, pbo_score, out_of_sample_sharpe):
-    #   "live_gate"   — the live run_rigor_gate call on persisted real returns
-    #   "unavailable" — the gate could not run; every rigor field is None
+    #   "stored_grade" — the numbers the STORED grade produced, read off
+    #                    strategy_passports beside the verdict that same gate run
+    #                    produced (docs/adr/rigor-verdict-of-record.md)
+    #   "live_gate"    — a live run_rigor_gate call on persisted real returns.
+    #                    No longer reachable from the curated read path (#1746 /
+    #                    PR-B moved that grade to the write side); still the
+    #                    honest label for a surface that genuinely recomputes,
+    #                    which the deploy ladder at
+    #                    GET /api/selection-bias/gate/{id} deliberately does.
+    #   "unavailable"  — no grade to read; every rigor field is None
     #
     # There is deliberately no "persisted_backtest" value. #1187/#1340 removed
     # the `s.<field> ?? bt.<field>` fallback that served fixture constants
     # beside live numbers, so a persisted rigor column can no longer reach a
     # response at all. The value's ABSENCE from this enum is the assertion that
     # the fallback is gone — if it ever reappears, something has to add it back
-    # here and that shows up in a diff.
+    # here and that shows up in a diff. "stored_grade" is not that fallback
+    # returning: those columns are now written by, and only by, a gate run
+    # (passport_loader._apply_rigor_verdict), and a row with no `graded_at`
+    # serves None rather than whatever a fixture sync left behind.
     metrics_source: str = "unavailable"
     # Which source produced the DISPLAY metrics (sharpe_ratio, cagr, win_rate,
     # max_drawdown, calmar_ratio, sortino_ratio, correlation_to_spy,
@@ -557,6 +585,30 @@ class TraceVerifyResponse(BaseModel):
     vault: str = ""
     on_chain_timestamp: int = 0
     details: str  # Human-readable result
+    # ── Source-paper verification (#1637) ────────────────────────────────
+    # ``verify_source_papers`` had ZERO production callers: /verify re-hashed
+    # the trace body and never checked that the papers it claims to have
+    # consulted exist. The "trace-verify button" could not verify the half of
+    # the trace that carries the research provenance.
+    #
+    # Tri-state for the same reason ``verification_mode`` is: None means NOT
+    # CHECKED, and the two ways that happens are named in
+    # ``source_paper_verification.mode`` — the trace claimed no papers, or the
+    # corpus was unreachable. Neither is a pass and neither is a failure, and
+    # collapsing either into ``False`` would report a fabricated provenance
+    # failure while collapsing it into ``True`` would report a fabricated pass.
+    #
+    # And what a ``True`` here means is EXISTENCE, not a hash comparison:
+    # corpus ``content_hash``/``pdf_sha256`` are NULL until #1091, so a claimed
+    # suffix is empty and the check is "the corpus has this paper". Every
+    # surface that renders this must say so (owner decision Q8 on #1688) —
+    # ``ui/src/trace-binding.js:sourcePapersCopy`` is the one place that copy
+    # lives.
+    papers_verified: bool | None = None
+    #: ``{"mode", "checked", "verified", "missing", "hash_mismatch"}`` — None
+    #: when nothing was attempted (the anchored-only branch has no off-chain
+    #: body to read a cited set out of).
+    source_paper_verification: dict[str, Any] | None = None
     # Temporal binding verification
     temporal_binding_valid: bool | None = None
     commit_block_number: int | None = None

@@ -8,7 +8,7 @@ Per-surface HTTP API reference for the FastAPI backend (and the colocated
 Better Auth Node sidecar). Each doc below covers one capability area: what
 each route does, its exact auth requirement, request/response shapes, every
 error it can raise and why, and a runnable `curl` example. This index is the
-entry point [`docs/README.md`](../README.md) links to — every file here must
+entry point [`docs/doc-index.md`](../doc-index.md) links to — every file here must
 be reachable from the table below, per the repo's index rule.
 
 ## Live interactive docs (Swagger / `/docs`)

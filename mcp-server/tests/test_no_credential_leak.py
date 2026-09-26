@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import date, timedelta
 
 import httpx
 import pytest
@@ -24,10 +25,25 @@ from archimedes_mcp.credentials import resolve_credential
 from archimedes_mcp.server import build_server
 from conftest import json_response
 
+# The verify tool refuses a series shorter than the minimum evaluation window
+# BEFORE it builds an HTTP client (#1803), so a short fixture here would make
+# every assertion in this file vacuous for that tool: no credential is resolved,
+# nothing is attached to a request, and "the secret is not in what the caller
+# sees" passes because there was never a request. Every body below must reach
+# the wire. `_drive` asserts that it did.
+_WINDOW = 250
+
+
+def _rows(n: int = _WINDOW + 2) -> list[dict]:
+    """`n` bars that satisfy every input rule the tool checks locally."""
+    base = date(2026, 1, 1)
+    return [{"date": (base + timedelta(days=i)).isoformat(), "daily_return": 0.001} for i in range(n)]
+
+
 ARGUMENTS = {
     "archimedes_quote": {},
     "archimedes_usage": {},
-    "archimedes_rigor_verify": {"returns": [{"date": "2026-01-02", "daily_return": 0.001}], "trials": 2},
+    "archimedes_rigor_verify": {"returns": _rows(), "trials": 2},
     "archimedes_generate_start": {"intent": "low-vol USDC"},
     "archimedes_generate_status": {"job_id": "job-1"},
     "archimedes_strategy": {"strategy_id": "s1"},
@@ -58,9 +74,17 @@ def _transport_error(request):
 
 def _drive(name, handler, mock_api, caplog):
     """Run one tool against one canned response and return everything the caller can see."""
-    mock_api(handler)
+    recorder = mock_api(handler)
     with caplog.at_level(logging.DEBUG):
         result = asyncio.run(build_server().call_tool(name, ARGUMENTS[name]))
+    # Non-vacuity, per call, not once per file: a tool that refuses its arguments
+    # locally never resolves a credential, so its leak assertions would pass while
+    # proving nothing. This is how ARGUMENTS["archimedes_rigor_verify"] silently
+    # stopped being covered when the 250-bar window landed (#1803).
+    assert recorder.requests, (
+        f"{name} never issued a request — ARGUMENTS[{name!r}] was refused by a local "
+        "pre-check, so this run proves nothing about credential handling. Fix the fixture."
+    )
     visible = [
         json.dumps(result.structured_content or {}),
         *[getattr(block, "text", "") for block in result.content],

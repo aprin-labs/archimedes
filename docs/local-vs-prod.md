@@ -26,7 +26,7 @@ what the process trusts, never what the product does.
 The core product must be **virtually identical** in both. Everything below is the list of
 switches that separate them, and the guards that keep a local run from crossing over.
 
-Origin: [issue #1044](https://github.com/a-apin/archimedes/issues/1044). The table there
+Origin: [issue #1044](https://github.com/aprin-labs/archimedes/issues/1044). The table there
 was written before the Fargate cutover and before #1280 and #1300 landed; four of its rows
 were wrong by the time it was picked up. The table below is the corrected one, and
 `make check-local` is what stops it drifting again.
@@ -91,7 +91,7 @@ mode switch at least once:
 
 | # | Leak | Status |
 |---|---|---|
-| 1 | Ollama recipe broken — `OllamaBackend.available` hardcoded `True`, no `LLM_MODEL` documented | **CLOSED** by [#1280](https://github.com/a-apin/archimedes/pull/1280). `available` now probes `GET {base_url}/api/tags` and verifies the configured model is in the tag set; an unreachable or unpulled ollama falls back to `CannedBackend`, whose `available` is `False`, and `/health` reports `llm_available: false`. |
+| 1 | Ollama recipe broken — `OllamaBackend.available` hardcoded `True`, no `LLM_MODEL` documented | **CLOSED** by [#1280](https://github.com/aprin-labs/archimedes/pull/1280). `available` now probes `GET {base_url}/api/tags` and verifies the configured model is in the tag set; an unreachable or unpulled ollama falls back to `CannedBackend`, whose `available` is `False`, and `/health` reports `llm_available: false`. |
 | 2 | `AWS_SSM_PATH_PREFIX` defaulted to `/archimedes/prod/` and `load_ssm_secrets()` ran unconditionally | **CLOSED** by #1280, in two layers: the `PUBLIC_DOMAIN` gate in `main.py`, and the blank default in `.env.example`. Guarded by `backend/tests/test_main_ssm_prod_gate.py`, which asserts no SSM client is even constructed with a prod-shaped prefix and `PUBLIC_DOMAIN` unset. |
 | 3 | `image:` alongside `build:` — a bare `docker compose up` resolves to the production ECR tag | **OPEN.** Every app-tier service still carries `image: ${ECR_REGISTRY:-037613907429.dkr.ecr…}/…:${IMAGE_TAG:-latest}`, and `.env.example` defines neither variable, so the baked-in default always wins. `make check-local` fails on `no-ecr-pull` until this lands. **Until then, `--build` is load-bearing** — see § 5. |
 | 4 | Identity ledger assumed prod-only | **CLARIFIED — see § 4.** |
@@ -154,7 +154,7 @@ part that is *enforced*.) `GENERATION_PAYMENT_REQUIRED` defaults `false`, which 
 inert, so a local account can generate with no wallet and no funds.
 
 ```bash
-git clone --recurse-submodules https://github.com/a-apin/archimedes.git
+git clone --recurse-submodules https://github.com/aprin-labs/archimedes.git
 cd archimedes
 cp .env.example .env
 

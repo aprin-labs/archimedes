@@ -2,8 +2,16 @@
 
 > **status:** draft
 > **owner:** Dan Browne
-> **updated:** 2026-08-30
+> **updated:** 2026-09-03
 > **superseded-by:** —
+
+> **Corrected 2026-09-03 ([#1807](https://github.com/aprin-labs/archimedes/issues/1807)).**
+> Two sentences in this plan said the settled ledger "carries to mainnet". The Arc mainnet
+> cutover was cancelled by owner call on 2026-08-30
+> ([#1240](https://github.com/aprin-labs/archimedes/issues/1240)): Archimedes stays a testnet
+> product until legal/regulatory review and sustained traction justify charging real money, and
+> we do not name a date. Both sentences now say what is true — the settled ledger is a paper
+> track record on Arc testnet, with no real funds. Nothing else about the design changed.
 
 **The directive (Dan, 2026-08-30):** *"daily returns is too slow — users want to see their
 strategies play out closer to real time; intraday is a huge unlock."* This is a v8 Lane 3.5
@@ -356,9 +364,9 @@ the daily rollup job writes `granularity='hourly'` rows and deletes the `'raw'` 
 One table, one query shape, and the unique constraint prevents a re-run from duplicating a rollup.
 
 **Marks are NOT the track record.** `paper_daily_returns` remains append-only-by-law and remains
-the thing that carries to mainnet. `paper_marks` is a **decoration with a TTL** and is safe to
-delete wholesale. That single sentence is what makes an aggressive retention policy safe, and it
-should be in the model's docstring.
+the recorded paper track record — Arc testnet, no real funds. `paper_marks` is a **decoration with
+a TTL** and is safe to delete wholesale. That single sentence is what makes an aggressive retention
+policy safe, and it should be in the model's docstring.
 
 ### 3.2 Retention — learning from tonight's `backtest_results` finding
 
@@ -517,7 +525,7 @@ computed from whole days. Two additive changes:
 - **An intraday tail on the sparkline**, visually distinguished from the settled daily line — a
   lighter stroke or a dashed segment — so a user can see at a glance where the *recorded track
   record* ends and where the *unsettled intraday view* begins. This matters because only the daily
-  ledger carries to mainnet.
+  ledger is the recorded track record.
 - **A no-marks-yet state.** A deployment created between ticks, or one on `SPY` before the session
   opens, legitimately has zero marks. That renders as an em-dash with a reason — never a `+0.00%`,
   which is the exact bug `formatTotalReturn` was extracted to fix (an unmeasured day-0 ledger must

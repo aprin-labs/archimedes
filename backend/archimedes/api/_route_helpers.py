@@ -120,6 +120,16 @@ async def persist_trace_off_chain(trace) -> None:
                     "confidence": getattr(trace, "confidence", 0.0) or 0.0,
                     "trades_executed": getattr(trace, "trades_executed", []) or [],
                     "strategies_referenced": getattr(trace, "strategies_referenced", []) or [],
+                    # HASHED field (#1637). It was silently dropped here, so a
+                    # trace persisted through this helper could never rebuild
+                    # its own canonical bytes: `/canonical` would reconstruct it
+                    # with an empty list and the recomputed hash would not match
+                    # the one `compute_hash()` produced. This function has no
+                    # callers today (see the module note), which is exactly why
+                    # the omission survived — it is fixed here so wiring it
+                    # later cannot inherit the trap, and so `/verify`'s new
+                    # source-paper check reads a field that is actually there.
+                    "consulted_paper_hashes": getattr(trace, "consulted_paper_hashes", []) or [],
                     "trace_hash": getattr(trace, "trace_hash", "") or "",
                     "arc_tx_hash": getattr(trace, "arc_tx_hash", None),
                     "is_verified": bool(getattr(trace, "arc_tx_hash", None)),

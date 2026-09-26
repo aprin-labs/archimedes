@@ -332,6 +332,40 @@ def get_paper_count() -> int:
         return session.query(func.count(PaperRecord.arxiv_id)).scalar() or 0
 
 
+def count_corpus_papers(*, embargo_days: int = 30) -> int:
+    """ORM-free count of the papers ``load_corpus`` would load — for /health.
+
+    Mirrors ``apply_outcome_embargo``'s rule in SQL. That rule keeps a paper
+    whose date is *at most* ``embargo_days`` old (``pub <= cutoff``), and the
+    column holds either ``YYYY-MM-DD`` or a full ISO timestamp, so the SQL
+    form is ``published < day-after-cutoff`` (a timestamp on the cutoff day
+    sorts after the bare date but before the next day); empty ``published``
+    is excluded. The Python filter also drops *unparseable* dates, which SQL
+    cannot check — so the only permitted disagreement is this count reading
+    high by the unparseable rows, never a fabricated low. Both edges and that
+    delta are pinned by ``test_corpus_load_race_1632.py`` against a real table.
+
+    Exists because the /health corpus probe used to call ``load_corpus`` — a
+    full 18k-row ORM materialization per uncached check. On a cold task the
+    probe blows its budget, is abandoned-but-running, and the next checks pile
+    more loads into the executor until two race in SQLAlchemy session teardown
+    and abort the interpreter (#1632, prod rev 214). A scalar COUNT holds no
+    ORM state to race and returns in milliseconds.
+    """
+    from datetime import date, timedelta
+
+    # apply_outcome_embargo keeps pub <= today - embargo_days; as a string
+    # bound over "YYYY-MM-DD[Thh:mm:ssZ]" values that is `< the following day`.
+    first_excluded_day = (date.today() - timedelta(days=embargo_days - 1)).isoformat()
+    with get_session() as session:
+        return (
+            session.query(func.count(PaperRecord.arxiv_id))
+            .filter(PaperRecord.published != "", PaperRecord.published < first_excluded_day)
+            .scalar()
+            or 0
+        )
+
+
 def get_corpus_meta() -> dict | None:
     """Return the singleton corpus_meta row as a dict, or None."""
     with get_session() as session:

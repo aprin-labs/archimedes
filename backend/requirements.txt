@@ -1,6 +1,6 @@
 # Archimedes backend — the Docker / CI install set.
 #
-# The 32 shared floors live in `requirements-base.txt` and are included below,
+# The 33 shared floors live in `requirements-base.txt` and are included below,
 # so `environment.yml` can include the same file instead of restating them
 # (issue #1522). Everything spelled out in *this* file is here because the
 # CPU-only torch wheel must not reach local dev.
@@ -23,4 +23,4 @@
 # they are the only floors still written down twice.
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch>=2.13.0,<3.0  # CPU-only wheel via pytorch whl index (see extra-index-url above); no +cpu here, pip rejects a local version label on a >= specifier
-sentence-transformers>=6.0.0  # all-MiniLM-L6-v2 semantic retrieval; baked at Docker build time
+sentence-transformers>=6.0.1  # all-MiniLM-L6-v2 semantic retrieval; baked at Docker build time

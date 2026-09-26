@@ -66,7 +66,8 @@ CREDENTIAL_SOURCES = (
     "ARCHIMEDES_API_KEY  ->  Authorization: Bearer <key>",
     "~/.config/archimedes/session.json  ->  the session cookie `archimedes login` cached "
     "(mode 600) -- __Secure-better-auth.session_token in production, "
-    "better-auth.session_token on local HTTP",
+    "better-auth.session_token on local HTTP. ARCHIMEDES_SESSION_FILE moves that file, "
+    "which is how concurrent agents on one machine hold separate identities",
 )
 
 TOOLS: tuple[dict, ...] = (
@@ -116,7 +117,21 @@ TOOLS: tuple[dict, ...] = (
             "candidate strategies and the look-ahead audit needs strategy source code. Both "
             "come back not_evaluable with the decisive reason rather than being scored as "
             "passes, so a `passes: true` here is a CAPPED verdict, not the full gate. Your "
-            "strategy code is never uploaded — only the returns series you pass in."
+            "strategy code is never uploaded — only the returns series you pass in. "
+            "THE INPUT CONTRACT IS STRICT AND THE SERVER REPAIRS NOTHING: dates must be strict "
+            "YYYY-MM-DD, unique, and in ASCENDING order; daily_return must be a finite simple "
+            "decimal with |r| <= 1.0 (+1.3% is 0.013, not 1.3); the series is 250 to 2600 rows "
+            "and trials is 1 to 10000. THE MINIMUM EVALUATION WINDOW IS 250 DAILY BARS — one "
+            "trading year. Under it you get a refusal (422, reason window_too_short, with "
+            "bars_received and bars_required), never a verdict and never a verdict with a warning "
+            "on it, so do not retry a short series expecting a caveated answer: fetch more "
+            "history. A violating body comes back 422 with a machine-readable "
+            "reason: invalid_date, duplicate_date, unsorted_dates, non_finite, out_of_range, "
+            "window_too_short, too_many_rows or trials_out_of_range. It will not sort or "
+            "deduplicate your rows for you — the walk-forward split is positional, so re-ordering "
+            "them server-side would return a verdict on a series you did not send. A verdict can "
+            "still be INCOMPLETE (legs_evaluated < legs_runnable) when a leg cannot run on the "
+            "numbers themselves — a zero-variance series, say — which is never a pass."
         ),
     },
     {
@@ -152,8 +167,8 @@ TOOLS: tuple[dict, ...] = (
             "over five minutes old), 'error' and 'cancelled' are terminal. A job that is "
             "not yours returns 404, never 403 — existence is private, so a 404 here is not "
             "proof the id is wrong. Then read the AUTHORITATIVE verdict with "
-            "archimedes_strategy: the generation-time verdict and the live gate can "
-            "disagree, and the live gate wins."
+            "archimedes_strategy: the generation-time verdict and the stored verdict of "
+            "record can disagree, and the stored one wins."
         ),
     },
     {
@@ -163,14 +178,18 @@ TOOLS: tuple[dict, ...] = (
         "routes": ("GET /api/strategies/{strategy_id}",),
         "description": (
             "Read one strategy and its authoritative rigor verdict. Free and public — no "
-            "credential needed; a private strategy answers 404 rather than 401. "
-            "rigor_gate_status is four-state and each state means something different: "
-            "'pass' (real persisted returns exist and the live gate passed), 'fail' (real "
-            "returns exist and the gate failed at least one criterion — an honest outcome, "
-            "not an error), 'pending' (no real returns yet, so the gate could not run), "
-            "'degenerate' (real returns exist but are a zero-variance series). "
-            "passes_rigor_gate is true only for 'pass'. Never read 'pending' or 'fail' as "
-            "a soft yes."
+            "credential needed; a private strategy answers 404 rather than 401. This route "
+            "runs no gate: it serves the STORED verdict of record, graded once by the real "
+            "gate and persisted on the strategy's passport, so it agrees with "
+            "archimedes_passport for the same id by construction. rigor_gate_status is "
+            "four-state and each state means something different: 'pass' (the stored grade "
+            "passed), 'fail' (the stored grade failed at least one criterion — an honest "
+            "outcome, not an error), 'pending' (NO GATE HAS GRADED THIS ROW — either there "
+            "are no persisted returns to grade, or the grading job has not run over the "
+            "ones there are; read graded_at on archimedes_passport to tell them apart), "
+            "'degenerate' (the graded series was zero-variance). passes_rigor_gate is true "
+            "only for 'pass'. Never read 'pending' or 'fail' as a soft yes, and never read "
+            "'pending' as proof that no backtest exists."
         ),
     },
     {
@@ -179,10 +198,32 @@ TOOLS: tuple[dict, ...] = (
         "cost": COST_FREE,
         "routes": ("GET /api/strategies/passports/{strategy_id}",),
         "description": (
-            "Read one strategy passport — the unified record carrying the gate result, the "
-            "papers it was built from, and its provenance. Free and public. Unpublished "
-            "passports that are not yours answer 404, never 403 (a 403 would confirm the "
-            "id exists). Owner wallet addresses are redacted for anyone but the owner."
+            "Read one strategy passport — the RIGOR VERDICT OF RECORD, the papers the "
+            "strategy was built from, and its provenance. Free and public. The verdict is "
+            "graded once, at backtest time, and stored: this route serves it verbatim and "
+            "never recomputes it, so it agrees with archimedes_strategy for the same id by "
+            "construction — curated or generated. rigor_gate_status is the same four-state "
+            "that tool documents "
+            "('pass'|'fail'|'pending'|'degenerate'), and passes_rigor_gate is true only for "
+            "'pass'. Three provenance fields say WHICH grade you are reading: graded_at "
+            "(null means never graded, which agrees with 'pending'), gate_version (the gate "
+            "that produced it — the literal 'legacy-derived' means the verdict was inferred "
+            "from older columns by a migration, not produced by a gate run, so treat it as "
+            "un-regraded), and cohort_n (1 = graded against itself alone). 'pending' means "
+            "no gate has looked at this strategy yet — it is not a soft fail, and it is the "
+            "honest answer for a curated strategy whose grading job has not run. Two status "
+            "fields, on purpose: 'status' is the persisted lifecycle column (what "
+            "archimedes_strategies filters on) and 'served_status' is the card status the "
+            "stored verdict derives, which is what archimedes_strategy returns in its "
+            "'status' field. display_metrics_source names WHICH source the headline "
+            "numbers on this row came from ('strategy_record' = a fixture snapshot the "
+            "record ships with, 'persisted_backtest' = a real backtest run, "
+            "'stub_placeholder' = a constant hand-declared in the strategy file, "
+            "'unavailable', or null when it was never recorded) — read it before quoting a "
+            "Sharpe, and note that only 'persisted_backtest' is a measurement. "
+            "Unpublished passports that are not yours "
+            "answer 404, never 403 (a 403 would confirm the id exists). Owner wallet "
+            "addresses are redacted for anyone but the owner."
         ),
     },
     {

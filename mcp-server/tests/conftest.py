@@ -8,8 +8,8 @@ Mocking at the boundary — the ``httpx.Client`` construction point, not the too
 credential fallback reads ``~/.config/archimedes/session.json`` through
 ``Path.home()``, so without this a developer who happens to be logged in would run a
 different test than CI does — and the "no credential" tests would silently pass for the
-wrong reason. ``ARCHIMEDES_API_KEY`` / ``ARCHIMEDES_API_URL`` are cleared for the same
-reason.
+wrong reason. ``ARCHIMEDES_SESSION_FILE`` (which overrides that path outright, #1752),
+``ARCHIMEDES_API_KEY`` and ``ARCHIMEDES_API_URL`` are cleared for the same reason.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from archimedes_cli.session import SESSION_FILE_ENV
 from archimedes_mcp import client
 from archimedes_mcp.credentials import API_KEY_ENV, API_URL_ENV
 
@@ -29,6 +30,7 @@ TEST_API_URL = "https://api.test.invalid"
 @pytest.fixture(autouse=True)
 def _isolated_env(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv(SESSION_FILE_ENV, raising=False)
     monkeypatch.delenv(API_KEY_ENV, raising=False)
     monkeypatch.setenv(API_URL_ENV, TEST_API_URL)
     return tmp_path

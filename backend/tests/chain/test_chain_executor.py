@@ -134,7 +134,14 @@ class TestValidateTradeLiquidity:
             asyncio.run(executor._validate_trade_liquidity([trade]))
 
     def test_raises_on_low_reserves(self, executor, mock_loader):
-        """Pool with reserves below threshold → InsufficientLiquidityError."""
+        """Pool with reserves below threshold → InsufficientLiquidityError.
+
+        MUTATION: replace the side-detection at `executor.py` with an
+        unconditional ``usdc_reserve = r1 / 1e6`` — the fat synth reserve1
+        here would read as $1,000,000 and let the $0.10 pool through. This is
+        the token0 half of the side-detection pair; the token1 half is
+        ``test_raises_when_usdc_is_token1_and_thin`` below.
+        """
         trade = _make_trade()
         pool_addr = "0x38c3A5f52044a72C9cC11Ce621f1bfD7754BF8Bd"
         mock_loader.amm_router.functions.getPool.return_value.call = AsyncMock(return_value=pool_addr)
@@ -167,20 +174,66 @@ class TestValidateTradeLiquidity:
         asyncio.run(executor._validate_trade_liquidity([trade]))
 
     def test_usdc_as_token1(self, executor, mock_loader):
-        """When USDC is token1, reserve1 is the USDC-side reserve."""
+        """When USDC is token1, reserve1 is the USDC-side reserve.
+
+        MUTATION: replace the side-detection at `executor.py` with an
+        unconditional ``usdc_reserve = r0 / 1e6``.
+
+        The reserves here are deliberately on OPPOSITE sides of the $5
+        threshold once divided by 1e6, so this assertion can tell which
+        integer the executor read. Before this fixture change reserve0 was
+        500_000_000_000_000 — fat on both readings — and the whole chain
+        suite (336 tests) stayed green with the side-detection deleted.
+
+        Note the executor's ``/ 1e6`` is USDC-specific: the synth side is an
+        18-decimal token, so ``reserve0 / 1e6`` is not a dollar figure at all.
+        That is exactly why reading the wrong side is a money bug and why the
+        raw synth integer here is small — it is chosen to be distinguishable,
+        not to model a realistic synth balance.
+        """
         trade = _make_trade()
         pool_addr = "0xe0725Db0eC0e793Cde04Fa32BA21A4D211a5E685"
         mock_loader.amm_router.functions.getPool.return_value.call = AsyncMock(return_value=pool_addr)
 
         mock_pool = mock_loader.amm_pool.return_value
-        mock_pool.functions.reserve0.return_value.call = AsyncMock(return_value=500_000_000_000_000)  # synth
-        mock_pool.functions.reserve1.return_value.call = AsyncMock(return_value=10_000_000_000)  # USDC
+        # Synth side: misread as USDC this is $4.00, BELOW the $5 threshold.
+        mock_pool.functions.reserve0.return_value.call = AsyncMock(return_value=4_000_000)  # synth
+        mock_pool.functions.reserve1.return_value.call = AsyncMock(return_value=10_000_000_000)  # USDC = $10k
         mock_pool.functions.token0.return_value.call = AsyncMock(
             return_value="0xE745C07d7d32A1Ca0d6162A1c50e876619CF7388"  # synth is token0
         )
 
-        # Should pass — USDC (token1) has $10k
+        # Should pass — USDC (token1) has $10k. Reading reserve0 instead raises.
         asyncio.run(executor._validate_trade_liquidity([trade]))
+
+    def test_raises_when_usdc_is_token1_and_thin(self, executor, mock_loader):
+        """USDC as token1, reserve1 BELOW threshold, fat synth reserve0 → raise.
+
+        MUTATION: replace the side-detection at `executor.py` with an
+        unconditional ``usdc_reserve = r0 / 1e6``. The mutant reads the fat
+        synth side, computes a nonsense "$900,000,000.00" of USDC liquidity,
+        and lets a $2 pool through — a real trade sent into a pool that
+        cannot fill it.
+
+        The inverse (USDC as token0, thin reserve0, fat reserve1) is pinned by
+        ``test_raises_on_low_reserves`` above, which kills the mirror mutant
+        (``usdc_reserve = r1 / 1e6``). Together the two are the full 2x2.
+        """
+        trade = _make_trade()
+        pool_addr = "0xe0725Db0eC0e793Cde04Fa32BA21A4D211a5E685"
+        mock_loader.amm_router.functions.getPool.return_value.call = AsyncMock(return_value=pool_addr)
+
+        mock_pool = mock_loader.amm_pool.return_value
+        # Fat synth side (misread as USDC it would read $900,000,000.00)...
+        mock_pool.functions.reserve0.return_value.call = AsyncMock(return_value=900_000_000_000_000)  # synth
+        # ...but the actual USDC side holds $2.00, below the $5 threshold.
+        mock_pool.functions.reserve1.return_value.call = AsyncMock(return_value=2_000_000)  # USDC = $2
+        mock_pool.functions.token0.return_value.call = AsyncMock(
+            return_value="0xE745C07d7d32A1Ca0d6162A1c50e876619CF7388"  # synth is token0
+        )
+
+        with pytest.raises(InsufficientLiquidityError, match="below threshold"):
+            asyncio.run(executor._validate_trade_liquidity([trade]))
 
     def test_fails_closed_on_unexpected_error(self, executor, mock_loader):
         """Unexpected probe errors (RPC/ABI) fail closed — leg is skipped, not allowed.

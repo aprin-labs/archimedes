@@ -57,6 +57,10 @@ def session_factory(tmp_path):
 
 
 # ─── Routing guard: both call sites must ask get_provider() for data ────
+#
+# The stubs below take ``*, seam`` because since #1798 ``get_provider`` is
+# keyword-only on ``seam``; a call site that dropped it would TypeError here.
+# WHICH seam each of these asks for is pinned in test_market_data_seams.py.
 
 
 class TestFusionMarketDataRoutesThroughSeam:
@@ -73,7 +77,7 @@ class TestFusionMarketDataRoutesThroughSeam:
         frame = _ohlcv_frame()
         fake_provider = MagicMock()
         fake_provider.get_daily_ohlcv.return_value = frame
-        monkeypatch.setattr(mdp, "get_provider", lambda: fake_provider)
+        monkeypatch.setattr(mdp, "get_provider", lambda *, seam: fake_provider)
 
         result = fmd._fetch_one("SPY", "2024-01-02", "2024-02-10")
 
@@ -93,7 +97,7 @@ class TestPortfolioBacktesterRoutesThroughSeam:
         frame = _ohlcv_frame(n=300)
         fake_provider = MagicMock()
         fake_provider.get_daily_ohlcv.return_value = frame
-        monkeypatch.setattr(mdp, "get_provider", lambda: fake_provider)
+        monkeypatch.setattr(mdp, "get_provider", lambda *, seam: fake_provider)
 
         panel, volumes = _fetch_price_panel(["SPY", "TLT"], "2024-01-02", "2025-01-02")
 
@@ -149,7 +153,7 @@ class TestCacheColdWarmThroughGenerationPath:
         vendor = MagicMock()
         vendor.get_daily_ohlcv.return_value = frame
         cached_provider = mdp.CachingMarketDataProvider(vendor, source_name="yfinance", session_factory=session_factory)
-        monkeypatch.setattr(mdp, "get_provider", lambda: cached_provider)
+        monkeypatch.setattr(mdp, "get_provider", lambda *, seam: cached_provider)
 
         start = frame.index[0].date().isoformat()
         end = frame.index[-1].date().isoformat()
@@ -172,7 +176,7 @@ class TestCacheColdWarmThroughGenerationPath:
         vendor = MagicMock()
         vendor.get_daily_ohlcv.return_value = frame
         cached_provider = mdp.CachingMarketDataProvider(vendor, source_name="yfinance", session_factory=session_factory)
-        monkeypatch.setattr(mdp, "get_provider", lambda: cached_provider)
+        monkeypatch.setattr(mdp, "get_provider", lambda *, seam: cached_provider)
 
         start = frame.index[0].date().isoformat()
         end = frame.index[-1].date().isoformat()

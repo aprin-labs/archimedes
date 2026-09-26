@@ -43,6 +43,9 @@ on:
       # openwiki-update.yml PR) would merge and never reach the site.
       - "openwiki/**"
       - "mkdocs.yml"
+      # The 404 page is the one theme template we override, and it is what a
+      # reader hits after this PR took ~90 stale URLs off the site.
+      - "docs-site/overrides/**"
       # The hook that mounts openwiki/ and rewrites out-of-docs_dir links, and
       # the link regexes it reuses. A change to either changes the built site.
       - ".github/scripts/mkdocs_hooks.py"
@@ -53,6 +56,7 @@ on:
       - "docs/**"
       - "openwiki/**"
       - "mkdocs.yml"
+      - "docs-site/overrides/**"
       - ".github/scripts/mkdocs_hooks.py"
       - ".github/scripts/docs_links.py"
       - ".github/workflows/docs-site.yml"
@@ -76,22 +80,26 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      # fetch-depth: 0 — the git-revision-date-localized plugin reads each
+      # page's last commit to print a real "last updated" date in the footer.
+      # On the default shallow clone every page would report the same date (or
+      # none), which is exactly the hand-typed-stamp problem the plugin
+      # replaces. It costs a few seconds on a repo this size.
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
-      # mkdocs-material==9.7.7 — pinned per docs/CLAUDE.md's dep policy ("no
-      # new dep without a sentence on what it does and why"): it's the
-      # latest release on PyPI as of this workflow's authorship
-      # (2026-08-20). Pinned rather than left open so a future
-      # mkdocs-material release can't silently change the built site (or its
-      # validation warnings) on an unrelated docs PR; bump deliberately, in
-      # its own commit, re-running the local build check from
-      # docs/runbooks/docs-site-setup.md.
-      - name: Install mkdocs-material
-        run: pip install --quiet mkdocs-material==9.7.7
+      # One pinned dependency file, shared with the runbook's local-preview
+      # instructions (docs/runbooks/docs-site-setup.md), so the build a person
+      # runs is the build CI ships. Each pin carries its justification there,
+      # per docs/CLAUDE.md's dep policy ("no new dep without a sentence on what
+      # it does and why"); bump deliberately, in its own commit.
+      - name: Install the docs toolchain
+        run: pip install --quiet -r docs/requirements.txt
 
       # --strict, and it is clean. mkdocs promotes WARNING to a build failure
       # under --strict; the ~371 warnings this tree used to produce were all

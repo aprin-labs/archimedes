@@ -3,13 +3,14 @@
 > **Status:** Findings note, 2026-06-11 (Önder, quant lane). **Historical — read at its
 > vintage.** Every number below was measured on **2026-06-11**, against the library as it
 > stood then (22 of 23 strategies) and against the **0.95 DSR bar and the library-sized
-> `num_trials` convention that were current on that date**. Both have since changed: the
-> bar was recalibrated to `0.90` (PR #901) and the library-sized trial count was reversed
-> on 2026-07-09
+> `num_trials` convention that were current on that date**. The bar moved down in PR #901
+> and back to `0.95` in [#1794](https://github.com/aprin-labs/archimedes/issues/1794), so
+> the DSR column below is once again read against the live bar; the library-sized trial
+> count, however, was reversed on 2026-07-09
 > ([`../adr/num-trials-self-containment.md`](../adr/num-trials-self-containment.md)). The
 > experiment's *conclusion* is unaffected — it turns on Sharpe ratios, not on the gate
 > threshold — but three passages were corrected in place on 2026-08-31
-> ([#1598](https://github.com/a-apin/archimedes/issues/1598)) and are marked where they sit.
+> ([#1598](https://github.com/aprin-labs/archimedes/issues/1598)) and are marked where they sit.
 > Companion to
 > [`second-wave-multi-asset-strategies.md`](../plans/second-wave-multi-asset-strategies.md).
 > **TL;DR:** No. All nine second-wave strategies are admitted as `CANDIDATE`
@@ -33,7 +34,7 @@ larger and more appropriate universes, using the **identical** rigor machinery
 
 ## First: the gate is not a black hole
 
-> **Retracted 2026-08-31 ([#1598](https://github.com/a-apin/archimedes/issues/1598)).**
+> **Retracted 2026-08-31 ([#1598](https://github.com/aprin-labs/archimedes/issues/1598)).**
 > This paragraph stated how many library strategies clear the rigor gate and named them with
 > their DSR p-values. `CLAUDE.md` forbids quoting a curated-library pass count anywhere, and
 > for a concrete reason that post-dates this note: strategies reported as passing were later
@@ -113,18 +114,21 @@ The single near-miss — risk parity on the original 5 assets (Sharpe +0.35,
 max-DD 27%) — fails the DSR significance bar *only* because of how conservatively
 we set `num_trials_in_selection`. Sweeping it on that strategy's real returns:
 
-| `num_trials` | DSR p-value | vs. the 0.95 bar of 2026-06-11 | vs. the 0.90 bar in force since PR #901 |
+| `num_trials` | DSR p-value | vs. the 0.95 bar (live, and the bar of 2026-06-11) | vs. the lower bar PR #901 briefly used |
 |---|---|---|---|
 | 1–13 | 0.999 → 0.963 | **yes** | **yes** |
 | 22 (full library) | 0.941 | no | **yes** |
 | 50 | 0.896 | no | no |
 
-> **Corrected 2026-08-31 ([#1598](https://github.com/a-apin/archimedes/issues/1598)).**
+> **Corrected 2026-08-31 ([#1598](https://github.com/aprin-labs/archimedes/issues/1598)).**
 > The table shipped with a single pass/fail column computed against the 0.95 bar, and its
-> verdicts went stale twice over. Both bars are now shown side by side rather than the old
-> one being overwritten: the p-values are the measurement and have not changed, but **what
-> they clear has**. The `num_trials = 22` row, marked "no" at 0.941, **clears the 0.90
-> bar** — the conclusion this section drew from that row no longer follows from it.
+> verdicts went stale twice over. Both bars are kept side by side rather than the old one
+> being overwritten: the p-values are the measurement and have not changed, but **what they
+> clear has**. The `num_trials = 22` row, marked "no" at 0.941, cleared the lower bar PR
+> #901 briefly used — the conclusion this section drew from that row did not survive it.
+> **Updated 2026-09-03 (#1794):** the bar is 0.95 again and is now a single named constant,
+> so the left-hand column is once more the live one and that row is "no" again. The
+> whipsaw is precisely why the number is no longer written down in more than one place.
 >
 > **And the sweep itself is now moot for this strategy.** It asks what happens as the
 > library-sized trial count varies; that convention was reversed on 2026-07-09 and
@@ -141,6 +145,6 @@ library size (22), which penalized each strategy as if it were cherry-picked as 
 **not** data-mined from the library, that was argued to be too harsh — a genuine design
 question about the gate's calibration, written up separately for a team decision rather
 than changed unilaterally. **That decision was subsequently taken this way**
-([#537](https://github.com/a-apin/archimedes/issues/537) → the self-containment ADR): the
+([#537](https://github.com/aprin-labs/archimedes/issues/537) → the self-containment ADR): the
 library size no longer enters `num_trials` on any path. Note it was **not** what blocked
 the other eight: they fail on performance, not on the penalty.

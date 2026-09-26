@@ -1,19 +1,33 @@
 import { useEffect, useState } from "react";
 import { apiGet } from "../api";
 import { anchorState } from "../trace-binding";
+import DebatePaperVerdicts, {
+	DebateTurn,
+	splitTranscript,
+} from "./DebatePaperVerdicts";
 
 // The reasoning panel on a strategy's passport.
 //
 // Two DIFFERENT things get called "the reasoning" for a strategy, and merging
 // them would be the dishonest shortcut:
 //
-//   Generation debate — GET /api/strategies/{id}/debate (#1542). One bull/bear
-//     adversarial round, argued ONCE over the whole proposed pool BEFORE C-null
-//     picked this candidate. It is an argument about whether the strategy was
-//     worth keeping. It moved no money and is anchored nowhere.
-//   Trading decisions — GET /api/traces/?strategy_id={id}. Reasoning traces the
-//     autonomous agent emitted while running a vault that references this
-//     strategy. Each one is hashed and (when it traded) anchored on Arc.
+//   STRATEGY ENGINE, generation debate — GET /api/strategies/{id}/debate
+//     (#1542). One bull/bear adversarial round, argued ONCE over the whole
+//     proposed pool BEFORE C-null picked this candidate, plus the per-paper
+//     record of which retrieved papers it engaged with (#1739). It is an
+//     argument about whether the strategy was worth keeping. It moved no money
+//     and is anchored nowhere.
+//   EXECUTION ENGINE, trading decisions — GET /api/traces/?strategy_id={id}.
+//     Reasoning traces the autonomous agent emitted while running a vault that
+//     references this strategy. Each one is hashed and (when it traded)
+//     anchored on Arc.
+//
+// The section headings say "Strategy engine" and "Execution engine" in so many
+// words. Those two engines are the product, and until they were named here a
+// reader had one panel called "Reasoning" containing two unrelated kinds of it.
+// The /app/reasoning page is the EXECUTION engine's, and deliberately carries
+// none of the above — see ui/test/generation-reasoning.test.js, which pins that
+// it neither fetches /debate nor imports these renderers.
 //
 // What the second section can show is bounded by what the filter can honestly
 // match, and the copy says so rather than implying more. `strategies_referenced`
@@ -39,26 +53,10 @@ import { anchorState } from "../trace-binding";
 const TRACE_LIMIT = 20;
 const REASONING_EXCERPT = 240;
 
-// A debate claim arrives in one of TWO shapes and both are real data (#1636):
-//
-//   - a plain string — every row persisted before the debate carried paper
-//     attribution. Rendering these as `[object Object]`-proof text is not
-//     enough; they must keep rendering exactly as they always did.
-//   - `{claim, candidate_id, arxiv_ids}` — the current shape. `arxiv_ids` has
-//     already been filtered server-side against the papers the proposers
-//     actually read, so an id here is real. An EMPTY array is meaningful and
-//     is shown as such: the claim was made without grounding it in a listed
-//     paper, and saying so is the whole point of keeping it.
-function claimText(claim) {
-	if (typeof claim === "string") return claim;
-	if (claim && typeof claim === "object") return String(claim.claim ?? "");
-	return "";
-}
-
-function claimArxivIds(claim) {
-	if (!claim || typeof claim !== "object" || Array.isArray(claim)) return null;
-	return Array.isArray(claim.arxiv_ids) ? claim.arxiv_ids : null;
-}
+// The turn/claim/verdict renderers live in ./DebatePaperVerdicts so this panel
+// and the live generation stream draw the SAME rows from the SAME shapes — the
+// SSE `debate_turn` / `debate_attribution` frames carry exactly what gets
+// persisted and read back here.
 
 function formatWhen(ts) {
 	if (!ts) return "—";
@@ -148,14 +146,21 @@ function GenerationDebate({ strategyId }) {
 		);
 	}
 
-	const turns = payload?.transcript || [];
-	if (turns.length === 0) {
+	// The trailing `role: "attribution"` entry (#1739) is NOT a turn and must not
+	// be walked as one: a renderer that reads only role/round/verdict/claims/
+	// discard shows its summary sentence and silently drops `paper_verdicts` and
+	// `fusion_reasoning` — i.e. the per-paper record and the reasons papers were
+	// thrown out, which is the half of this panel a reader actually came for.
+	const { turns, attribution } = splitTranscript(payload?.transcript);
+	if (turns.length === 0 && !attribution) {
 		return (
 			<p className="caption leading-relaxed">
-				No debate transcript for this strategy. The bull/bear debate is
-				recorded only for strategies produced by the generation pipeline —
-				curated library strategies never ran one, and strategies generated
-				before transcripts were persisted have none to show.
+				No generation debate is shown here. Either none was recorded — curated
+				library strategies never ran one, and strategies generated before
+				transcripts were persisted have none — or this strategy is not yours:
+				publishing a strategy shares its result, not the argument that produced
+				it. This panel cannot tell you which of the two it is, and says so
+				rather than picking one.
 			</p>
 		);
 	}
@@ -163,68 +168,23 @@ function GenerationDebate({ strategyId }) {
 	return (
 		<>
 			<p className="caption mb-3 leading-relaxed max-w-[640px]">
-				One adversarial round, argued before this candidate was selected. It
-				is an argument about the strategy, not a record of a trade — nothing
-				here is anchored on-chain.
+				One adversarial round, argued before this candidate was selected. It is
+				an argument about whether the strategy was worth keeping — it moved no
+				money and is anchored nowhere. Trading decisions, which did move money,
+				are the section below.
 			</p>
 			<div className="flex flex-col gap-2">
 				{turns.map((turn, i) => (
-					<div
-						key={`${turn.role}-${turn.round}-${i}`}
-						className="card"
-						style={{ padding: 12 }}
-					>
-						<div className="flex gap-2 items-center flex-wrap mb-1.5">
-							<span
-								className={`tag ${turn.role === "bull" ? "tag-positive" : turn.role === "bear" ? "tag-negative" : "tag-muted"}`}
-							>
-								{turn.role || "turn"}
-							</span>
-							{turn.round != null && (
-								<span className="caption">Round {turn.round}</span>
-							)}
-						</div>
-						{turn.verdict && (
-							<p className="body" style={{ fontSize: "0.85rem", lineHeight: 1.5 }}>
-								{turn.verdict}
-							</p>
-						)}
-						{Array.isArray(turn.claims) && turn.claims.length > 0 && (
-							<ul className="caption mt-1.5 leading-relaxed pl-4 list-disc">
-								{turn.claims.map((claim, j) => {
-									const ids = claimArxivIds(claim);
-									return (
-										<li key={j}>
-											{claimText(claim)}
-											{ids !== null &&
-												(ids.length > 0 ? (
-													<span className="caption" style={{ opacity: 0.75 }}>
-														{" "}
-														— {ids.map((id) => `arXiv:${id}`).join(", ")}
-													</span>
-												) : (
-													<span className="caption" style={{ opacity: 0.75 }}>
-														{" "}
-														— not attributed to a listed paper
-													</span>
-												))}
-										</li>
-									);
-								})}
-							</ul>
-						)}
-						{Array.isArray(turn.discard) && turn.discard.length > 0 && (
-							<ul className="caption mt-1.5 leading-relaxed pl-4 list-disc">
-								{turn.discard.map((d, j) => (
-									<li key={j} style={{ opacity: 0.75 }}>
-										Discarded arXiv:{d?.arxiv_id}
-										{d?.reason ? ` — ${d.reason}` : ""}
-									</li>
-								))}
-							</ul>
-						)}
-					</div>
+					<DebateTurn key={`${turn.role}-${turn.round}-${i}`} turn={turn} />
 				))}
+				{attribution && (
+					<>
+						<div className="label mt-2" style={{ fontSize: "0.7rem" }}>
+							Papers accounted for
+						</div>
+						<DebatePaperVerdicts entry={attribution} />
+					</>
+				)}
 			</div>
 		</>
 	);
@@ -361,16 +321,34 @@ export default function StrategyReasoning({ strategyId, onNavigate }) {
 	return (
 		<div className="card passport-panel passport-reasoning">
 			<div className="label mb-3">Reasoning</div>
+			<p className="caption mb-4 leading-relaxed max-w-[640px]">
+				Two engines reason about this strategy and they are not the same
+				reasoning. The strategy engine argued about whether it was worth
+				keeping; the execution engine decides what to do with it once it holds
+				money. Both are below, headed separately and never interleaved.
+			</p>
 			<section className="mb-5">
 				<div className="label mb-2" style={{ fontSize: "0.75rem" }}>
-					Generation debate
+					Strategy engine — generation debate
 				</div>
 				<GenerationDebate strategyId={strategyId} />
 			</section>
 			<section>
 				<div className="label mb-2" style={{ fontSize: "0.75rem" }}>
-					Trading decisions
+					Execution engine — trading decisions
 				</div>
+				{/* Deliberately NOT "the Reasoning page carries only this engine's
+				    traces": /app/reasoning still advertises a `construction` filter
+				    and "a strategy construction from the Generate page" in its own
+				    blurb, which is strategy-engine reasoning sitting on the execution
+				    page. That is filed as its own issue; until it lands, this
+				    sentence may state what IS true — the debate above is not there —
+				    without claiming the page is already clean. */}
+				<p className="caption mb-2 leading-relaxed max-w-[640px]">
+					The Reasoning page carries the execution engine's traces across every
+					strategy and vault; the generation debate above is not among them,
+					because an argument is not a decision that moved money.
+				</p>
 				<TradingDecisions strategyId={strategyId} onNavigate={onNavigate} />
 			</section>
 		</div>

@@ -90,8 +90,9 @@ def _clean_env(monkeypatch):
     #880 and has had no reader since, so clearing it cleared nothing — removed
     2026-08-31 (#834). ``test_pick_pipeline_is_debate_unconditionally`` now
     *sets* it instead, which is the assertion the delenv only looked like.
+    ``ARCHIMEDES_FUSION_ENABLED`` went the same way on 2026-09-02 (deck Q4):
+    fusion is unconditional, so there is no switch left to clear.
     """
-    monkeypatch.delenv("ARCHIMEDES_FUSION_ENABLED", raising=False)
     monkeypatch.delenv("ARCHIMEDES_CORPUS_MANIFEST", raising=False)
     monkeypatch.delenv("DEBATE_POOL_MAX", raising=False)
 
@@ -336,7 +337,6 @@ async def test_critic_rigor_threads_pool_size_as_num_trials(monkeypatch):
 
 
 def test_model_pick_threads_into_served_model(monkeypatch, corpus):
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
     captured = {}
 
     def _fake_make(model=None, **kw):
@@ -368,7 +368,6 @@ def test_dsl_conformance_guard_rejects_uninterpretable_indicators():
 
 
 async def test_propose_pool_drops_nonconformant_specs(monkeypatch, corpus):
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
 
     def _fake_make(model=None, **kw):
         return _CannedFusionBackend(model=model, spec=_NONCONFORMANT_SPEC)
@@ -460,7 +459,6 @@ async def test_propose_pool_dedupes_identical_specs_across_steers(monkeypatch, c
     trading logic — but with a different LLM-picked marketing name and
     citation order each time — must collapse to one pool entry, not be
     counted as independent trials."""
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
     monkeypatch.setenv("DEBATE_POOL_MAX", "4")
 
     # A conformant spec that also survives the full validate_strategy_spec pass

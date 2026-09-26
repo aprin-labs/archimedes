@@ -193,3 +193,12 @@ A reviewer can answer each of these from this doc alone:
 3. **Kelly math worth lifting** — is there sizing logic in `kelly_portfolio.py`
    that isn't already in `portfolio_optimizer.py`? Önder to verify before we
    delete.
+
+## Resolution note — 2026-09-01 (audit P1-1)
+
+Open question 1 (**soft-retire vs hard-delete**) is closed: the recommendation was
+followed. Both files moved to `services/_deprecated/` (#131), stayed there for a
+release cycle, and were then deleted. The empty `_deprecated/` package shell was
+removed on 2026-09-01 as part of the dead-module sweep, so `services/_deprecated/`
+no longer exists — the Lifetime column above and the open questions are the
+historical decision record, not the current tree.

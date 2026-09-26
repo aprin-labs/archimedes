@@ -42,7 +42,7 @@ dependencies:
   # Python deps installed via pip — pinned loosely; tighten in pyproject.toml as the project firms up.
   - pip:
       # --- Shared backend floors ---
-      # Included, not restated. backend/requirements-base.txt owns the 32
+      # Included, not restated. backend/requirements-base.txt owns the 33
       # floors that local dev and Docker/CI both need, so a Dependabot bump
       # lands in one file instead of being mirrored here by hand (issue #1522;
       # when the guard in #1493 landed, 18 of 34 shared floors had already
@@ -66,7 +66,7 @@ dependencies:
 
       # --- Semantic retrieval (paper_rag MiniLM embeddings, issue #874) ---
       - torch>=2.13.0,<3.0             # PyTorch CPU (local dev: pip picks the native/MPS wheel; Docker uses the CPU-only wheel via --extra-index-url in requirements.txt). Floor aligned with backend/requirements.txt via dependabot PR #1163.
-      - sentence-transformers>=6.0.0  # all-MiniLM-L6-v2 zero-cost semantic retrieval for paper_rag.py. Floor aligned with backend/requirements.txt via dependabot PR #1587 (5.6.1 -> 6.0.0, major).
+      - sentence-transformers>=6.0.1  # all-MiniLM-L6-v2 zero-cost semantic retrieval for paper_rag.py. Floor aligned with backend/requirements.txt via dependabot PR #1858 (6.0.0 -> 6.0.1, patch).
 
       # --- Quality + tests ---
       - ruff>=0.6                     # Linter + formatter; configured at line length 120
@@ -74,6 +74,7 @@ dependencies:
       - pytest-asyncio>=0.24
       - pytest-cov>=5.0
       - "fakeredis[lua]>=2.26.0"         # Test double for Redis in marketplace unit tests (test_state.py); dev-only, not in prod requirements.txt
+      - pathspec>=0.12                # gitignore-style matching, the library mkdocs compiles `exclude_docs`/`not_in_nav` with. Required by the docs publication guards (test_docs_default_deny.py, test_mkdocs_exclude_docs_matches.py) so they assert what the site build actually does; dev/test-only, not in prod requirements.txt. Mirrored in .github/workflows/quality-gate.yml's two pip install lines.
       - mypy>=1.11
       - "pip-audit>=2.7"              # Supply-chain CVE scanner — run `pip-audit` to check installed deps against the PyPI vulnerability DB. Not yet a CI gate; advisory only.
 

@@ -45,7 +45,7 @@ Three conclusions drive this roadmap:
 
 ## Priority 1 — Close the calibration loop (now)
 
-**Decide [#537](https://github.com/a-apin/archimedes/issues/537): what `num_trials`
+**Decide [#537](https://github.com/aprin-labs/archimedes/issues/537): what `num_trials`
 should the DSR penalty use for individually-specified strategies?**
 
 Today `num_trials_in_selection` = full library size (22), applied to every strategy

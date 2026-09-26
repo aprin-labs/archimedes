@@ -20,9 +20,11 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
-
 from archimedes.agents.generation_pipeline import GenerateBrief, _validate_brief, cheap_brief_reject
+from archimedes.services.brief_screen import Surface, screen
+from fastapi.testclient import TestClient
+from pydantic import ValidationError
+
 from tests.auth_helpers import auth_cookies
 
 RECIPIENT = "0x00000000000000000000000000000000000000a1"
@@ -74,15 +76,23 @@ def _harness(store):
 # ── cheap_brief_reject — unit tests ─────────────────────────────────────────
 
 
-def test_empty_intent_is_rejected():
-    result = cheap_brief_reject(GenerateBrief(intent=""))
-    assert result is not None
-    assert "reason" in result and "hint" in result
+def test_empty_intent_cannot_even_be_constructed():
+    """Stronger than the pre-#1801 contract this replaces.
+
+    ``intent`` now carries ``min_length=1``, so an empty brief is refused by
+    the request schema before any handler code runs; ``cheap_brief_reject``
+    never sees one. The screen still owns ``shape.empty`` for whitespace-only
+    text (below) and for callers that build the string themselves.
+    """
+    with pytest.raises(ValidationError):
+        GenerateBrief(intent="")
+    assert screen("", Surface.BRIEF).code == "shape.empty"
 
 
 def test_whitespace_only_intent_is_rejected():
     result = cheap_brief_reject(GenerateBrief(intent="   \t\n  "))
     assert result is not None
+    assert result["code"] == "shape.empty"
 
 
 def test_too_short_intent_is_rejected():

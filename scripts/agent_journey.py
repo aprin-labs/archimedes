@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 
 import httpx
 
-AGENT_UA = "archimedes-agent-journey/0.2 (+https://github.com/a-apin/archimedes/issues/788)"
+AGENT_UA = "archimedes-agent-journey/0.2 (+https://github.com/aprin-labs/archimedes/issues/788)"
 _TERMINAL_EVENTS = {"done", "error"}
 ARC_CHAIN_ID = 5042002
 _EMAIL_ENV = "ARCHIMEDES_EMAIL"

@@ -2,7 +2,7 @@
 
 > **Audience:** Archimedes team
 > **Status:** Accepted
-> **Date:** 2026-07-09 (architect deleted, `ccf4f2f` / PR [#1074](https://github.com/a-apin/archimedes/pull/1074), merged 2026-07-14)
+> **Date:** 2026-07-09 (architect deleted, `ccf4f2f` / PR [#1074](https://github.com/aprin-labs/archimedes/pull/1074), merged 2026-07-14)
 > **Owner:** Dan Browne
 > **Supersedes:** [`fusion-primary-generation.md`](fusion-primary-generation.md)
 > **Superseded-by:** —
@@ -55,7 +55,7 @@ the society was verified on the live path.
    existing clients do not break.
 2. **The Strategy Architect is deleted** — `ccf4f2f`, "[cleanup] Remove obsolete Strategy
    Architect — debate society is the sole generation path (#1064)", PR
-   [#1074](https://github.com/a-apin/archimedes/pull/1074). Deleted, not deprecated: a dead
+   [#1074](https://github.com/aprin-labs/archimedes/pull/1074). Deleted, not deprecated: a dead
    route left in the tree is a route someone re-enables.
 3. **`ARCHIMEDES_DEBATE_ENABLED` is retired**
    ([`debate_engine.py:6,205`](../../backend/archimedes/agents/debate_engine.py)). The flag
@@ -138,9 +138,15 @@ generation route reappears under `/api/strategies` or any module outside
 `agents/debate_engine.py` imports the fusion proposer. It was demonstrated failing
 against a restored route before it was committed.
 
-**Not removed: `ARCHIMEDES_FUSION_ENABLED`.** The flag is not the bypass's flag. It
-also guards `StrategyFusion.propose` itself (`agents/strategy_fusion.py`), which the
-society's proposer pool calls, and it is published on `/health` as `fusion_enabled`.
-Deleting it would make the society's proposers return inert sentinels — a live-path
-behaviour change, not a cleanup. Retiring it is a separate decision, and the
-"rollback is a task-definition revision" reasoning above applies to it too.
+**Not removed here: `ARCHIMEDES_FUSION_ENABLED`.** The flag was not the bypass's
+flag. It also guarded `StrategyFusion.propose` itself (`agents/strategy_fusion.py`),
+which the society's proposer pool calls, and it was published on `/health` as
+`fusion_enabled`. Deleting it *then* would have made the society's proposers return
+inert sentinels — a live-path behaviour change, not a cleanup. **That separate
+decision was taken on 2026-09-02 (deck Q4): the flag is retired and fusion is
+unconditional.** Nothing about the reachability argument changed — that is exactly
+why it went. The OFF branch was deleted rather than defaulted ON, the `/health`
+`fusion_enabled` key was dropped on 2026-09-03 rather than frozen at a constant
+`true` (no consumer was found), and
+[`backend/tests/test_fusion_flag_retired.py`](../../backend/tests/test_fusion_flag_retired.py)
+fails if the switch returns under any name.

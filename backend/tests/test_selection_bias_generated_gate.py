@@ -37,6 +37,7 @@ import archimedes.db as db
 import numpy as np
 import pytest
 from archimedes.api.auth_siwe import _COOKIE_NAME, _sign_session
+from archimedes.services.rigor_profiles import DSR_P_BADGE_MIN
 from httpx import ASGITransport, AsyncClient
 
 _W_OWNER = "0xAbC1230000000000000000000000000000000A"  # mixed case on purpose
@@ -327,9 +328,13 @@ def test_look_ahead_override_flips_blocked_verdict_to_pass():
 
 
 def _flip_sensitive_returns() -> list[float]:
-    """PASSES the DSR gate at num_trials=1 (p≈0.964 ≥ 0.90) and FAILS it at
-    num_trials=25 (p≈0.377 < 0.90) — verified directly against
-    rigor_evaluator.run_rigor_gate with these exact parameters."""
+    """PASSES the DSR gate at num_trials=1 (p≈0.964) and FAILS it at
+    num_trials=25 (p≈0.377) — verified directly against
+    rigor_evaluator.run_rigor_gate with these exact parameters. The series
+    straddles the badge bar at both ends by a wide margin, so it stayed
+    flip-sensitive across #1794's move of the bar; the assertions below compare
+    against ``DSR_P_BADGE_MIN`` rather than a literal so they cannot go stale
+    the next time it moves."""
     return np.random.default_rng(3).normal(0.0006, 0.008, 300).tolist()
 
 
@@ -391,7 +396,7 @@ async def test_dsl_fusion_engine_trusts_stored_search_pool_end_to_end():
     assert resp.status_code == 200
     body = resp.json()
     assert body["num_trials_scope"] == "generated_search_pool"
-    assert body["dsr_p_value"] < 0.90
+    assert body["dsr_p_value"] < DSR_P_BADGE_MIN
     assert body["passes_all"] is False
 
 
@@ -403,11 +408,11 @@ async def test_untracked_engine_num_trials_forced_to_one_not_bare_column_read():
     Before the fix, `_generated_strategy_rigor` did a bare read of the
     column: ``latest.num_trials_in_selection if latest and
     latest.num_trials_in_selection else 1`` — this would have trusted 25 and
-    FAILED the gate (dsr_p≈0.377 < 0.90) on a return series that is
+    FAILED the gate (dsr_p≈0.377, far under the badge bar) on a return series that is
     genuinely fine at its true (self-contained) trial count. The fix
     discriminates on provenance: an untracked engine cannot prove it ran a
     real 25-candidate search, so num_trials is forced to 1 and the gate
-    PASSES (dsr_p≈0.964 ≥ 0.90) — the honest verdict for this strategy.
+    PASSES (dsr_p≈0.964, over the badge bar) — the honest verdict for this strategy.
     """
     sid = "gen0000000000007"
     _mk_strategy(sid, owner=_W_OWNER, published=False)
@@ -421,7 +426,7 @@ async def test_untracked_engine_num_trials_forced_to_one_not_bare_column_read():
     assert resp.status_code == 200
     body = resp.json()
     assert body["num_trials_scope"] == "generated_untracked_default"
-    assert body["dsr_p_value"] >= 0.90, (
+    assert body["dsr_p_value"] >= DSR_P_BADGE_MIN, (
         f"num_trials was not forced to 1 — the bare-column-read bug is back "
         f"(dsr_p_value={body['dsr_p_value']} suggests the untrusted stored "
         f"num_trials=25 was used instead)"

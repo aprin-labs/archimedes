@@ -42,7 +42,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MKDOCS_YML = REPO_ROOT / "mkdocs.yml"
-DOCS_INDEX = REPO_ROOT / "docs" / "README.md"
+DOCS_INDEX = REPO_ROOT / "docs" / "doc-index.md"
 DOCS_SITE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "docs-site.yml"
 INFRA_GATE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "infra-gate.yml"
 DOCS_SITE_RUNBOOK = REPO_ROOT / "docs" / "runbooks" / "docs-site-setup.md"
@@ -72,8 +72,24 @@ def _load_hooks():
 hooks = _load_hooks()
 
 
+class _MkdocsLoader(yaml.SafeLoader):
+    """`yaml.SafeLoader` that tolerates mkdocs' `!!python/name:` tags.
+
+    `mkdocs.yml` names the mermaid fence formatter the way mkdocs-material
+    documents it — `format: !!python/name:pymdownx.superfences.fence_code_format`
+    — and `yaml.safe_load` refuses to construct that tag (`ConstructorError`),
+    which would make every test in this module fail on a config mkdocs itself
+    reads fine. Resolving the tag to its *name* is enough here: nothing in this
+    suite calls the formatter, and a SafeLoader that imports arbitrary dotted
+    paths would be the unsafe loader wearing a different hat.
+    """
+
+
+_MkdocsLoader.add_multi_constructor("tag:yaml.org,2002:python/name:", lambda loader, suffix, node: suffix)
+
+
 def _mkdocs_config() -> dict:
-    return yaml.safe_load(MKDOCS_YML.read_text(encoding="utf-8"))
+    return yaml.load(MKDOCS_YML.read_text(encoding="utf-8"), Loader=_MkdocsLoader)
 
 
 def _nav_targets(node) -> list[str]:
@@ -114,6 +130,70 @@ def test_every_nav_target_exists() -> None:
     assert not missing, (
         "mkdocs.yml nav names files that do not exist — the site build (--strict) will fail:\n  " + "\n  ".join(missing)
     )
+
+
+#: Repo docs that are engineering reference and must NOT be published (#1751 —
+#: publication is default-deny; on `main` the deny half is mkdocs' own
+#: `exclude_docs`). Each one still carries a row in docs/README.md, because the
+#: docs gate's index check is about the REPOSITORY index, not the site.
+INTERNAL_ONLY_DOCS = (
+    "specs/assoc-v1-spec.md",
+    "specs/mnemonik-integration-scoping.md",
+)
+
+
+def _exclude_patterns() -> list[str]:
+    """`exclude_docs` as a list of patterns. mkdocs accepts a block string.
+
+    Gitignore-style `#` lines are comments and are dropped — a pattern that is
+    really a comment matches nothing, which is the failure mode this whole
+    check exists to notice.
+    """
+    raw = _mkdocs_config().get("exclude_docs") or ""
+    lines = raw.splitlines() if isinstance(raw, str) else [str(x) for x in raw]
+    return [s for line in lines if (s := line.strip()) and not s.startswith("#")]
+
+
+def _publication_violations(excluded: set[str], navigated: set[str]) -> list[str]:
+    """Which internal docs would reach the public site under this config.
+
+    Two ways, and either one alone fails open in a different direction: mkdocs
+    walks `docs_dir` and builds every file it finds regardless of the nav, so a
+    nav-less page is still published at its URL; and a nav entry naming an
+    excluded file is a hard build error rather than a silent no-op.
+    """
+    problems = []
+    for rel in INTERNAL_ONLY_DOCS:
+        if rel not in excluded:
+            problems.append(f"{rel}: not in exclude_docs — mkdocs builds it and publishes it at its URL")
+        if rel in navigated:
+            problems.append(f"{rel}: named in the nav while excluded from the build — mkdocs fails the build")
+    return problems
+
+
+def test_internal_specs_are_excluded_from_the_site() -> None:
+    for rel in INTERNAL_ONLY_DOCS:
+        assert (REPO_ROOT / "docs" / rel).is_file(), f"{rel} is listed as internal but does not exist"
+
+    problems = _publication_violations(set(_exclude_patterns()), set(_nav_targets(_mkdocs_config()["nav"])))
+    assert not problems, "internal docs would be published:\n  " + "\n  ".join(problems)
+
+
+def test_the_publication_guard_fires_on_both_failure_modes() -> None:
+    """GUARD's adversarial companion: the predicate above must be able to fail.
+
+    The same function, given a config that drops the exclusion, and one that
+    also names the doc in the nav.
+    """
+    rel = INTERNAL_ONLY_DOCS[0]
+    dropped = _publication_violations(excluded={"something/else.md"}, navigated=set())
+    assert [p for p in dropped if p.startswith(f"{rel}:") and "not in exclude_docs" in p], dropped
+
+    both = _publication_violations(excluded={"something/else.md"}, navigated={rel})
+    assert len([p for p in both if p.startswith(f"{rel}:")]) == 2, both
+
+    # …and the real config is clean, so a green result above is not vacuous.
+    assert _publication_violations(set(_exclude_patterns()), set(_nav_targets(_mkdocs_config()["nav"]))) == []
 
 
 def test_every_openwiki_page_is_in_the_nav() -> None:
@@ -171,9 +251,9 @@ def test_every_wiki_page_gets_the_provenance_banner() -> None:
 
 
 def test_section_index_is_in_the_docs_index() -> None:
-    """docs/README.md opens 'A doc not listed here does not exist.'"""
+    """docs/doc-index.md opens 'A doc not listed here does not exist.'"""
     assert f"({PROVENANCE_DOC})" in DOCS_INDEX.read_text(encoding="utf-8"), (
-        f"docs/{PROVENANCE_DOC} has no row in docs/README.md"
+        f"docs/{PROVENANCE_DOC} has no row in docs/doc-index.md"
     )
 
 
@@ -306,7 +386,7 @@ def test_out_of_docs_link_becomes_a_github_url() -> None:
     """`../CLAUDE.md` is correct on GitHub and 404s on the site. Repoint it, keep the anchor."""
     assert (
         hooks.rewrite_target("../backend/archimedes/main.py#L203", "docs/architecture.md", "architecture.md", KNOWN)
-        == "https://github.com/a-apin/archimedes/blob/main/backend/archimedes/main.py#L203"
+        == "https://github.com/aprin-labs/archimedes/blob/main/backend/archimedes/main.py#L203"
     )
 
 
@@ -343,7 +423,7 @@ def test_unpublished_repo_file_under_the_wiki_becomes_a_github_url() -> None:
     """`openwiki/.claims/` and `.last-update.json` are real files the site does not serve."""
     assert (
         hooks.rewrite_target("../openwiki/.last-update.json", "docs/agent-wiki.md", "agent-wiki.md", KNOWN)
-        == "https://github.com/a-apin/archimedes/blob/main/openwiki/.last-update.json"
+        == "https://github.com/aprin-labs/archimedes/blob/main/openwiki/.last-update.json"
     )
 
 
@@ -351,6 +431,25 @@ def test_links_inside_code_blocks_are_not_rewritten() -> None:
     markdown = "See [main](../backend/archimedes/main.py).\n\n```\n[main](../backend/archimedes/main.py)\n```\n"
     out = hooks.rewrite_links(markdown, "docs/architecture.md", "architecture.md", KNOWN)
     assert out.count("https://github.com/") == 1, "a path shown inside a fenced block is an illustration, not a link"
+
+
+def test_the_wiki_edit_pencil_points_at_the_real_repo_path() -> None:
+    """`edit_uri` is `edit/main/docs/`; the wiki is mounted from the repo ROOT.
+
+    So mkdocs built every openwiki pencil as `…/edit/main/docs/openwiki/…`, which
+    is a path that has never existed — all 14 returned GitHub's 404. The hook's
+    `on_page_context` replaces the URL for those pages and leaves every other
+    page's alone.
+    """
+    url = hooks.wiki_edit_url("openwiki/rigor/admission-gate.md")
+    assert url == "https://github.com/aprin-labs/archimedes/edit/main/openwiki/rigor/admission-gate.md"
+    assert "/docs/openwiki/" not in url, "the docs/ prefix is exactly the bug this fixes"
+    assert hooks.wiki_edit_url("architecture.md") is None, (
+        "a page that really is under docs/ must keep the edit URL mkdocs computed for it"
+    )
+    assert hooks.wiki_edit_url("openwikinotreally/page.md") is None, (
+        "prefix match on the directory name, not on the string"
+    )
 
 
 def test_wiki_pages_excludes_the_claim_sidecars() -> None:

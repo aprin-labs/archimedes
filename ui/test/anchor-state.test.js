@@ -312,8 +312,14 @@ test("the dead t.strategy_id follow-back is gone from Reasoning.jsx", () => {
 
 test("StrategyReasoning keeps the debate and the trading decisions separate", () => {
 	const panel = src("components/StrategyReasoning.jsx");
-	assert.ok(panel.includes("Generation debate"));
-	assert.ok(panel.includes("Trading decisions"));
+	// The RENDERED headings, not the section-divider comments. This pair used to
+	// read `"Generation debate"` / `"Trading decisions"`, which the engine-named
+	// headings ("Strategy engine — generation debate") no longer contain in that
+	// casing — the assertion survived only on the `// ── Generation debate ──`
+	// comment above the function and went vacuous. Verified: blanking both
+	// headings now fails here.
+	assert.ok(panel.includes("Strategy engine — generation debate"));
+	assert.ok(panel.includes("Execution engine — trading decisions"));
 	// A debate turn is anchored nowhere; it must not be rendered through the
 	// anchoring badge that trace rows use.
 	const debateStart = panel.indexOf("function GenerationDebate");
@@ -335,10 +341,18 @@ test("StrategyReasoning scopes its trace query to the strategy", () => {
 test("empty states are honest and specific, not a generic 'nothing here'", () => {
 	const panel = src("components/StrategyReasoning.jsx");
 	assert.ok(panel.includes("No trading decisions recorded yet for this strategy."));
-	assert.ok(panel.includes("No debate transcript for this strategy."));
+	assert.ok(panel.includes("No generation debate is shown here."));
 	// Both explain WHY the absence exists rather than implying a failure.
-	assert.match(panel, /curated library strategies never ran one/);
+	// Whitespace-tolerant: the sentence is one claim, wrapped across source lines.
+	assert.match(panel, /curated\s+library\s+strategies\s+never\s+ran\s+one/);
 	assert.match(panel, /once the autonomous agent runs a vault that holds it/);
+	// The debate empty state used to assert ONE reason ("No debate transcript
+	// for this strategy") when the 404 it renders has TWO: the transcript was
+	// never persisted, OR the caller does not own the row
+	// (is_strategy_reasoning_visible, #1557). Naming only the first made a
+	// false statement to every non-owner reading a published strategy.
+	assert.match(panel, /or this strategy is not yours/);
+	assert.match(panel, /cannot tell you which of the two it is/);
 });
 
 test("the panel says what the filter actually matches, and what it cannot", () => {
@@ -422,14 +436,22 @@ test("StrategyReasoning renders BOTH claim shapes — the legacy string and the 
 	// persisted before the change are still strings and still render, so the
 	// panel must read the text through a helper rather than interpolating the
 	// claim directly — `{claim}` on a dict renders as a React child error.
-	const panel = src("components/StrategyReasoning.jsx");
-	assert.match(panel, /function claimText/);
+	// The turn renderer moved to ./DebatePaperVerdicts so the passport and the
+	// live generation stream draw the same rows from the same shapes; the rule
+	// is unchanged, the file carrying it is not.
+	const panel = src("components/DebatePaperVerdicts.jsx");
+	assert.match(panel, /export function claimText/);
 	assert.match(panel, /typeof claim === "string"/);
 	assert.match(panel, /claimText\(claim\)/);
 	assert.ok(
 		!/<li key=\{j\}>\{claim\}<\/li>/.test(panel),
 		"the raw-claim interpolation cannot survive the dict shape",
 	);
+	// …and the passport reaches it through that shared renderer rather than
+	// growing a second copy.
+	const passportPanel = src("components/StrategyReasoning.jsx");
+	assert.match(passportPanel, /from "\.\/DebatePaperVerdicts"/);
+	assert.match(passportPanel, /<DebateTurn\b/);
 });
 
 test("StrategyReasoning says so when a claim is attributed to no listed paper", () => {
@@ -437,7 +459,7 @@ test("StrategyReasoning says so when a claim is attributed to no listed paper", 
 	// backend guard keeps an unattributable claim rather than deleting it, so
 	// the panel must show that it was unattributed instead of rendering it
 	// indistinguishably from a grounded one.
-	const panel = src("components/StrategyReasoning.jsx");
+	const panel = src("components/DebatePaperVerdicts.jsx");
 	assert.match(panel, /not attributed to a listed paper/);
 	assert.match(panel, /arXiv:\$\{id\}/);
 });

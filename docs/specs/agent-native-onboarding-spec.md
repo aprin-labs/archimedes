@@ -8,7 +8,7 @@
 `status: draft` is deliberate and load-bearing. Everything in §§ 1–5 is verified against
 the running system and the tree, and can be trusted. §§ 6–7 are **open questions that only
 the owner can close** — six of them, in a table, in the house style of
-[PR #1432](https://github.com/a-apin/archimedes/pull/1432)'s "What you have to decide".
+[PR #1432](https://github.com/aprin-labs/archimedes/pull/1432)'s "What you have to decide".
 The doc goes `current` when those rows have answers, not before. A doc that quietly
 answered them itself would be the exact cross-issue drift it exists to prevent.
 
@@ -53,8 +53,9 @@ an onboarding story:
 **On MCP: is it a product surface at all, or is the skills-plus-CLI pair the answer? That
 is an open question and this doc does not answer it.** Grepping `docs/`, `cli/`, `skills/`,
 `backend/`, `ui/src/`, and `scripts/` for `mcp` returns only three unrelated kinds of hit:
-Safari MCP as a *tool the team drives a browser with*, OpenWiki's `openwiki mcp --host
-claude` mode ([`decisions/tooling-adoptions-2026-08.md`](../decisions/tooling-adoptions-2026-08.md)),
+Safari MCP as a *tool the team drives a browser with*, OpenWiki's
+`openwiki mcp --host claude` mode
+([`decisions/tooling-adoptions-2026-08.md`](../decisions/tooling-adoptions-2026-08.md)),
 and [`anti-features.md`](../anti-features.md)'s "NOT building: a custom agent framework"
 entry, which mentions `fastmcp` only as an off-the-shelf option *if* an MCP-style tool
 layer is ever needed. There is no MCP server, no MCP dependency, and no commitment to
@@ -94,7 +95,7 @@ and a `note` saying in as many words that *publishing a spec-typed registration 
 the same as being registered*. An agent must not treat Archimedes as a registered, reputed,
 or validated ERC-8004 counterparty, and nothing in the onboarding design below depends on
 it. Registration is tracked in
-[#1527](https://github.com/a-apin/archimedes/issues/1527).
+[#1527](https://github.com/aprin-labs/archimedes/issues/1527).
 
 ## 4. Where the agent path diverges from the browser path
 
@@ -114,7 +115,7 @@ flowchart LR
 | # | Delta | Detail |
 | --- | --- | --- |
 | **1** | **No interactive wallet-connect** | The browser has a wallet-connect modal; an API caller has a private key and `provider: "headless"`. The other three providers (`metamask`, `browser`, `circle`) name browser software a script does not have, and recording one logs a fact that is not true — see `docs/agent-api.md` § *Optional EIP-4361 wallet link*. |
-| **2** | **The faucet is human-only** | Arc testnet USDC comes from <https://faucet.circle.com/>, which is captcha'd. `generate_routes.py:463` says so in a code comment; [#1294](https://github.com/a-apin/archimedes/issues/1294) tracks it. An agent that links an empty wallet clears the `409` and lands on a `402` it cannot pay. **This is the hard stop on the agent path, and no amount of API design removes it.** |
+| **2** | **The faucet is human-only** | Arc testnet USDC comes from <https://faucet.circle.com/>, which is captcha'd. `generate_routes.py:463` says so in a code comment; [#1294](https://github.com/aprin-labs/archimedes/issues/1294) tracks it. An agent that links an empty wallet clears the `409` and lands on a `402` it cannot pay. **This is the hard stop on the agent path, and no amount of API design removes it.** |
 | **3** | **Email verification is a latent break** | `EMAIL_VERIFICATION_ENFORCED` is `"false"` in the deployed task definition (`infra/ecs.tf:716`), so sign-in works unverified today. `auth/auth.js:448` records that it *"flips on once SES production access clears."* **An agent cannot click a link in an inbox.** Flipping that flag with no agent-side story silently ends the agent path. |
 | **4** | **No credential that is not a cookie** | There is no bearer token, no API key, no PAT for external callers. `require_current_user` reads the `better-auth.session_token` cookie and only that. `X-Internal-Agent-Key` ([`auth_guard.py:37`](../../backend/archimedes/api/auth_guard.py)) is for *our own* runners, fails closed when the env var is unset, and is not an external-agent credential. The CLI's answer is a `0600` file at `~/.config/archimedes/session.json`; every other caller re-implements a cookie jar. |
 | **5** | **The CLI stops before the money** | `archimedes` 0.1.0 has no `wallets`, no `generate`, and no payment command — grep `cli/src/archimedes_cli/cli.py` for `wallets\|generate\|Payment-Signature` returns nothing. It can `login`, read the meter, and run `verify`; **it cannot complete a generation on production.** It is also not on PyPI (`https://pypi.org/pypi/archimedes-cli/json` → HTTP 404, checked 2026-08-31); install is `pip install -e ./cli`. |
@@ -130,7 +131,7 @@ written.
 **More exists than `agent-api.md` claims.** That page's § *What's NOT covered here* says
 the funnel "records distinct-visitor counts per stage only" and that segmenting it by
 `agent_type` "remains open work." **That paragraph is stale as of this doc's date:**
-[#788](https://github.com/a-apin/archimedes/issues/788) shipped, `FunnelStore.record()`
+[#788](https://github.com/aprin-labs/archimedes/issues/788) shipped, `FunnelStore.record()`
 tags a per-`agent_type` HLL alongside the aggregate
 ([`funnel_store.py`](../../backend/archimedes/services/funnel_store.py) § issue-788 note),
 `record_funnel` passes `request.state.agent_type` through with no call-site change
@@ -189,7 +190,7 @@ is unasked. Presenting it as the former would be exactly the fail-soft-substitut
 | **Human vs agent, past sign-in** | **nothing** | rule 2 collapses it. **Decision D4.** |
 | **Per-agent identity** (*which* agent, which operator, which deployment) | **nothing** | no agent id, no key, no declared client. **Decision D4.** |
 
-## 6. Reconciliation with the 3-free-generation gate ([#1643](https://github.com/a-apin/archimedes/issues/1643))
+## 6. Reconciliation with the 3-free-generation gate ([#1643](https://github.com/aprin-labs/archimedes/issues/1643))
 
 The sibling issue gives an account **3 free generations** before the wallet-gate and the
 paywall engage. This section exists so that decision is not made twice, differently, in two
@@ -247,7 +248,7 @@ each, so the answer is a choice rather than a research project.
 | **D2** | Does an **MCP** server ship at all? | (a) no — `skills/` + CLI + HTTP is the agent interface · (b) a thin MCP wrapper over the existing HTTP routes · (c) a first-class MCP product surface | (a) costs nothing and matches the tree today, but leaves `architectural-principles.md`'s "MCP-native" line as an unbacked pitch claim that should then be softened. (b) is small and adds a second surface that can drift from the API — the failure mode this repo names by name. (c) is a product commitment nobody has scoped. | **Dan.** If (a), the principles line needs an edit in the same breath. |
 | **D3** | Is there a **non-cookie credential** for agents? | (a) cookie-only, status quo · (b) scoped API keys with an expiry, per account · (c) reuse `X-Internal-Agent-Key` for externals | (a) means every CI job re-implements a jar and re-sends a password on a 7-day cycle. (b) is real auth work and a real key-management surface, and it is the thing that makes D4 answerable. (c) is **wrong** and is listed only to be rejected: that key is a single shared secret that grants `internal` classification. | **Dan.** (b) is a prerequisite if D4 lands as "yes". |
 | **D4** | Do we want **per-agent attribution**, or is per-account enough? | (a) accept the blind spot; keep `external` as an anonymous-traffic gauge and document that it cannot see logged-in agents · (b) add a self-declared client header (`X-Agent-Client`) — cheap, unverified, spoofable, still useful · (c) derive it from D3's key — verified, real, only exists if D3 is (b) | (a) is honest and free, but every future "agent conversion" number stays unmeasurable. (b) buys a usable dimension in an afternoon and must be *labelled* self-declared wherever shown. (c) is the only trustworthy answer and is gated on D3. | **Dan.** Whatever is chosen, `agent-api.md`'s stale § *What's NOT covered here* gets corrected in the same PR. |
-| **D5** | What happens at the **faucet wall** ([#1294](https://github.com/a-apin/archimedes/issues/1294))? | (a) nothing — agents stop at generation N+1 until a human funds them · (b) an operator-run pre-funding drip for agent wallets · (c) sponsor the first paid generation from the platform wallet | (a) is the status quo and caps the agent journey permanently. (b) puts a funded key on an automated path and needs its own threat model. (c) blurs the "you pay for what you spend" line the paywall exists to draw. | **Dan** — this one is money and keys, and is not delegable. |
+| **D5** | What happens at the **faucet wall** ([#1294](https://github.com/aprin-labs/archimedes/issues/1294))? | (a) nothing — agents stop at generation N+1 until a human funds them · (b) an operator-run pre-funding drip for agent wallets · (c) sponsor the first paid generation from the platform wallet | (a) is the status quo and caps the agent journey permanently. (b) puts a funded key on an automated path and needs its own threat model. (c) blurs the "you pay for what you spend" line the paywall exists to draw. | **Dan** — this one is money and keys, and is not delegable. |
 | **D6** | Does the **CLI** grow to cover the money path? | (a) no — CLI stays login/meter/verify, agents drive HTTP directly · (b) add `archimedes wallet link` · (c) add wallet link **and** an x402 signer | (a) keeps the CLI honest about being a rigor tool. (b) closes delta 1 for CLI users. (c) is the only option that makes the CLI able to finish a production generation — and puts private-key handling in a tool that today deliberately has no `eth-account` dependency. | **Dan.** Also decides whether `archimedes-cli` gets published to PyPI, which is currently a 404. |
 
 ### Already decided — do not reopen
@@ -256,11 +257,11 @@ Listed so no follow-up PR relitigates them.
 
 | Decision | Answer | Where it lives |
 | --- | --- | --- |
-| Account is always required; **no wallet-only-without-account path** | settled — `require_current_user` stays the first gate on every generation, free or paid | owner directive in [#1643](https://github.com/a-apin/archimedes/issues/1643) |
+| Account is always required; **no wallet-only-without-account path** | settled — `require_current_user` stays the first gate on every generation, free or paid | owner directive in [#1643](https://github.com/aprin-labs/archimedes/issues/1643) |
 | An undelivered paid generation is repaid as a **credit, not a refund** | settled | [ADR](../adr/generation-payment-credit-not-refund.md) |
 | API callers link wallets as **`provider: "headless"`** | settled — the other three name browser software a script does not have | `docs/agent-api.md` § *Optional EIP-4361 wallet link* |
 | The quota runs **before** the paywall | settled — a quota-blocked caller is never asked to pay | `generation_payment.py` module docstring; `generate_routes.py:406` |
-| ERC-8004 is **`registration_pending`**, and no identity claim rides on it | settled | `agent_manifest_routes.py`; [#1527](https://github.com/a-apin/archimedes/issues/1527) |
+| ERC-8004 is **`registration_pending`**, and no identity claim rides on it | settled | `agent_manifest_routes.py`; [#1527](https://github.com/aprin-labs/archimedes/issues/1527) |
 
 ### Follow-ups this doc creates
 
@@ -297,4 +298,4 @@ from inside the repo, so **re-read the endpoint rather than trusting the date**,
 | CLI command inventory | `cli/src/archimedes_cli/cli.py`; `cli/pyproject.toml:3` (`0.1.0`) |
 | `archimedes-cli` not on PyPI | `https://pypi.org/pypi/archimedes-cli/json` → HTTP 404, 2026-08-31 |
 | No MCP server in this repo | `grep -rn -i "\bmcp\b" docs/ cli/ skills/ backend/ ui/src/ scripts/` — Safari MCP, OpenWiki's MCP mode, and `anti-features.md`'s `fastmcp` aside are the only hits |
-| "No free path" policy being reversed | `services/generation_payment.py` module docstring; [#1643](https://github.com/a-apin/archimedes/issues/1643) |
+| "No free path" policy being reversed | `services/generation_payment.py` module docstring; [#1643](https://github.com/aprin-labs/archimedes/issues/1643) |

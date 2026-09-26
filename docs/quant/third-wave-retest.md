@@ -4,7 +4,7 @@
 > vintage.** Measured on 2026-06-11 over the 22-of-23-strategy library of that date; the
 > shelf has grown since (count it with `ls analytics-engine/strategies/*.py`). Two pass-count
 > phrasings were retracted in place on 2026-08-31
-> ([#1598](https://github.com/a-apin/archimedes/issues/1598)); the diagnostics themselves
+> ([#1598](https://github.com/aprin-labs/archimedes/issues/1598)); the diagnostics themselves
 > are untouched. Item 4 of the
 > third wave (see [`third-wave-handover.md`](../handovers/third-wave-handover.md) §11).
 > Companion to [`transaction-cost-turnover-model.md`](../specs/transaction-cost-turnover-model.md)
@@ -37,7 +37,7 @@ drift), so these are diagnostics, never written back to fixtures.
 `capital_preservation_tbill` is skipped (it models a T-bill yield, not a
 tradeable instrument run); `pipeline_buy_hold` is skipped as the trivial
 baseline. Moreira-Muir, MOP TSMOM and Faber are included as reference rows.
-*(Retracted 2026-08-31, [#1598](https://github.com/a-apin/archimedes/issues/1598): this
+*(Retracted 2026-08-31, [#1598](https://github.com/aprin-labs/archimedes/issues/1598): this
 sentence used to label the first two by how many of them cleared the gate, and to give
 Faber a LIVE status. Both are pass/fail claims a doc must not make — `CLAUDE.md` forbids
 quoting a curated-library pass count anywhere, and the corrected count is
@@ -133,7 +133,7 @@ itself the finding (already documented on its passport).
    default (63). Read precisely: the default was *not* mined (it is the
    3-month convention the literature uses), but the +0.35 does benefit from
    configuration luck that an adaptive selector would not have captured.
-   This belongs in the [#537](https://github.com/a-apin/archimedes/issues/537)
+   This belongs in the [#537](https://github.com/aprin-labs/archimedes/issues/537)
    discussion as evidence on BOTH sides: `n_param_combos` here was 3 (not
    22), supporting the provenance-based `num_trials` split — while the
    +0.14 OOS suggests the recovered strategy should be sized conservatively.

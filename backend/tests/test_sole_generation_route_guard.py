@@ -3,9 +3,10 @@
 ``docs/adr/debate-society-sole-generation-pipeline.md`` records the decision;
 until 2026-08-31 the tree did not actually enforce it. A second live,
 SIWE-gated, LLM-spending generation endpoint survived the Phase-3 cutover —
-``POST /api/strategies/generate`` → ``_run_fusion_job``, flag-gated on
-``ARCHIMEDES_FUSION_ENABLED`` and set to ``true`` in every deployed
-environment. An ADR without a test is a comment.
+``POST /api/strategies/generate`` → ``_run_fusion_job``, gated on
+``ARCHIMEDES_FUSION_ENABLED`` (a flag retired 2026-09-02, deck Q4) that was
+set to ``true`` in every deployed environment anyway. An ADR without a test is
+a comment.
 
 Two independent guards, because one alone is evadable:
 

@@ -1,4 +1,4 @@
-"""Market-data vendor seam (#775 / #1218).
+"""Market-data vendor seam (#775 / #1218), routed per seam (#1798).
 
 #1218 priced yfinance as an unlicensed commercial dependency that scales with
 strategies x symbols x re-run cadence, and named the seam it should be
@@ -6,29 +6,46 @@ substituted at. This module IS that seam for backend's live/request-path call
 sites (analytics-engine's own choke point — ``fetch_ohlcv`` — gets the
 equivalent treatment in ``archimedes_analytics_engine.market_data``; the two
 are separate modules because analytics-engine is a standalone, DB-less
-package, but both read the SAME ``MARKET_DATA_PROVIDER`` env var and default
-to ``"yfinance"``, so a deploy of this change is a no-op until the flag
-flips).
+package. Both default to ``"yfinance"``, so a deploy is a no-op until a flag
+flips; since #1798 they no longer read the same var in every case — this
+module reads ``MARKET_DATA_DAILY_PROVIDER`` for its daily seam, while
+analytics-engine's standalone CLI seam still reads ``MARKET_DATA_PROVIDER``
+only and registers no Tiingo adapter, so a daily flip does not reach it).
 
-Five call sites route through here (grep-verified):
+**Two seams, two vendors, one vendor per run (#1798).** ``get_provider`` takes
+a required ``seam=``. ``"daily"`` resolves ``MARKET_DATA_DAILY_PROVIDER``
+(falling back to ``MARKET_DATA_PROVIDER``, then yfinance) and serves daily bars
+only; ``"intraday"`` resolves ``MARKET_DATA_PROVIDER`` and serves the whole
+interface, because a live run reads a quote and a daily context bar together
+and both must come from one vendor. The per-seam table lives in
+``docs/adr/market-data-sourcing.md``; the routing itself is ``_SEAM_METHODS`` /
+``_VENDOR_SEAMS`` / ``SeamRoutedProvider`` below.
+
+Six call sites route through here (grep-verified), each naming its seam:
   - ``strategy_signal_evaluator._fetch_price_history(ies)`` — daily close
     series for backtests/Explore's universe sweep (the #1218 volume driver).
+    Seam: ``daily``.
   - ``chain.oracle_updater`` — the live oracle-push equity fetch, the VIX /
     S&P-MA regime reads, and the #775 secondary-source cross-check's
-    independent reading.
+    independent reading. Seam: ``intraday`` for all of them, including the
+    ^GSPC daily moving averages: ``fetch_market_snapshot`` reads ^VIX and
+    ^GSPC in ONE run, and Tiingo has no index coverage anyway.
   - ``services.asset_market_service._fetch_yfinance_series`` — the Explore
-    per-asset history-modal endpoint.
+    per-asset history-modal endpoint. Seam: ``intraday`` (arbitrary interval).
+  - ``services.paper_marks.mark_all`` — the paper-trading mark loop. Seam:
+    ``intraday``.
   - ``services.fusion_market_data._fetch_one`` — the GENERATION path's
-    fusion/debate real-data panel (#1218 generation-path seam fix).
+    fusion/debate real-data panel (#1218 generation-path seam fix). Seam:
+    ``daily``.
   - ``services.portfolio_backtester._fetch_price_panel`` — the GENERATION
-    path's portfolio-weights backtester (same fix).
+    path's portfolio-weights backtester (same fix). Seam: ``daily``.
 
 **#775 resolution, in one line:** the cross-check
 (``oracle_updater._cross_check_secondary``) reads its independent secondary
-through ``get_provider()`` and treats ``provider_name()`` (not a hardcoded
-``"yfinance"``) as "same source, skip". Swap ``MARKET_DATA_PROVIDER`` to a
-new vendor and the cross-check's secondary source swaps with it automatically
-— no separate change needed at the guardrail.
+through ``get_provider(seam="intraday")`` and treats
+``provider_name("intraday")`` (not a hardcoded ``"yfinance"``) as "same source,
+skip". Swap the intraday vendor and the cross-check's secondary source swaps
+with it automatically — no separate change needed at the guardrail.
 
 **Caching, scoped intentionally.** ``get_daily_close_batch`` — the DAILY-bar
 close-only shape that matches ``asset_daily_bars`` — and ``get_daily_ohlcv``
@@ -46,7 +63,9 @@ seam, not migration) — the cache primes itself on the first miss.
 
 **The cache is PER-VENDOR.** Both readers filter ``asset_daily_bars`` on the
 ``source`` column as well as the symbol, so rows written by one provider are
-invisible to another. Without that filter, flipping ``MARKET_DATA_PROVIDER``
+invisible to another. That filter is also what lets the two seams share one
+table: the daily seam's Tiingo rows and the intraday seam's yfinance rows sit
+side by side and neither reads the other's. Without it, flipping a provider
 on a system with a warm cache serves the OLD vendor's bars for cached symbols
 and the NEW vendor's for uncached ones — inside a single backtest panel, with
 no error and no log line. See ``_read_cached_ohlcv``'s docstring and
@@ -136,7 +155,9 @@ class MarketDataProvider(ABC):
     """Vendor abstraction for market data. Default implementation (below) is
     yfinance, unchanged in behavior from what each call site did before this
     seam existed. A new vendor implements this interface and registers in
-    ``_VENDOR_PROVIDERS``; ``MARKET_DATA_PROVIDER`` selects it."""
+    ``_VENDOR_PROVIDERS``, declares the seams it can serve in
+    ``_VENDOR_SEAMS``, and is selected per seam (#1798) by
+    ``MARKET_DATA_DAILY_PROVIDER`` / ``MARKET_DATA_PROVIDER``."""
 
     @abstractmethod
     def get_daily_close_batch(self, tickers: dict[str, str], period: str) -> dict[str, pd.Series]:
@@ -378,7 +399,8 @@ class TiingoAPIKeyMissingError(TiingoProviderError):
     """``TIINGO_API_TOKEN`` is unset/blank. Raised at ``TiingoProvider``
     construction — ``get_provider()`` builds a fresh instance on every call
     (no long-lived singleton in this seam), so this fires on the very next
-    call site that routes through the seam with ``MARKET_DATA_PROVIDER=tiingo``:
+    call site whose seam resolves to tiingo (``MARKET_DATA_DAILY_PROVIDER``,
+    or ``MARKET_DATA_PROVIDER`` on the daily seam when the first is unset):
     the closest thing this seam has to a "startup" check, since there is no
     separate eager app-boot validation of the market-data vendor today — AND
     again at every HTTP call (the key is never cached on the instance;
@@ -534,10 +556,12 @@ def _tiingo_api_key() -> str:
             return token
     raise TiingoAPIKeyMissingError(
         "TIINGO_API_TOKEN is not set (legacy alias TIINGO_API_KEY also empty). Required "
-        "whenever MARKET_DATA_PROVIDER=tiingo (see .env.example). NOT wired into "
-        "infra/ecs.tf's task-definition secrets yet — seeding "
-        "/archimedes/prod/TIINGO_API_TOKEN and adding the ecs.tf entry are cutover "
-        "follow-ups, deliberately not in this PR."
+        "whenever a seam resolves to tiingo — MARKET_DATA_DAILY_PROVIDER, or "
+        "MARKET_DATA_PROVIDER on the daily seam when that is unset (see .env.example). "
+        "Wired into infra/ecs.tf's backend `secrets` and pinned on the deploy clone path "
+        "by .github/scripts/ecs_rewrite_task_def.py (#1798), so in prod this means the "
+        "value is blank or the process is not the deployed container — see "
+        "docs/runbooks/market-data-provider-proof.md."
     )
 
 
@@ -687,10 +711,14 @@ class TiingoProvider(MarketDataProvider):
     only — the two methods ``CachingMarketDataProvider`` cache-backs, and the
     #1218 cost driver (the universe sweep + generation-path OHLCV fetches).
     ``get_intraday_quote`` / ``get_intraday_quotes_batch`` / ``get_series``
-    are intentionally NOT implemented — see their docstrings below for why,
-    and the PR body for the cutover implication (call sites depending on
-    them must stay on ``MARKET_DATA_PROVIDER=yfinance`` until a follow-up
-    covers Tiingo's IEX/top-of-book endpoints).
+    are intentionally NOT implemented — see their docstrings below for why.
+    Since #1798 that is a *declared* limit, not a landmine: ``_VENDOR_SEAMS``
+    lists Tiingo on the ``daily`` seam only, so ``get_provider`` never hands a
+    ``TiingoProvider`` to an intraday call site and flipping the daily flag
+    cannot take the oracle push or the Explore history modal down. These three
+    methods still raise (rather than being omitted) so that a direct
+    construction, or a future ``_VENDOR_SEAMS`` edit that outruns the adapter,
+    fails loudly before any network call.
 
     Three REST endpoint families, routed per-ticker by
     ``_classify_tiingo_ticker`` (ticker-SHAPE heuristic — see that function's
@@ -914,24 +942,28 @@ class TiingoProvider(MarketDataProvider):
     def get_intraday_quote(self, ticker: str) -> tuple[float, datetime] | None:
         raise NotImplementedError(
             "TiingoProvider.get_intraday_quote is out of scope for #1218 Part 1 (daily "
-            "batch + OHLCV only). chain.oracle_updater's live oracle push and VIX/S&P "
-            "regime reads must stay on MARKET_DATA_PROVIDER=yfinance until a follow-up "
-            "wires Tiingo's IEX top-of-book endpoint."
+            "batch + OHLCV only). Tiingo is declared on the 'daily' seam only (#1798), so "
+            "chain.oracle_updater's live oracle push and VIX/S&P regime reads run on the "
+            "'intraday' seam's vendor (yfinance) whatever MARKET_DATA_DAILY_PROVIDER says; "
+            "reaching this line means something bypassed get_provider(seam=...)."
         )
 
     def get_intraday_quotes_batch(self, tickers: dict[str, str]) -> dict[str, float]:
         raise NotImplementedError(
             "TiingoProvider.get_intraday_quotes_batch is out of scope for #1218 Part 1 "
-            "(daily batch + OHLCV only). Call sites needing a live intraday batch quote "
-            "must stay on MARKET_DATA_PROVIDER=yfinance until a follow-up wires Tiingo's "
-            "IEX top-of-book endpoint."
+            "(daily batch + OHLCV only). Tiingo is declared on the 'daily' seam only "
+            "(#1798), so call sites needing a live intraday batch quote (the oracle push, "
+            "the paper-marks loop) are routed to the 'intraday' seam's vendor instead; "
+            "reaching this line means something bypassed get_provider(seam=...)."
         )
 
     def get_series(self, ticker: str, period: str, interval: str) -> pd.Series:
         raise NotImplementedError(
             "TiingoProvider.get_series is out of scope for #1218 Part 1 (daily batch + "
-            "OHLCV only). services.asset_market_service's Explore history modal must "
-            "stay on MARKET_DATA_PROVIDER=yfinance until a follow-up wires this method."
+            "OHLCV only). Tiingo is declared on the 'daily' seam only (#1798), so "
+            "services.asset_market_service's Explore history modal is routed to the "
+            "'intraday' seam's vendor instead; reaching this line means something "
+            "bypassed get_provider(seam=...)."
         )
 
 
@@ -941,17 +973,181 @@ _VENDOR_PROVIDERS: dict[str, type[MarketDataProvider]] = {
 }
 
 
-def provider_name() -> str:
-    """The active vendor name: ``MARKET_DATA_PROVIDER`` env, default
-    ``"yfinance"``. An unrecognized value fails SAFE to the default (logged),
-    matching this codebase's other mode switches (e.g.
-    ``price_source.price_source_mode``, ``oracle_updater._int_env``) rather
-    than crashing a live process over a config typo."""
-    raw = os.getenv("MARKET_DATA_PROVIDER", "yfinance").strip().lower()
+# ─── Seams (#1798) ──────────────────────────────────────────────────────
+#
+# One env var could not express the vendor split the ADR actually decided.
+# ``MARKET_DATA_PROVIDER=tiingo`` selected Tiingo for EVERY method, and Tiingo
+# serves daily bars only — so the single global flip took the live oracle
+# push, the paper marks and the Explore history modal down with it. Routing is
+# therefore per SEAM: a seam is a family of reads that one feature makes inside
+# one run, and each seam resolves its own vendor.
+#
+#   daily    — daily bars: the strategy signal evaluation behind every
+#              marketplace tick (vault AND paper deployments) and the
+#              generation-path fusion/backtester panels, whose artifacts the
+#              daily-returns series is then derived from. Vendor:
+#              MARKET_DATA_DAILY_PROVIDER, falling back to MARKET_DATA_PROVIDER,
+#              falling back to yfinance. This is the seam Tiingo can serve.
+#   intraday — the live/interactive seam: intraday quotes, arbitrary-interval
+#              series, AND any daily context bar the same run needs (the oracle
+#              snapshot reads ^VIX intraday and ^GSPC daily in one call).
+#              Vendor: MARKET_DATA_PROVIDER, falling back to yfinance.
+#
+# The ADR's "never mix vendors inside one run" is unchanged and is exactly why
+# the intraday seam serves daily methods too: the oracle snapshot is one run,
+# so its ^GSPC moving averages come from the same vendor as its ^VIX quote.
+# What #1798 adds is that different FEATURES may sit on different vendors —
+# see docs/adr/market-data-sourcing.md § "Amendment: per-seam routing" for the
+# feature-by-feature table.
+DAILY_SEAM = "daily"
+INTRADAY_SEAM = "intraday"
+
+# Which ABC methods each seam will serve. The daily seam's refusal does NOT
+# depend on which vendor is configured — a daily-seam caller that needs a live
+# quote must ask the intraday seam BY NAME, so that reaching across vendors is
+# always a visible act in the diff rather than an accident of today's flag
+# values.
+_SEAM_METHODS: dict[str, frozenset[str]] = {
+    DAILY_SEAM: frozenset({"get_daily_close_batch", "get_daily_ohlcv"}),
+    INTRADAY_SEAM: frozenset(
+        {
+            "get_intraday_quote",
+            "get_intraday_quotes_batch",
+            "get_series",
+            "get_daily_close_batch",
+            "get_daily_ohlcv",
+        }
+    ),
+}
+
+# Which seams each vendor can actually serve. Declared, not inferred: a vendor
+# on the intraday seam must implement the WHOLE interface (that seam's runs mix
+# quote and daily-bar reads), which is why Tiingo — daily bars only, three
+# NotImplementedError methods — declares the daily seam alone.
+_VENDOR_SEAMS: dict[str, frozenset[str]] = {
+    "yfinance": frozenset({DAILY_SEAM, INTRADAY_SEAM}),
+    "tiingo": frozenset({DAILY_SEAM}),
+}
+
+# The env var each seam reads first. The daily seam falls back to
+# MARKET_DATA_PROVIDER when its own var is unset, so the pre-#1798 single-var
+# configuration keeps its exact meaning and a deploy of this change is a no-op.
+_SEAM_ENV_VARS: dict[str, tuple[str, ...]] = {
+    DAILY_SEAM: ("MARKET_DATA_DAILY_PROVIDER", "MARKET_DATA_PROVIDER"),
+    INTRADAY_SEAM: ("MARKET_DATA_PROVIDER",),
+}
+
+
+class MarketDataSeamError(RuntimeError):
+    """A seam was asked for something it does not serve.
+
+    Raised for an unknown seam name and for a method outside the seam's
+    declared set (the daily seam asked for an intraday quote, say). Loud on
+    purpose: the alternative — quietly reaching for the other seam's vendor —
+    is the vendor mix inside one run that the ADR forbids, and it would carry
+    no signal at the call site."""
+
+
+def _resolve_seam(seam: str) -> str:
+    if seam not in _SEAM_METHODS:
+        raise MarketDataSeamError(
+            f"unknown market-data seam {seam!r} — expected one of {sorted(_SEAM_METHODS)}. "
+            "Every call site names its seam explicitly (#1798)."
+        )
+    return seam
+
+
+def provider_name(seam: str) -> str:
+    """The active vendor name FOR ONE SEAM: ``MARKET_DATA_DAILY_PROVIDER`` (or
+    ``MARKET_DATA_PROVIDER``) for ``"daily"``, ``MARKET_DATA_PROVIDER`` for
+    ``"intraday"``; default ``"yfinance"`` for both.
+
+    ``seam`` is required. Since #1798 there is no single "the active vendor" to
+    return, and a function that guessed would hand a caller the wrong vendor's
+    name to stamp on a row.
+
+    Two fail-safes, both logged, both landing on ``"yfinance"``:
+
+    * an unrecognized vendor name (a config typo) — same behaviour as before
+      #1798, and the same posture as ``price_source.price_source_mode``;
+    * a known vendor that does not serve THIS seam (``tiingo`` on the intraday
+      seam). This is the substitution #1798 exists for: it is not a silent
+      fallback, because the returned name is the vendor that actually serves
+      the read, so every provenance stamp derived from it stays true. The ADR's
+      no-silent-fallback rule is about the missing-token case, which still
+      raises ``TiingoAPIKeyMissingError`` at construction.
+    """
+    _resolve_seam(seam)
+    raw = ""
+    for var in _SEAM_ENV_VARS[seam]:
+        raw = os.getenv(var, "").strip().lower()
+        if raw:
+            break
+    if not raw:
+        return "yfinance"
     if raw not in _VENDOR_PROVIDERS:
-        logger.warning("unknown MARKET_DATA_PROVIDER=%r — falling back to yfinance", raw)
+        logger.warning("unknown market-data provider %r (seam=%s) — falling back to yfinance", raw, seam)
+        return "yfinance"
+    if seam not in _VENDOR_SEAMS.get(raw, frozenset()):
+        logger.warning(
+            "market-data vendor %r cannot serve the %s seam — that seam falls back to yfinance "
+            "(see docs/adr/market-data-sourcing.md). The %s seam is unaffected.",
+            raw,
+            seam,
+            DAILY_SEAM if seam == INTRADAY_SEAM else INTRADAY_SEAM,
+        )
         return "yfinance"
     return raw
+
+
+class SeamRoutedProvider(MarketDataProvider):
+    """Dispatches each method to the seam's vendor, or refuses.
+
+    A thin wrapper, and deliberately not a smart one: it does not fetch, it
+    does not cache and it never reaches for the other seam's vendor. What it
+    adds is that ``get_provider(seam="daily").get_series(...)`` raises a
+    ``MarketDataSeamError`` naming both seams instead of silently working
+    today (daily vendor = yfinance) and raising ``NotImplementedError`` from
+    inside a vendor adapter the day the daily flag flips to Tiingo."""
+
+    def __init__(self, inner: MarketDataProvider, seam: str, vendor_name: str) -> None:
+        self._inner = inner
+        self._seam = _resolve_seam(seam)
+        self._vendor_name = vendor_name
+
+    @property
+    def seam(self) -> str:
+        return self._seam
+
+    @property
+    def vendor_name(self) -> str:
+        return self._vendor_name
+
+    def _route(self, method: str):
+        if method not in _SEAM_METHODS[self._seam]:
+            other = INTRADAY_SEAM if self._seam == DAILY_SEAM else DAILY_SEAM
+            raise MarketDataSeamError(
+                f"{method}() is not served by the {self._seam!r} market-data seam "
+                f"(vendor {self._vendor_name!r}, env {_SEAM_ENV_VARS[self._seam][0]}). "
+                f"Ask for it explicitly with get_provider(seam={other!r}) — crossing seams is "
+                "crossing vendors, so it must be visible at the call site (#1798)."
+            )
+        return getattr(self._inner, method)
+
+    def get_daily_close_batch(self, tickers: dict[str, str], period: str) -> dict[str, pd.Series]:
+        return self._route("get_daily_close_batch")(tickers, period)
+
+    def get_daily_ohlcv(self, ticker: str, start: str, end: str) -> pd.DataFrame:
+        return self._route("get_daily_ohlcv")(ticker, start, end)
+
+    def get_intraday_quote(self, ticker: str) -> tuple[float, datetime] | None:
+        return self._route("get_intraday_quote")(ticker)
+
+    def get_intraday_quotes_batch(self, tickers: dict[str, str]) -> dict[str, tuple[float, datetime]]:
+        return self._route("get_intraday_quotes_batch")(tickers)
+
+    def get_series(self, ticker: str, period: str, interval: str) -> pd.Series:
+        return self._route("get_series")(ticker, period, interval)
 
 
 # Whether a vendor's INTRADAY feed is a delayed tape rather than a real-time
@@ -977,7 +1173,7 @@ def intraday_is_delayed() -> bool:
     ``_INTRADAY_DELAYED_BY_PROVIDER`` with ``False`` and a note saying what
     contract backs that claim.
     """
-    return _INTRADAY_DELAYED_BY_PROVIDER.get(provider_name(), True)
+    return _INTRADAY_DELAYED_BY_PROVIDER.get(provider_name(INTRADAY_SEAM), True)
 
 
 # ─── Postgres read-through cache (asset_daily_bars) ────────────────────
@@ -1035,7 +1231,30 @@ def _write_cached_series(session, ticker: str, series: pd.Series, source: str) -
     """Upsert ``series`` (close prices indexed by date) into ``asset_daily_bars``
     for ``ticker``, dialect-agnostic (works on SQLite in tests and Postgres in
     prod) via select-then-add/update rather than a dialect-specific ON
-    CONFLICT clause."""
+    CONFLICT clause.
+
+    **Cross-vendor overwrites clear the rest of the bar (#1798).** This writer
+    knows only ``close``. The row it upserts is keyed ``(symbol, trade_date)``
+    — the table's unique constraint — so it cannot sidestep an existing row by
+    adding a second one, and the row it lands on may have been written by a
+    *different* vendor. Blindly assigning ``close`` + ``source`` there would
+    leave the previous vendor's ``open/high/low/volume`` in place under the new
+    vendor's label: a bar whose Close is Tiingo's and whose OHLV is yfinance's,
+    stamped ``source='tiingo'``. ``_read_cached_ohlcv``'s ``source`` filter
+    cannot catch that — the row now claims to be the vendor being asked for —
+    so ``portfolio_backtester._fetch_price_panel`` (which consumes ``Volume``
+    as well as ``Close``) would grade a silently blended panel. That is the
+    exact failure the seam exists to prevent, reached through the write path
+    instead of the read path.
+
+    So on a vendor change we keep the one column we actually know and NULL the
+    four we do not. The row becomes the honest partial bar it is, which
+    ``_read_cached_ohlcv``'s existing partial-bar guard already treats as a
+    miss — the next OHLCV read re-fetches the whole range from the new vendor
+    and ``_write_cached_ohlcv`` (which writes every column) fills it back in.
+    Cost: one extra vendor round-trip per symbol after a flip, which is the
+    same cold-cache price the ``source`` filter already charges on reads.
+    """
     from archimedes.models.asset_daily_bars import AssetDailyBar
 
     now = datetime.now(UTC)
@@ -1059,9 +1278,21 @@ def _write_cached_series(session, ticker: str, series: pd.Series, source: str) -
         .filter(AssetDailyBar.symbol == ticker, AssetDailyBar.trade_date.in_(dates))
         .all()
     }
+    displaced_vendors: set[str] = set()
+    displaced_rows = 0
     for trade_date, close_f in to_write:
         row = existing.get(trade_date)
         if row is not None:
+            if row.source != source:
+                # A different vendor wrote this row and we only know `close`.
+                # Drop the old vendor's OHLV rather than leave a bar stitched
+                # from two vendors under one `source` label — see the docstring.
+                displaced_vendors.add(row.source)
+                displaced_rows += 1
+                row.open = None
+                row.high = None
+                row.low = None
+                row.volume = None
             row.close = close_f
             row.source = source
             row.fetched_at = now
@@ -1075,6 +1306,19 @@ def _write_cached_series(session, ticker: str, series: pd.Series, source: str) -
                     fetched_at=now,
                 )
             )
+
+    if displaced_vendors:
+        # Loud on purpose: this is the visible half of a vendor flip. It says
+        # which vendor's bars were demoted to close-only and why the next
+        # OHLCV read for this symbol will go back to the network.
+        logger.info(
+            "market data cache: close-only write by %s cleared OHLV previously written by %s "
+            "for %s (%d row(s)); the next OHLCV read re-fetches the full bars",
+            source,
+            ", ".join(sorted(displaced_vendors)),
+            ticker,
+            displaced_rows,
+        )
 
 
 def _read_cached_ohlcv(
@@ -1205,7 +1449,13 @@ def _write_cached_ohlcv(session, ticker: str, df: pd.DataFrame, source: str) -> 
     Open/High/Low/Close/Volume — ``fetch_ohlcv``'s output shape) into
     ``asset_daily_bars`` for ``ticker``. Mirrors ``_write_cached_series`` but
     persists the whole bar, not close-only, so the row is a valid cache entry
-    for ``get_daily_ohlcv`` as well as ``get_daily_close_batch``."""
+    for ``get_daily_ohlcv`` as well as ``get_daily_close_batch``.
+
+    Needs no cross-vendor guard of its own (unlike ``_write_cached_series``,
+    whose docstring explains the hazard): every column is assigned on every
+    update, so landing on another vendor's row REPLACES the whole bar rather
+    than blending it. The ``source`` stamp is therefore always true of all
+    five values."""
     from archimedes.models.asset_daily_bars import AssetDailyBar
 
     def _float_or_none(value: object) -> float | None:
@@ -1411,11 +1661,24 @@ class CachingMarketDataProvider(MarketDataProvider):
         return fetched
 
 
-def get_provider() -> MarketDataProvider:
-    """The active provider, cache-wrapped. Call sites use this — never
-    ``YFinanceProvider`` (or ``yfinance``) directly — so a vendor swap via
-    ``MARKET_DATA_PROVIDER`` changes every choke point (including the #775
-    cross-check's secondary source) in one place."""
-    name = provider_name()
+def get_provider(*, seam: str) -> SeamRoutedProvider:
+    """The active provider FOR ONE SEAM, cache-wrapped and seam-routed. Call
+    sites use this — never ``YFinanceProvider`` (or ``yfinance``) directly — so
+    a vendor swap changes every choke point (including the #775 cross-check's
+    secondary source) in one place.
+
+    ``seam`` is keyword-only and required: ``"daily"`` for daily bars (the
+    marketplace tick's signal evaluation and the generation-path panels, and so
+    the daily-returns series derived from those backtests) and ``"intraday"``
+    for the live/interactive reads (oracle push, paper marks, the Explore
+    history modal, and any daily context bar those same runs need).
+    Since #1798 the two can resolve to different vendors, so a call site that
+    did not say which one it meant would be picking a vendor by accident.
+
+    Nesting, outermost first: ``SeamRoutedProvider`` (refuses off-seam methods
+    before anything is fetched) → ``CachingMarketDataProvider`` (the per-vendor
+    ``asset_daily_bars`` cache) → the vendor adapter."""
+    name = provider_name(seam)
     vendor = _VENDOR_PROVIDERS[name]()
-    return CachingMarketDataProvider(vendor, source_name=name)
+    cached = CachingMarketDataProvider(vendor, source_name=name)
+    return SeamRoutedProvider(cached, seam=seam, vendor_name=name)

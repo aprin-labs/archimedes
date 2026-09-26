@@ -10,7 +10,7 @@ from click.testing import CliRunner
 
 from archimedes_cli import cli as cli_mod
 from archimedes_cli.cli import DEFAULT_API_URL, _resolve_api_url, main
-from archimedes_cli.session import save_session
+from archimedes_cli.session import SESSION_FILE_ENV, save_session
 
 STAGING = "https://staging.archimedes.invalid"
 
@@ -27,6 +27,7 @@ def test_meter_uses_the_session_url_not_the_default(monkeypatch, tmp_path):
     then run plain `meter` — the request must go to the session's host.
     Pre-fix, seen_base_urls captured DEFAULT_API_URL and this test fails."""
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv(SESSION_FILE_ENV, raising=False)  # overrides HOME outright (#1752)
     monkeypatch.delenv("ARCHIMEDES_API_URL", raising=False)
     save_session(api_url=STAGING, cookies={"better-auth.session_token": "t"}, email="a@b.co")
 

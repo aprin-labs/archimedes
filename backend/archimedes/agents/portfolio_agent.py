@@ -38,6 +38,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from archimedes.agents.prompts import PROMPTS
+from archimedes.services.brief_screen import quote_for_prompt
 from archimedes.services.llm_backend import LLMBackend, make_llm_backend
 from archimedes.services.strategy_signal_evaluator import GLOBAL_ASSETS
 
@@ -78,40 +80,9 @@ def _cache_key(regime: str, risk_profile: str, top_synths: tuple[str, ...]) -> s
 
 
 def _build_system_prompt() -> str:
-    return (
-        "You are Archimedes, an autonomous portfolio-construction agent for a "
-        "non-custodial USDC-settled vault on Arc.\n\n"
-        "Your responsibility: pick a diversified portfolio of *individual* tradable "
-        "instruments (individual stocks, bonds, futures, FX, crypto — not just "
-        "broad ETFs unless they are the best vehicle for a thesis). Every pick "
-        "MUST be anchored to one of the paper-grounded quant strategies in our "
-        "library (the 'strategy passport' model). You may NOT invent strategies — "
-        "anchor only to the ones provided in the user prompt.\n\n"
-        "PRINCIPLES\n"
-        "- Diversify by asset class AND by exchange (US, European, Asian, Turkish, "
-        "  metals/futures, FX, crypto).\n"
-        "- Prefer individual stocks where you have a specific thesis (e.g. NVDA, ASML "
-        "  for AI capex; THYAO, KCHOL for Turkish play; XOM, CVX for energy).\n"
-        "- Use individual bond ETFs by maturity (BIL=t-bills, SHY=1-3y, IEF=7-10y, "
-        "  TLT=20y+, TIP=inflation-linked) rather than only aggregate funds.\n"
-        "- Respect the synth-budget cap. The remainder is held as USDC (the safety "
-        "  floor) which the user already knows about — you don't list USDC.\n"
-        "- No single pick > 20% of the synth budget.\n"
-        "- Pick 5-12 instruments total.\n\n"
-        "OUTPUT FORMAT\n"
-        "Return ONLY a JSON object, nothing else (no prose before or after). Schema:\n"
-        "{\n"
-        '  "thesis": "1-2 sentence portfolio thesis tying regime + risk profile to picks",\n'
-        '  "picks": [\n'
-        '    {"ticker": "NVDA", "weight": 0.12, "paper_anchor": "moskowitz_2012_tsmom",\n'
-        '     "reasoning": "12m return +75%, qualifies for TSMOM long; AI capex cycle"},\n'
-        "    ...\n"
-        "  ]\n"
-        "}\n\n"
-        "`ticker` MUST be the display symbol shown in the AVAILABLE UNIVERSE table. "
-        "Weights are fractions of the synth budget (will be renormalized if needed). "
-        "`paper_anchor` MUST be one of the strategy ids listed below."
-    )
+    # The template lives in the prompt registry (`agents/prompts.py`), rendered
+    # into `docs/specs/prompt-inventory.md` under a drift test (#1800).
+    return PROMPTS["portfolio.construction.system"].text
 
 
 def _format_universe(scan_universe_synths: set[str]) -> str:
@@ -191,8 +162,19 @@ def _format_strategies(strategies: list[Any], rigor_statuses: dict[str, str] | N
         rule = _summarize_rule(s)
         status = (rigor_statuses or {}).get(s.id, "pending")
         rigor_label = _RIGOR_LABELS.get(status, "pending (no live verdict)")
+        # `paper_title` is third-party arXiv metadata landing raw in a
+        # line-oriented prompt: the very next line of this same entry carries
+        # `sharpe=` and `rigor=`, so an unquoted title containing a newline
+        # writes a metric onto the agent's own evidence line. `quote_for_prompt`
+        # (#1801) screens the title and returns it as ONE quoted JSON token; a
+        # refused title leaves the field empty rather than being rewritten, and
+        # the id — which is what the agent must anchor every pick to — is
+        # unaffected either way.
+        quoted_title, _ = quote_for_prompt(
+            str(s.paper_title or ""), field="paper_title", context=f"strategy {s.id[:8]}"
+        )
         lines.append(
-            f"  - id={s.id[:8]}  title={s.paper_title}\n"
+            f"  - id={s.id[:8]}  title={quoted_title}\n"
             f"      sharpe={sr:.2f}  cagr={cagr:+.1f}%  rigor={rigor_label}\n"
             f"      signal rule: {rule}"
         )
@@ -210,20 +192,17 @@ def _build_user_prompt(
     scan_universe_synths: set[str],
     rigor_statuses: dict[str, str] | None = None,
 ) -> str:
-    return (
-        f"## CONTEXT\n"
-        f"- regime: {regime} (confidence {regime_confidence:.0%})\n"
-        f"- risk_profile: {risk_profile}\n"
-        f"- usdc_floor: {usdc_floor:.0%} (held as USDC, you do not allocate this)\n"
-        f"- synth_budget: {synth_budget:.0%} (your weights must sum to <= this)\n\n"
-        f"## TOP MARKET OPPORTUNITIES (live 90-day risk-adjusted ranking)\n"
-        f"{_format_market_scan(market_ranking)}\n\n"
-        f"## PAPER STRATEGIES (you must anchor every pick to one of these ids)\n"
-        f"{_format_strategies(strategies, rigor_statuses)}\n\n"
-        f"## AVAILABLE UNIVERSE (pick any of these tickers; * = appeared in top scan)\n"
-        f"{_format_universe(scan_universe_synths)}\n\n"
-        f"## YOUR TASK\n"
-        f"Construct the portfolio. Return ONLY JSON per the schema in the system prompt."
+    # Percentages are formatted HERE, not in the template: string.Template has no
+    # format specs, so `{x:.0%}` becomes an explicit `f"{x:.0%}"` at the seam.
+    return PROMPTS["portfolio.construction.user"].render(
+        regime=regime,
+        regime_confidence=f"{regime_confidence:.0%}",
+        risk_profile=risk_profile,
+        usdc_floor=f"{usdc_floor:.0%}",
+        synth_budget=f"{synth_budget:.0%}",
+        market_scan=_format_market_scan(market_ranking),
+        strategies=_format_strategies(strategies, rigor_statuses),
+        universe=_format_universe(scan_universe_synths),
     )
 
 

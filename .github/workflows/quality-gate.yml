@@ -38,7 +38,7 @@ jobs:
     name: Infra — user-data size guard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       # `bash <script>` rather than `./<script>` so the job does not depend on
       # the executable bit surviving every checkout/copy path.
       - name: EC2 user-data stays under the 16 KB limit
@@ -74,7 +74,7 @@ jobs:
     name: Migrations — chain fork guard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
       # actions/checkout on a pull_request event does not otherwise leave a
@@ -89,7 +89,7 @@ jobs:
     name: Analytics engine — unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -120,7 +120,7 @@ jobs:
     name: Backend — unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -143,7 +143,7 @@ jobs:
         # the index URL and the two torch packages (issue #1522), so CI installs
         # it directly instead of grepping the exclusions back out at runtime.
         run: |
-          pip install --quiet -r backend/requirements-base.txt "pytest>=8.3" "pytest-asyncio>=0.24" "pytest-cov>=5.0" "fakeredis[lua]>=2.26.0"
+          pip install --quiet -r backend/requirements-base.txt "pytest>=8.3" "pytest-asyncio>=0.24" "pytest-cov>=5.0" "fakeredis[lua]>=2.26.0" "pathspec>=0.12"
       - name: Test
         run: pytest -m "not integration" --tb=short -q
       - name: CLI tests
@@ -166,7 +166,7 @@ jobs:
     name: Frontend + Better Auth
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
@@ -185,7 +185,7 @@ jobs:
     name: Ruff — format + critical lint rules
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -204,7 +204,7 @@ jobs:
     name: Lint — report table
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       - uses: actions/setup-python@v7
         with:
@@ -323,7 +323,7 @@ jobs:
     if: github.event.pull_request.user.login == 't2o2'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -334,7 +334,7 @@ jobs:
       # Same torch/sentence-transformers skip as the unit-test job above
       # (CDN-independent) — requirements-base.txt is exactly that set (#1522).
       - run: |
-          pip install --quiet -r backend/requirements-base.txt "pytest>=8.3" "pytest-asyncio>=0.24" "pytest-cov>=5.0"
+          pip install --quiet -r backend/requirements-base.txt "pytest>=8.3" "pytest-asyncio>=0.24" "pytest-cov>=5.0" "pathspec>=0.12"
       - run: pytest -m "not integration" --cov=archimedes --cov-fail-under=60 --tb=short -q
 
   supply-chain:
@@ -356,7 +356,7 @@ jobs:
     name: Supply chain — report table
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 

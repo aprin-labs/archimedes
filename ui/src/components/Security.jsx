@@ -113,7 +113,7 @@ export default function Security() {
 								<p>
 									Production session cookies are HttpOnly, Secure, and
 									SameSite=Lax. nginx, the UI route guard, and FastAPI
-									independently protect private surfaces. Four browse pages are
+									independently protect private surfaces. Two browse pages are
 									deliberately anonymous, and the edge and client halves of
 									that carve-out list are kept in lockstep.
 								</p>
@@ -288,7 +288,7 @@ export default function Security() {
 						</li>
 						<li>
 							<a
-								href="https://github.com/a-apin/archimedes/blob/main/docs/claims-ledger.md"
+								href="https://github.com/aprin-labs/archimedes/blob/main/docs/claims-ledger.md"
 								target="_blank"
 								rel="noreferrer"
 							>
@@ -306,7 +306,7 @@ export default function Security() {
 						</li>
 						<li>
 							<a
-								href="https://github.com/a-apin/archimedes/blob/main/backend/archimedes/services/generation_payment.py"
+								href="https://github.com/aprin-labs/archimedes/blob/main/backend/archimedes/services/generation_payment.py"
 								target="_blank"
 								rel="noreferrer"
 							>
@@ -316,7 +316,7 @@ export default function Security() {
 						</li>
 						<li>
 							<a
-								href="https://github.com/a-apin/archimedes/blob/main/docs/security/auth-model.md"
+								href="https://github.com/aprin-labs/archimedes/blob/main/docs/security/auth-model.md"
 								target="_blank"
 								rel="noreferrer"
 							>
@@ -326,7 +326,7 @@ export default function Security() {
 						</li>
 						<li>
 							<a
-								href="https://github.com/a-apin/archimedes/blob/main/contracts/src/ReasoningTraceRegistry.sol"
+								href="https://github.com/aprin-labs/archimedes/blob/main/contracts/src/ReasoningTraceRegistry.sol"
 								target="_blank"
 								rel="noreferrer"
 							>
@@ -336,7 +336,7 @@ export default function Security() {
 						</li>
 						<li>
 							<a
-								href="https://github.com/a-apin/archimedes/blob/main/backend/archimedes/services/live_rigor_gate.py"
+								href="https://github.com/aprin-labs/archimedes/blob/main/backend/archimedes/services/live_rigor_gate.py"
 								target="_blank"
 								rel="noreferrer"
 							>

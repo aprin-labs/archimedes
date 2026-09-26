@@ -152,7 +152,10 @@ test("source papers render as one real table, not a stack of cards", () => {
 		/This strategy synthesizes ideas from multiple research papers/,
 	);
 	assert.doesNotMatch(passport, /<div className="label mb-3">Source paper<\/div>/);
-	assert.match(passport, /<PapersTable papers=\{papers\}/);
+	// `\s+` since #1769: the element gained a third prop and wrapped onto
+	// multiple lines. The claim this pins is "ONE table primitive renders the
+	// papers", which is about the element, not about it fitting on one line.
+	assert.match(passport, /<PapersTable\s+papers=\{papers\}/);
 });
 
 test("the papers table bounds its own height and width", () => {

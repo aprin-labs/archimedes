@@ -26,7 +26,7 @@ The local docker-compose stack runs the **same code** production runs, configure
 ## Step 1 — Clone the repository (with submodules)
 
 ```bash
-git clone --recurse-submodules https://github.com/a-apin/archimedes.git
+git clone --recurse-submodules https://github.com/aprin-labs/archimedes.git
 cd archimedes
 ```
 
@@ -52,7 +52,7 @@ docker compose up -d --build
 **`--build` is load-bearing, not a habit.** The app-tier services carry an `image:` key
 pointing at the production ECR tag alongside their `build:`. A bare `docker compose up`
 resolves that tag and pulls (or reuses another checkout's build) instead of building your
-code — [issue #1044](https://github.com/a-apin/archimedes/issues/1044) item 3, still open.
+code — [issue #1044](https://github.com/aprin-labs/archimedes/issues/1044) item 3, still open.
 Verify the whole local-mode contract before you start the stack:
 
 ```bash

@@ -189,7 +189,7 @@ contracts/           ← Solidity, Foundry layout
 ui/                  ← React 19 + Vite 8 + viem
 scripts/              ← operational scripts, incl. agent_journey.py (reference account-auth + generate client)
 cli/                  ← archimedes CLI — 0.0.1 stub, every subcommand exits NOT_IMPLEMENTED (see skills/verdict-api)
-docs/                 ← specs, ADRs, design docs; docs/README.md is its own map
+docs/                 ← specs, ADRs, design docs; docs/doc-index.md is its own map
 ```
 
 ## Verify (re-run these before trusting this document)

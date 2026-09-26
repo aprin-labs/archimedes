@@ -38,6 +38,11 @@ const shortAddr = (addr) => (addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : 
 // `_MAX_ASSETS` there to re-verify.
 const ENGINE_C_ASSET_CAP = 6;
 
+// Mirrors GenerateBrief.intent's server-side max_length (INTENT_MAX_LEN,
+// generate_schemas.py, #1801). Cross-language constant, held together by
+// ui/test/generate-brief-limits.test.js.
+const BRIEF_MAX_LEN = 600;
+
 // /generate spine page — redesigned per issue #872, re-laid-out per #1642.
 //
 // Layout (top to bottom):
@@ -138,6 +143,11 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 
 	// ── Drill-down: which job's stream to show (null = table view) ──
 	const [drillInJobId, setDrillInJobId] = useState(null);
+	// Focus handoff for the "ways forward" on a failed run: bumping the
+	// counter moves the caret into the brief box after the stream view
+	// unmounts, so the user lands where the edit actually happens.
+	const [focusBriefTick, setFocusBriefTick] = useState(0);
+	const briefRef = useRef(null);
 
 	useEffect(() => {
 		onStageChange?.(drillInJobId ? "debate" : "brief");
@@ -738,6 +748,32 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 	const handleDrillIn = (jobId) => setDrillInJobId(jobId);
 	const handleBackToTable = () => setDrillInJobId(null);
 
+	// ── Ways forward from a run that found too few papers ──
+	// Both leave the stream view and put the user back in the brief box: the
+	// failure card's whole point is that there IS a next move.
+	const handleBroaden = (term, steer) => {
+		setDrillInJobId(null);
+		setIntent((prev) => {
+			const base = (prev || steer || "").trim();
+			if (!base) return term;
+			// Never duplicate a term the brief already contains.
+			if (base.toLowerCase().includes(term.toLowerCase())) return base;
+			return `${base.replace(/[\s.]+$/, "")}, including ${term}`;
+		});
+		setSurpriseLabel("");
+		setFocusBriefTick((n) => n + 1);
+	};
+
+	const handleSurpriseFromStream = () => {
+		setDrillInJobId(null);
+		handleSurprise();
+		setFocusBriefTick((n) => n + 1);
+	};
+
+	useEffect(() => {
+		if (focusBriefTick > 0) briefRef.current?.focus();
+	}, [focusBriefTick]);
+
 	// ─── Drill-down view (stream for a selected job) ───────────
 	if (drillInJobId) {
 		return (
@@ -764,6 +800,8 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 					onReset={handleBackToTable}
 					onPipelineSelected={() => {}}
 					onNavigate={onNavigate}
+					onBroaden={handleBroaden}
+					onSurprise={handleSurpriseFromStream}
 					hideReset
 				/>
 			</div>
@@ -820,9 +858,9 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 					<label className="label mb-1 block" htmlFor="generate-brief">
 						Your brief
 					</label>
-					{/* Short hint only. The long-form prompting tutorial lives in
-					    docs/writing-a-brief.md (#1642) — one home for the prose, a
-					    link here, no duplicated copy to drift apart. */}
+					{/* Short hint only. Tutorial prose lives in
+					    docs/writing-a-brief.md (#1642); the limits and what must
+					    NOT be in a brief in docs/brief-guidelines.md (#1801). */}
 					<p
 						className="caption mb-2"
 						id="generate-brief-help"
@@ -831,24 +869,52 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 						Name assets, a mechanism, and a goal.{" "}
 						<a
 							className="generate-brief-guide-link"
-							href="https://github.com/a-apin/archimedes/blob/main/docs/writing-a-brief.md"
+							href="https://github.com/aprin-labs/archimedes/blob/main/docs/writing-a-brief.md"
 							target="_blank"
 							rel="noreferrer"
 						>
 							How to write a brief →
+						</a>{" "}
+						<a
+							className="generate-brief-guide-link"
+							href="https://github.com/aprin-labs/archimedes/blob/main/docs/brief-guidelines.md"
+							target="_blank"
+							rel="noreferrer"
+						>
+							What a brief may not contain →
 						</a>
 					</p>
 
+					{/* The browser cap is a courtesy (it stops a paste becoming
+					    an unexplained 422), NOT the guard — the request schema
+					    and services.brief_screen enforce it server-side. */}
 					<textarea
 						id="generate-brief"
-						aria-describedby="generate-brief-help"
+						aria-describedby="generate-brief-help generate-brief-count"
+						ref={briefRef}
 						value={intent}
 						onChange={(e) => setIntent(e.target.value)}
 						placeholder="e.g. blend momentum, quality and a gold hedge across major ETFs with volatility-managed sizing for idle USDC"
 						rows={3}
-						className="chat-input w-full mb-3 p-2.5 leading-relaxed"
+						maxLength={BRIEF_MAX_LEN}
+						className="chat-input w-full p-2.5 leading-relaxed"
 						disabled={starting}
 					/>
+					<p
+						className="caption mt-1 mb-3"
+						id="generate-brief-count"
+						style={{
+							color:
+								intent.length >= BRIEF_MAX_LEN
+									? "var(--warn, var(--text-2))"
+									: "var(--text-3)",
+						}}
+					>
+						{intent.length}/{BRIEF_MAX_LEN}
+						{intent.length >= BRIEF_MAX_LEN
+							? " — at the limit; a brief works best at one or two sentences."
+							: ""}
+					</p>
 
 					{/* Surprise Me (#1642) — the ONLY example-related control on the
 					    page. No brief text renders here in any state: the pick goes

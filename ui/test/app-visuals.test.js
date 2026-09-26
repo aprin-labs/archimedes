@@ -238,14 +238,24 @@ const generationStream = readFileSync(
 	"utf8",
 );
 
+const generationCopy = readFileSync(
+	new URL("../src/generation-copy.js", import.meta.url),
+	"utf8",
+);
+
 test("generation stream claims papers only from real per-candidate citations (task #54)", () => {
+	// The event copy moved out of GenerationStream.jsx into src/generation-copy.js
+	// (a plain module so the copy is runnable in tests); the claim it may make is
+	// unchanged, so the pin follows it.
+	//
 	// The old candidates_selected line rendered a papers COUNT sliced from the
 	// curated library (a constant from the wrong population) — it must not return.
+	assert.doesNotMatch(generationCopy, /candidates;.*papers/);
 	assert.doesNotMatch(generationStream, /candidates;.*papers/);
 	// The honest claim: candidate_drafted's own provenance-checked citations,
 	// omitted when absent.
-	assert.match(generationStream, /case 'candidate_drafted'[\s\S]{0,400}source_arxiv_ids/);
-	assert.match(generationStream, /grounded in \$\{nPapers\}/);
+	assert.match(generationCopy, /candidate_drafted:[\s\S]{0,400}source_arxiv_ids/);
+	assert.match(generationCopy, /from \$\{plural\(n, "paper", "papers"\)\}/);
 });
 
 const leaderboard = readFileSync(

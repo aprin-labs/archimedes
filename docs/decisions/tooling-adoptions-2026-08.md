@@ -150,10 +150,10 @@ reads well":
    collected in `openwiki/rigor/documented-conflicts.md`. Among them: the DSR bar is stated
    as a literal `0.90` in one doc and as the top rung of a five-level profile ladder in
    another; a single document assigns `num_trials` both `1` and `len(strategy_library)` a
-   hundred lines apart; a worked table still evaluates against the retired `p ≥ 0.95` bar
+   hundred lines apart; a worked table evaluates against a bar the code had moved away from
    and marks `p = 0.941` as failing; three strategy headings contradict the status lines
    directly beneath them, one with text about a *different* strategy stranded under it; and
-   two passages explain a failure as "OOS Sharpe 0.612, under the 0.90 gate" — comparing a
+   two passages explain a failure as "OOS Sharpe 0.612, under the DSR gate" — comparing a
    Sharpe ratio to a probability threshold. Those are follow-up work, filed as evidence
    rather than fixed here.
 

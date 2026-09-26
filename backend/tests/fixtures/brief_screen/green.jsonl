@@ -1,0 +1,58 @@
+{"id": "green-bond-alt", "surface": "brief", "text": "low-vol bond alternative", "note": "the validator's own example of a valid-if-vague brief"}
+{"id": "green-crypto-momentum", "surface": "brief", "text": "crypto with momentum", "note": "finance-signal words only"}
+{"id": "green-tickers", "surface": "brief", "text": "BTC ETH SOL", "note": "ticker list, no vowels required"}
+{"id": "green-single-token", "surface": "brief", "text": "degen", "note": "one odd token is not evidence of mashing"}
+{"id": "green-recipe", "surface": "brief", "text": "add flour and bake at 350F", "note": "off-topic but grammatical — the LLM's call, not ours"}
+{"id": "green-covered-calls", "surface": "brief", "text": "SPY covered calls", "note": "unlisted vocabulary is the normal case"}
+{"id": "green-muni", "surface": "brief", "text": "muni ladder", "note": "unlisted vocabulary"}
+{"id": "green-rotation", "surface": "brief", "text": "sector rotation", "note": "unlisted vocabulary"}
+{"id": "green-aristocrats", "surface": "brief", "text": "covered call overlay on dividend aristocrats", "note": "unlisted vocabulary, longer"}
+{"id": "green-spanish", "surface": "brief", "text": "estrategia de baja volatilidad para bonos", "note": "Spanish — ASCII but unlisted"}
+{"id": "green-cyrillic", "surface": "brief", "text": "стратегия низкой волатильности", "note": "Cyrillic must survive tokenization"}
+{"id": "green-cjk", "surface": "brief", "text": "低波动率债券替代方案", "note": "CJK — one token, no spaces"}
+{"id": "green-bank-longest", "surface": "brief", "text": "rotate monthly into the strongest of the US sector ETFs such as XLK XLE and XLF on six-month momentum, falling back to XLU when nothing is trending", "note": "the longest entry in the in-app Surprise Me bank (211 chars)"}
+{"id": "green-exactly-max", "surface": "brief", "text": "momentum on SPY aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "note": "exactly INTENT_MAX_LEN — the bound is inclusive"}
+{"id": "green-act-as-hedge", "surface": "brief", "text": "hold gold and TIPS to act as a hedge against inflation", "note": "'act as' is ordinary finance English, never a role-forgery signal"}
+{"id": "green-ignore-noise", "surface": "brief", "text": "ignore short-term noise in the momentum ranking", "note": "ignore + a non-instruction noun"}
+{"id": "green-disregard-dd", "surface": "brief", "text": "disregard prior drawdowns and focus on forward-looking carry", "note": "verb + prior + a non-instruction noun"}
+{"id": "green-toronto-ticker", "surface": "brief", "text": "momentum across XIU.TO and VFV.TO Canadian ETFs", "note": "exchange suffixes look exactly like bare hosts"}
+{"id": "green-copenhagen", "surface": "brief", "text": "value tilt on NOVO-B.CO with a treasury sleeve", "note": "Copenhagen listing suffix"}
+{"id": "green-us-abbrev", "surface": "brief", "text": "U.S. large-cap quality with a treasury hedge", "note": "abbreviations must not read as hosts"}
+{"id": "green-system-word", "surface": "brief", "text": "a systematic trend system across futures markets", "note": "'system' alone is not a forged turn marker"}
+{"id": "green-confidence-word", "surface": "brief", "text": "size positions by signal confidence, capped at 20% each", "note": "schema words in prose are not forged JSON keys"}
+{"id": "green-decimal", "surface": "brief", "text": "60/40 core with a 1.5x volatility target on the equity sleeve", "note": "decimals must not read as hosts"}
+{"id": "green-model-name", "surface": "model_text", "text": "Momentum/vol fusion", "note": "an ordinary proposer-authored strategy name"}
+{"id": "green-model-name-dash", "surface": "model_text", "text": "Low-volatility income — treasury sleeve", "note": "an em dash alone is not a forged card"}
+{"id": "green-model-claim", "surface": "model_text", "text": "The momentum signal is fragile out of sample and the cost model omits slippage.", "note": "an ordinary bear claim"}
+{"id": "green-model-empty", "surface": "model_text", "text": "", "note": "empty model text is simply no text — nothing to refuse"}
+{"id": "green-model-arxiv", "surface": "model_text", "text": "Builds on arXiv:2101.01234 for the vol estimator", "note": "naming a paper is not forging the cites clause"}
+{"id": "adv-green-three-fund", "surface": "brief", "text": "60% VTI, 30% BND, 10% GLD rebalanced quarterly with a 5% drift band", "note": "L1 — percentages, tickers and a decimal band must not read as hosts"}
+{"id": "adv-green-exchange-suffixes", "surface": "brief", "text": "Momentum across XIU.TO, VFV.TO and NOVO-B.CO with monthly rebalancing", "note": "L2 — three exchange suffixes in one line"}
+{"id": "adv-green-spanish-sovereign", "surface": "brief", "text": "Estrategia de baja volatilidad para bonos soberanos con cobertura de divisa", "note": "L3 — Spanish, longer than the existing line"}
+{"id": "adv-green-cjk-rebalance", "surface": "brief", "text": "低波动率债券替代方案，季度再平衡。", "note": "L4 — CJK with fullwidth punctuation; NFKC folds the comma and must not break tokenization"}
+{"id": "adv-green-dotcom-names", "surface": "brief", "text": "Long-term compounders: Amazon, Alphabet and Booking.com", "note": "L5 — a company name is not a link. The single most expensive false positive this module had."}
+{"id": "adv-green-salesforce", "surface": "brief", "text": "Overweight Salesforce.com and Microsoft in the software sleeve", "note": "a bare .com mid-sentence, same reason"}
+{"id": "adv-green-vol-target", "surface": "brief", "text": "1.5x volatility target on a 60/40 core, Sharpe above 0.8", "note": "L6 — 'above' near numbers is not an override directive"}
+{"id": "adv-green-hedge-and-ignore", "surface": "brief", "text": "Hold gold to act as a hedge against inflation; ignore short-term noise in the ranking", "note": "L7 — 'act as' and 'ignore' in one sentence, both ordinary finance English"}
+{"id": "adv-green-long-multi-sentence", "surface": "brief", "text": "Build a core-satellite portfolio: the core is a market-cap weighted global equity index held permanently, and the satellite rotates monthly between managed futures, gold and short-duration treasuries depending on which has the strongest twelve-month trend. Cap the satellite at 30% and size everything to a 10% annualised volatility.", "note": "L8 — a long, real, multi-sentence brief well inside the 600 bound"}
+{"id": "adv-green-two-line-core-satellite", "surface": "brief", "text": "Core: US large-cap quality.\nSatellite: managed futures.", "note": "L9 — a two-line brief with a colon at each line start; only system/assistant/user/human forge a turn"}
+{"id": "adv-green-fx-carry", "surface": "brief", "text": "Cross-sectional carry on G10 FX, beta-neutral to the S&P 500", "note": "L10 — an ampersand and a bare number"}
+{"id": "adv-green-cyrillic-sentence", "surface": "brief", "text": "инвестиции в российские акции с низкой волатильностью", "note": "the homoglyph table folds letters out of real Cyrillic too — it must not turn a Russian brief into mash"}
+{"id": "adv-green-confidence-colon-free", "surface": "brief", "text": "size positions by signal confidence and cap each at 20%", "note": "schema words in prose, with no colon, are still just words"}
+{"id": "green-at-price", "surface": "brief", "text": "buy SPY @ 450 and hold through the drawdown", "note": "an @ with no host after it is a price, not an address"}
+{"id": "green-secret-sauce", "surface": "brief", "text": "my secret sauce: a momentum-and-carry blend across G10 FX", "note": "the credential rule needs an explicit credential noun immediately before the colon"}
+{"id": "green-password-prose", "surface": "brief", "text": "no password protection needed, just a conservative bond ladder", "note": "a credential noun with no assignment after it is ordinary prose"}
+{"id": "green-vintage-years", "surface": "brief", "text": "weight the 2020 2021 2022 2023 vintages equally in the growth sleeve", "note": "four grouped years form a 16-digit run; the card prefix test discards them"}
+{"id": "green-long-number", "surface": "brief", "text": "size the sleeve at 1234567890123452 basis points of the book", "note": "a 16-digit run that PASSES Luhn but starts with 1: no consumer card network begins there, and the prefix test is the only thing standing between this line and a refused paying user"}
+{"id": "green-luhn-fails", "surface": "brief", "text": "reference number 4111111111111112 on the custody account", "note": "Visa prefix and 16 digits, but the Luhn checksum fails"}
+{"id": "green-ssn-invalid-area", "surface": "brief", "text": "split the ladder 999-45-6789 across the three maturities", "note": "area 9xx is never issued; the rule uses the SSA's own ranges"}
+{"id": "green-ratio-decimal", "surface": "brief", "text": "target a 1.4111111111111111 information ratio on the overlay", "note": "a decimal is not an account number; the card rule excludes a leading dot"}
+{"id": "green-lookback-grid-spaced", "surface": "brief", "text": "run a 3 5 10 20 30 60 90 120 day lookback grid on trend following", "note": "a parameter grid is fifteen digits starting with 3 and it passes Luhn; the card candidate needs UNIFORM card grouping, not a separator between any two digits, or this ordinary brief is refused before the payment gate"}
+{"id": "green-lookback-grid-hyphen", "surface": "brief", "text": "sweep lookback windows 5-120-250-252-500 trading days on the trend sleeve", "note": "the same class written with hyphens: ragged groups are not a card, however the checksum falls"}
+{"id": "green-title-plain", "surface": "paper_title", "text": "Momentum Everywhere", "note": "the ordinary case: a title is admitted and quoted"}
+{"id": "green-title-colon", "surface": "paper_title", "text": "Confidence: A Bayesian Treatment of Factor Timing", "note": "Noun: subtitle is ordinary title punctuation, which is why PAPER_TITLE skips inject.schema_forgery"}
+{"id": "green-title-verdict-colon", "surface": "paper_title", "text": "Verdict: Do Hedge Funds Deliver Alpha After Fees?", "note": "a second schema key that is also an English word at the head of a title"}
+{"id": "green-title-quotes", "surface": "paper_title", "text": "Deep Hedging of \"Exotic\" Derivatives", "note": "quotes inside a title are escaped by quote_for_prompt, not refused"}
+{"id": "green-title-newline", "surface": "paper_title", "text": "Momentum\n  Everywhere", "note": "two of the four ingest paths only strip; a line break is escaped, never a dropped paper"}
+{"id": "green-title-unicode", "surface": "paper_title", "text": "Mömentum über alles: Zeitreihen-Momentum in europäischen Aktien", "note": "non-English titles are admitted and stay readable in the prompt"}
+{"id": "green-title-math", "surface": "paper_title", "text": "On the $\\alpha$-Stable Behaviour of 5-Minute Returns", "note": "TeX in a title is not a code fence and not an encoded blob"}

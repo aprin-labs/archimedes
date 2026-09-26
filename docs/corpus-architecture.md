@@ -313,9 +313,9 @@ small enough to commit, fast enough to seed, and rich enough to retrieve.
 - [`docs/architectural-principles.md`](architectural-principles.md) — the four
   load-bearing primitives, with the corpus + fusion + rigor + on-chain provenance
   forming the spine
-- Issues: [#97 (10k corpus)](https://github.com/a-apin/archimedes/issues/97),
-  [#1635 (uncapped seed manifest + canonical terms)](https://github.com/a-apin/archimedes/issues/1635),
-  [#106 (DB-backed substrate)](https://github.com/a-apin/archimedes/issues/106),
-  [#93 (Corpus Explorer UI)](https://github.com/a-apin/archimedes/issues/93),
-  [#96 (fusion retrieval — open)](https://github.com/a-apin/archimedes/issues/96),
-  [#101 (KB pipeline port — open)](https://github.com/a-apin/archimedes/issues/101)
+- Issues: [#97 (10k corpus)](https://github.com/aprin-labs/archimedes/issues/97),
+  [#1635 (uncapped seed manifest + canonical terms)](https://github.com/aprin-labs/archimedes/issues/1635),
+  [#106 (DB-backed substrate)](https://github.com/aprin-labs/archimedes/issues/106),
+  [#93 (Corpus Explorer UI)](https://github.com/aprin-labs/archimedes/issues/93),
+  [#96 (fusion retrieval — open)](https://github.com/aprin-labs/archimedes/issues/96),
+  [#101 (KB pipeline port — open)](https://github.com/aprin-labs/archimedes/issues/101)

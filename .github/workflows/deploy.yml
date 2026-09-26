@@ -113,11 +113,26 @@
 #    config.
 #
 # 3. VERIFY OIDC TRUST POLICY IS LOCKED TO THIS REPO.
-#    The role trust policy must restrict token.actions.githubusercontent.com
-#    to `repo:a-apin/archimedes:*` (or tighter: `:ref:refs/heads/main`).
-#    Without that condition, any GitHub repo's Actions can assume the role.
+#    The role trust policy must restrict token.actions.githubusercontent.com to
+#    THIS repository on `:ref:refs/heads/main`. Without that condition, any
+#    GitHub repo's Actions can assume the role.
+#    The `sub` claim it must match is minted by GitHub in one of two shapes, and
+#    this repo currently gets the ID-QUALIFIED one:
+#        repo:aprin-labs/archimedes:ref:refs/heads/main                       (plain)
+#        repo:aprin-labs@284008417/archimedes@1236816811:ref:refs/heads/main   (id-qualified, current)
+#    The role trusts BOTH, so a GitHub-side toggle of that format cannot break
+#    deploys; main-only stays the rule. Incident 2026-09-01: after the org
+#    rename a-apin -> aprin-labs, a trust policy naming only the plain new name
+#    failed every deploy for ~3h with `Not authorized to perform
+#    sts:AssumeRoleWithWebIdentity` — the real subject was in CloudTrail, on the
+#    failed AssumeRoleWithWebIdentity event, as `userIdentity.userName`.
+#    Authoritative prefix:
+#      gh api repos/aprin-labs/archimedes/actions/oidc/customization/sub --jq .sub_claim_prefix
 #    Verify with: aws iam get-role --role-name archimedes-github-deploy
 #    and inspect AssumeRolePolicyDocument's Condition block.
+#    After ANY rename/transfer, re-point the role (it is NOT Terraform-managed —
+#    infra/scripts/setup-github-oidc.sh is the source of truth):
+#      AWS_PROFILE=<admin-profile> bash infra/scripts/setup-github-oidc.sh --apply
 
 name: Build, Push & Deploy
 
@@ -193,7 +208,7 @@ jobs:
     timeout-minutes: 30  # torch/sentence-transformers install + model bake + multi-GB ECR push
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       - name: Build backend image
         # Build context is the REPO ROOT (issue #1039) so the image can bundle
@@ -227,7 +242,7 @@ jobs:
         #
         # *** ACTION REQUIRED (Dan): add the `VITE_CIRCLE_CLIENT_KEY` repo
         # secret (Settings → Secrets and variables → Actions → Secrets, repo
-        # `a-apin/archimedes`) before the first real image build after this
+        # `aprin-labs/archimedes`) before the first real image build after this
         # PR merges — until then this build-arg resolves to an empty string
         # (same as today) and the wallet UI ships broken. ***
         #
@@ -354,12 +369,16 @@ jobs:
         #
         # Prod died ~10 min after every boot with a bare `Fatal Python error:
         # Aborted` — a raw C abort(), no Python traceback, no glibc/terminate/SSL
-        # message — inside psycopg2 do_executemany on the OHLCV cache-write
-        # commit. psycopg2-binary vendors its own libssl/libcrypto next to the
+        # message. psycopg2-binary vendors its own libssl/libcrypto next to the
         # interpreter's, and two OpenSSL builds in one address space CAN produce
-        # that signature — the leading but unproven hypothesis for #1632 (the
-        # #1729 A/B reproduced the co-residency, not the abort; do NOT read a
-        # green run here as license to re-enable PAPER_ADVANCE_ENABLED).
+        # that signature — which was the leading hypothesis for #1632 and is now
+        # FALSIFIED: prod rev 214 aborted with exactly one OpenSSL mapped, and
+        # the faulthandler traceback named two /health corpus-probe threads
+        # racing in SQLAlchemy session teardown (fixed by #1740). This step
+        # stays because it forecloses the class cheaply, not because it is the
+        # #1632 cause. It is also NOT the reason PAPER_ADVANCE_ENABLED is armed
+        # today (#1778): that rests on the #1728 process boundary — the tick
+        # runs in a child interpreter, so a C abort there cannot take /health.
         # requirements-base.txt now installs source-built
         # psycopg2; this step imports ssl + psycopg2 + aiohttp inside the image
         # and fails the build if /proc/self/maps names two distinct OpenSSLs.
@@ -484,7 +503,7 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       # Issue #1039 P4 (shared with #1028 Phase A): run `alembic upgrade
       # head` as an ordered, pre-rollout ECS one-off task — BEFORE any new
@@ -642,8 +661,16 @@ jobs:
     # DEPLOY_ROLLOUT_BUDGET_SECONDS (top-level env) plus the post-rollout probe
     # and the CloudFront invalidation wait — otherwise the job timeout silently
     # becomes the real budget and #1532 returns with a bigger number. 30 min
-    # covers the 20-min default budget + ~1 min probe + the invalidation wait
-    # with margin. The poll step asserts this headroom explicitly (see
+    # covers the 20-min default budget + the probe + the invalidation wait
+    # with margin. The probe is ~35s when the app is healthy and hard-caps its
+    # own wall clock at MAX_TOTAL_SECONDS (300s, see
+    # .github/scripts/post_rollout_probe.sh). That is a REAL ceiling, not a
+    # check between samples: the script starts no request whose deadline
+    # reaches past it (curl's --max-time is capped to the remaining budget)
+    # and no sleep that runs past it, precisely so retrying transport flakes
+    # (#1791) cannot turn a clean ::error into an opaque job timeout — or eat
+    # the CloudFront invalidation's share of the reserve below.
+    # The poll step asserts this headroom explicitly (see
     # DEPLOY_JOB_TIMEOUT_MINUTES there) rather than trusting the two numbers to
     # be edited together.
     timeout-minutes: 30
@@ -652,8 +679,9 @@ jobs:
       # Needed by the task-def rewrite script below. This job historically
       # cloned the live task definition with jq inline and never touched the
       # tree; pinning PAPER_ADVANCE_ENABLED cannot live only in that jq
-      # comment — it has to be the same function the unit tests run.
-      - uses: actions/checkout@v7
+      # comment — it has to be the same function the unit tests run, in
+      # whichever direction the pin currently points.
+      - uses: actions/checkout@v7.0.1
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c  # v6.2.3
@@ -695,18 +723,28 @@ jobs:
           # Fetch the CURRENTLY REGISTERED task definition for this family —
           # not `aws_ecs_task_definition.backend`'s Terraform-authored JSON —
           # so cpu/memory/roles/secrets/log config carry forward. Images are
-          # retagged to this commit. PAPER_ADVANCE_ENABLED is pinned false
-          # HERE, not only in infra/ecs.tf: this job never terraform-applies,
-          # so an ecs.tf pin is not live until someone applies. Last-good
-          # 011b6bfc predates #1725, so cloning it without this pin leaves
-          # the code default ON and the tick still kills the web container
-          # (~240s after boot, #1632). Proven on task-def :211: the #1725
-          # image deployed, the clone had no PAPER_ADVANCE_ENABLED, the old
-          # code default ON started the tick, /health 502'd at 240s. The
-          # code default is now also false; this pin remains so a future
-          # default-flip cannot tick through a cloned task-def. terraform
-          # apply is still required for other ecs.tf drift; this flag must
-          # not depend on it.
+          # retagged to this commit. PAPER_ADVANCE_ENABLED is pinned HERE, not
+          # only in infra/ecs.tf: this job never terraform-applies, so an
+          # ecs.tf pin is not live until someone applies. Proven on task-def
+          # :211: the #1725 image deployed, the clone had no
+          # PAPER_ADVANCE_ENABLED, the then-ON code default started the tick,
+          # and /health 502'd at 240s. The value the script pins is "true" as
+          # of 2026-09-01 (#1778, the #1632 lift — the tick runs in an
+          # isolated child, #1728); pulling it back is PAPER_ADVANCE_VALUE in
+          # .github/scripts/ecs_rewrite_task_def.py plus the ecs.tf twin. The
+          # code default stays false, so a revision that never heard of the
+          # name still cannot tick. This PR does not flip that pin.
+          # The same rewrite pins backend healthCheck.startPeriod=90 so a
+          # clone of the live 30s startPeriod cannot leave the #1713 60s
+          # warmup budget outside ECS's ignored-failure window, and points
+          # the container probe at /health/ready (#1818 P3). terraform apply
+          # is still required for other ecs.tf drift; these pins must not
+          # depend on it. Do not terraform-noop
+          # deployment_minimum_healthy_percent.
+          # The same script also ensures the backend container carries the
+          # TIINGO_API_TOKEN secret (#1798), for the same reason and against
+          # the same drift (#1799): the SSM parameter has existed since
+          # 2026-08-31 and no cloned revision has ever carried it.
           aws ecs describe-task-definition --task-definition "$ECS_TASK_FAMILY" \
             --query 'taskDefinition' > current-task-def.json
 
@@ -797,6 +835,10 @@ jobs:
           # timeout would kill the job first, with no verdict — exactly #1532's
           # bug wearing a bigger number. Reserve 7 min for the post-rollout
           # probe + the CloudFront invalidation wait that follow this step.
+          # The probe can consume at most MAX_TOTAL_SECONDS=300s of that 420s
+          # (a hard wall-clock ceiling, see .github/scripts/post_rollout_probe.sh);
+          # the rest is the invalidation wait's, and a test asserts the probe's
+          # ceiling stays strictly smaller than this reserve.
           JOB_TIMEOUT_SECONDS=$(( DEPLOY_JOB_TIMEOUT_MINUTES * 60 ))
           if [ "$BUDGET" -gt $(( JOB_TIMEOUT_SECONDS - 420 )) ]; then
             echo "::error::DEPLOY_ROLLOUT_BUDGET_SECONDS=${BUDGET}s leaves under 7 minutes of the deploy-ecs job's ${DEPLOY_JOB_TIMEOUT_MINUTES}-minute timeout for the answer probe and the CloudFront invalidation. Raise timeout-minutes on the deploy-ecs job (and DEPLOY_JOB_TIMEOUT_MINUTES here) alongside the budget."
@@ -895,14 +937,34 @@ jobs:
         # window. Static fast + API timing out is what identified the origin as
         # the culprit in the first place.)
         #
-        # Requiring the LAST 5 CONSECUTIVE samples to pass, rather than 5 of 10,
-        # is what makes a cold-start tail fail this step: a service warming up
-        # produces slow-then-fast, and only a trailing run of good samples shows
-        # it actually got there. The 5s ceiling is a client-realistic deadline,
-        # not a generous one — it is below #1436's recorded p99 of 16.8s on
+        # The verdict is "NEED_STREAK consecutive good samples were OBSERVED
+        # somewhere in the window AND the final (post-retry) sample is good
+        # AND it reports this commit AND no more than MAX_NOT_OK samples were
+        # NOT-OK". It was "the LAST 5 samples", and #1791 shows what that
+        # cost: two of
+        # the last four main deploys went red on a single transport transient
+        # (curl exit 28 at 15.0s; curl exit 35 — a TLS reset — at 25 ms) while
+        # prod was already serving the expected version. The "final sample must
+        # be good" half is what keeps this fail-closed: a cold-start tail —
+        # slow-then-fast, the #1532 shape this step exists for — still fails,
+        # because a window that is broken AT THE END fails no matter how
+        # healthy its start was. MAX_NOT_OK is the other half of that: the
+        # observed-streak rule ALONE would tolerate 4 bad samples out of 10
+        # (SAMPLES - NEED_STREAK - 1), so the cap is what keeps "one transient
+        # does not fail a healthy deploy" from becoming "a pockmarked window
+        # passes". Two NOT-OK samples pass with a ::warning; three go red.
+        # ONLY transport-level failures (no HTTP answer at all, http=000 —
+        # connect/DNS/TLS/client timeout) are retried. Anything the app
+        # answered is never retried, INCLUDING a 5xx that was truncated
+        # mid-body (curl exits non-zero there while reporting a real 503):
+        # #1714/#1713's rollout-window 503s have to stay visible.
+        #
+        # The 5s ceiling is a client-realistic deadline, not a generous one:
+        # it is below #1436's recorded p99 of 16.8s on
         # purpose. If this step turns out to be the flakiest thing in the
-        # pipeline, that is a finding about the app's post-rollout latency
-        # (#1309, #1436), not a reason to loosen the number.
+        # pipeline for reasons OTHER than transport flakes, that is a finding
+        # about the app's post-rollout latency (#1309, #1436), not a reason to
+        # loosen the number.
         env:
           # Through CloudFront and the ALB, exactly as a user reaches it —
           # not the ECS task's own container health check, which is what
@@ -914,62 +976,27 @@ jobs:
           # anything else, something other than this commit is serving.
           EXPECTED_VERSION: ${{ github.sha }}
         run: |
-          set -uo pipefail
+          # `set +e` is load-bearing: GitHub runs `run:` under `bash -e`, and
+          # `sample="$(curl ...)"` inside the probe is an assignment whose exit
+          # status IS curl's. With -e in force a single timed-out sample (curl
+          # exit 28) aborted this whole step before `rc=$?` ran and before a
+          # single `probe N/10` line was printed — the 2026-09-01 run
+          # 33553292497 went red that way with the rollout COMPLETED; the step
+          # never got to measure whether the app was answering. The script sets
+          # the same `set +e -uo pipefail` for itself and handles every failure
+          # explicitly; this line keeps the step shell honest too.
+          set +e -uo pipefail
 
-          PROBES=10
-          REQUIRED_STREAK=5
-          MAX_SECONDS=5
-          streak=0
-          fail=0
-          body=""
-
-          echo "Probing $HEALTH_URL — ${PROBES} samples, need the last ${REQUIRED_STREAK} consecutive at 200 under ${MAX_SECONDS}s."
-          for i in $(seq 1 "$PROBES"); do
-            sample="$(curl -sS -o /dev/null -w '%{http_code} %{time_total}' --max-time 15 "$HEALTH_URL" 2>/dev/null)"
-            rc=$?
-            # curl writes the -w line even on timeout/connect failure (http_code
-            # 000); this only backfills the case where it wrote nothing at all,
-            # so an empty sample can never be mistaken for a fast 200.
-            [ -n "$sample" ] || sample="000 0"
-            code="${sample%% *}"
-            secs="${sample##* }"
-            if [ "$code" = "200" ] && awk -v t="$secs" -v m="$MAX_SECONDS" 'BEGIN { exit !(t + 0 < m + 0) }'; then
-              streak=$(( streak + 1 ))
-              verdict="ok"
-            else
-              streak=0
-              verdict="NOT-OK"
-            fi
-            # Every sample is printed, passing or not: the timings ARE the
-            # evidence, and #1532 had to be diagnosed by hand-curling because
-            # the pipeline kept none.
-            printf 'probe %2d/%d: http=%s time=%ss curl_exit=%s -> %-6s (consecutive good: %d)\n' \
-              "$i" "$PROBES" "$code" "$secs" "$rc" "$verdict" "$streak"
-            if [ "$i" -eq "$PROBES" ]; then
-              # The last probe also reads the body, so the version assertion is
-              # made against the same request that closed the streak.
-              body="$(curl -sS --max-time 15 "$HEALTH_URL" 2>/dev/null)"
-            else
-              sleep 3
-            fi
-          done
-
-          if [ "$streak" -lt "$REQUIRED_STREAK" ]; then
-            echo "::error::post-rollout answer probe: only ${streak} consecutive trailing samples answered 200 under ${MAX_SECONDS}s (needed ${REQUIRED_STREAK}). ECS reported the rollout COMPLETED, but the app is not answering inside a client-realistic deadline — this is the 58e337dc failure mode from #1532, and it is an outage whether or not the badge would have been green. Timings are printed above."
-            fail=1
-          fi
-
-          version="$(printf '%s' "$body" | jq -r '.version // empty' 2>/dev/null)"
-          if [ -z "$version" ]; then
-            echo "::error::post-rollout version check: could not read .version from ${HEALTH_URL} on the final probe (body was empty or not JSON). Cannot confirm which commit is serving."
-            fail=1
-          elif [ "$version" != "$EXPECTED_VERSION" ]; then
-            echo "::error::post-rollout version check: ${HEALTH_URL} reports version=${version} but this job deployed ${EXPECTED_VERSION}. The rollout completed and the app answers — but it is answering with different code than this run built, so this deploy did not take."
-            fail=1
-          fi
-
-          [ "$fail" = 0 ] || exit 1
-          echo "post-rollout probe OK: ${streak} consecutive samples 200 under ${MAX_SECONDS}s, serving version ${version}."
+          # The probe body lives in a script, not inline here, so
+          # backend/tests/test_post_rollout_probe.py can run THE EXACT SCRIPT
+          # THIS STEP RUNS against a fake /api/health (transport reset, 5xx,
+          # slow 200, wrong version) instead of a paraphrase that drifts.
+          # SAMPLES / NEED_STREAK / MAX_SECONDS / INTERVAL / TRANSPORT_RETRIES /
+          # RETRY_PAUSE default to 10 / 5 / 5s / 3s / 2 / 3s inside the script,
+          # alongside MAX_NOT_OK=2 (most NOT-OK samples a passing run may
+          # contain), CURL_MAX_TIME=15s and MAX_TOTAL_SECONDS=300s; they are
+          # documented and tested there.
+          bash .github/scripts/post_rollout_probe.sh
 
       - name: Invalidate CloudFront (unhashed SPA entry points only)
         # Gated on the ROLLOUT VERDICT, not on job success (issue #1532). The
@@ -1049,7 +1076,7 @@ jobs:
         # `terraform apply` in infra/ — until then this step logs a clear
         # warning and exits 0 rather than failing the deploy (an ECS deploy
         # that already succeeded and is serving traffic must not be marked
-        # failed over a CDN cache purge — see the non-`set -e`, explicit
+        # failed over a CDN cache purge — see the explicit `set +e` and the
         # exit-code handling below; the completion wait is likewise
         # non-fatal on timeout).
         env:
@@ -1064,7 +1091,12 @@ jobs:
           # (`terraform output -raw cloudfront_distribution_id`).
           CLOUDFRONT_DISTRIBUTION_ID: E34KG22GWPO075
         run: |
-          set -uo pipefail
+          # `set +e` is load-bearing here too (same class as the post-rollout probe):
+          # GitHub runs this under `bash -e`, and `OUTPUT="$(aws ...)"` is an assignment
+          # whose exit status is the CLI's, so a failed invalidation aborted the step
+          # BEFORE `RC=$?` and the deliberately non-fatal warning path below could run —
+          # turning a cache-purge hiccup into a red deploy that was already serving.
+          set +e -uo pipefail
           OUTPUT="$(aws cloudfront create-invalidation \
             --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" \
             --paths "/" "/?*" "/index.html*" 2>&1)"

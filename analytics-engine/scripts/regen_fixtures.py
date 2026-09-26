@@ -60,7 +60,12 @@ from archimedes_analytics_engine.engine import run_backtest, run_multi_backtest,
 from archimedes_analytics_engine.strategy_loader import load_strategy
 
 # Single source of truth for the DSR / OOS / Kelly formulas (Önder's lane).
-from regen_buy_hold_fixture import compute_dsr, compute_kelly, compute_oos_sharpe
+from regen_buy_hold_fixture import (  # re-exported: the ONE DSR bar (#1794)
+    DSR_P_BADGE_MIN,
+    compute_dsr,
+    compute_kelly,
+    compute_oos_sharpe,
+)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 BACKTEST_START = "2004-01-02"
@@ -164,7 +169,7 @@ def _compute_passes_rigor_gate(
         return False
     if dsr is None or dsr_p is None or num_trials is None:
         return False
-    if dsr_p < 0.95:
+    if dsr_p < DSR_P_BADGE_MIN:
         return False
     if pbo_score is None or pbo_score >= 0.5:
         return False

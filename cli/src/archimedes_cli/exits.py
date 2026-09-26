@@ -32,12 +32,17 @@ code that raises it."""
 
 INCOMPLETE = 4
 """``verify`` reached the server and got an answer, but not every runnable leg of
-the gate could be evaluated — typically too few bars for the walk-forward OOS
-split (~70) while DSR only needs 4.
+the gate could be evaluated — a leg that could not run on the NUMBERS, such as a
+zero-variance stretch with no Sharpe to compute.
+
+Not a short series: since #1803 the endpoint refuses anything under the 250-bar
+evaluation window, which sits above the ~70 bars the walk-forward split needs.
+That is a rejected body — ``USAGE`` (2) with ``window_too_short`` — and it never
+reaches this code.
 
 A new code rather than ``GATE_FAILED`` on purpose, per this module's own split:
 an incomplete evaluation is not a verdict about the strategy, so collapsing it
-into 1 would report "not enough data" as "strategy rejected" — precisely the
+into 1 would report "a leg could not run" as "strategy rejected" — precisely the
 confusion the header warns about. See #1481."""
 
 NOT_IMPLEMENTED = 3
