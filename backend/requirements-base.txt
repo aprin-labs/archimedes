@@ -154,7 +154,7 @@ circle-titanoboa-sdk[x402,wallets] @ git+https://github.com/vyperlang/circle-tit
 anthropic>=1.5.0
 
 # On-chain / Web3
-web3>=7.16.0
+web3>=8.0.0
 eth-account>=0.14.0
 eth-utils>=6.0.0
 cryptography>=50.0.1
