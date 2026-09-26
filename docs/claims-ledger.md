@@ -30,7 +30,7 @@ rows were measured against `main` on 2026-09-03; no other row was re-measured.
 | `CHANGED` | The surface used to over-claim. The row records what it said, and the PR/commit that narrowed it. |
 | `RETRACTED` | The claim was removed outright, and a guard exists to stop it coming back. |
 | `OVER-CLAIMED` | Still live, still wrong, not fixed by this ledger. These are the open ones. |
-| `PENDING ADR MERGE` | The position is the owner's stated one; the decision record it rests on is not merged yet. |
+| `PENDING VENDOR CUTOVER` | The decision record is merged and the mechanism is built; the owner has not yet applied the deploy action that switches a seam's default vendor. |
 
 Two things this file deliberately does **not** do. It does not quote a curated-library
 pass count — `CLAUDE.md` forbids it and the live gate is the only authority. And it does
@@ -218,20 +218,25 @@ of over-claim this file exists to catch, because it is unfalsifiable rather than
 ## Market data — the Explore page and what paid analysis runs on
 
 The owner's framing, recorded here because the ledger is where the public position lives.
-The decision record is `docs/adr/market-data-sourcing.md`, added by the now-merged
-[#1218](https://github.com/aprin-labs/archimedes/issues/1218) work — open as
-[PR #1627](https://github.com/aprin-labs/archimedes/pull/1627), not merged as of 2026-08-31.
-The rows below are marked `PENDING ADR MERGE` until it lands, and they should be re-pointed
-at the ADR then; the guard in `backend/tests/test_claims_ledger.py` fails the moment the
-file appears, so that re-pointing cannot be forgotten. Checked against that PR's diff:
-it keeps `yfinance` as the default on both seams and adds Tiingo as the paid-analysis
-provider, which is what the rows below say.
+The decision record is `docs/adr/market-data-sourcing.md`, added by
+[#1218](https://github.com/aprin-labs/archimedes/issues/1218)'s work and merged
+(`Status: Accepted`, amended 2026-09-01 by
+[#1798](https://github.com/aprin-labs/archimedes/issues/1798) to route per seam rather
+than by one global variable). The mechanism the ADR describes has landed — `infra/ecs.tf`
+wires the `TIINGO_API_TOKEN` secret and `backend/tests/test_ecs_backend_secrets.py` pins
+its presence and ARN shape — but landing the mechanism is not the same as flipping it on:
+the row below stays `PENDING VENDOR CUTOVER` until the owner actually points a seam's
+default at Tiingo, which is a deploy action (`infra/apply.sh --apply` + one task-definition
+rollout), not a code change. `TestVendorCutoverStillPending` in
+`backend/tests/test_claims_ledger.py` pins today's absence of that pin in `infra/ecs.tf`, so
+this row cannot rot true by silent drift — the day the owner performs the cutover, that
+test goes red and this row must move off `PENDING VENDOR CUTOVER`.
 
 | Claim | Status | What backs it |
 |---|---|---|
 | The Explore page is free, open, and ungated | `TRUE` | `ui/src/routes.js:43` puts `explore` in `ANON_APP_PAGES`, so it renders with no session; `backend/archimedes/api/explore_routes.py:24` and `:30` carry no auth dependency. The code is public domain (`LICENSE`). |
 | Explore is a FOSS viewer over yfinance streams, not a redistribution product | `TRUE` | The mechanism is true and labelled on the page — `ui/src/components/Explore.jsx:416` tells the visitor which cards are oracle-priced and which come from yfinance, and `ui/src/components/AssetModal.jsx:22` labels the source per asset. The licensing position is stated in `docs/adr/market-data-sourcing.md` (landed with #1627): split sourcing, no commercial redistribution of yfinance data, Tiingo Business named as the mainnet prerequisite. |
-| Paid analysis runs on licensed data | `PENDING ADR MERGE` | A statement of policy, not of current state, and the ledger must not launder one into the other. The vendor seam exists on both sides — `analytics-engine/src/archimedes_analytics_engine/market_data.py:96` and `backend/archimedes/services/market_data_provider.py:358` (a real Tiingo provider) — and one `MARKET_DATA_PROVIDER` value selects across both. **The default on both seams is still `yfinance`**, so today the paid path and the free path read the same source. |
+| Paid analysis runs on licensed data | `PENDING VENDOR CUTOVER` | Not a statement of current state, and the ledger must not launder policy into fact. The vendor seam exists on both sides — `analytics-engine/src/archimedes_analytics_engine/market_data.py:96` and `backend/archimedes/services/market_data_provider.py:1060` (`provider_name`, a real Tiingo provider behind it) — and per-seam routing since #1798 means the daily seam (`MARKET_DATA_DAILY_PROVIDER`, falling back to `MARKET_DATA_PROVIDER`) can move to Tiingo without moving the intraday/live seam with it. **`infra/ecs.tf` pins neither variable today, so both seams still resolve to the code default, `yfinance`** — the paid path and the free path read the same source until the owner applies the cutover. |
 | yfinance is an unlicensed commercial dependency on the critical path | `TRUE` | #1218's own finding, unchanged: `analytics-engine/src/archimedes_analytics_engine/market_data.py:32` imports it and `:96` makes it the default, and every strategy pulls its declared universe through it. |
 
 ---
