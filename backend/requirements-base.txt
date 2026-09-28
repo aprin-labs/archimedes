@@ -23,7 +23,7 @@ fastapi>=0.141.1
 # change GZipMiddleware defaults, FileResponse range handling, and add
 # max_body_size. We use none of them - compression is nginx-side and the
 # backend imports neither GZipMiddleware nor FileResponse (checked 2026-08-30).
-starlette>=1.6.0
+starlette>=1.7.0
 uvicorn[standard]>=0.52.4
 # Upper-bounded 2026-09-25: 2.1.0 (released after this floor was set) changes the
 # DEFAULT driver a bare `postgresql://` URL resolves to — `create_engine()` now
