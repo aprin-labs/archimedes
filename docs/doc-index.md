@@ -46,7 +46,7 @@ Repo root: [`../README.md`](../README.md) · [`../SETUP.md`](../SETUP.md) · [`.
 | [`database-relations.md`](database-relations.md) | current | Dan Browne | 2026-08-31 | Identity/ownership/money-table relational structure: the schema-relations audit (corrections + gap found), the Phase 1 indices + FKs from [PR #1438](https://github.com/aprin-labs/archimedes/pull/1438) — **merged 2026-08-31**, with #1429 reconciling the account-deletion policy — the target ERD, and the Phase 2 proposal (G1 shipped; the rest not built). |
 | [`deployment.md`](deployment.md) | reference | Dan Browne | 2026-08-31 | Compose topology from one file: the `localdb` profile gate and the nginx runtime-DNS fix, both still accurate. Its **production** column is pre-Fargate (EC2 + `docker compose pull`) and is superseded by `local-vs-prod.md`. |
 | [`local-vs-prod.md`](local-vs-prod.md) | current | Dan Browne | 2026-08-31 | The deployment contract (#1044): the row-by-row local/production selector table with the variable that decides each one, the four config leaks and where each stands, the recorded "no local auth bypass" decision, the fresh-clone ollama smoke path, and `make check-local`. |
-| [`architectural-principles.md`](architectural-principles.md) | current | Dan Browne | 2026-07-28 | The four primitives the product is built to defend. |
+| [`architectural-principles.md`](architectural-principles.md) | current | Dan Browne | 2026-09-30 | The four primitives the product is built to defend. |
 | [`anti-features.md`](anti-features.md) | current | Dan Browne | 2026-07-28 | What Archimedes deliberately does not build. |
 
 ## API reference
