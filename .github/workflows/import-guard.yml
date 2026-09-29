@@ -33,7 +33,7 @@ jobs:
   import-guard:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history so the "relevant files changed" diff below can
           # always resolve base...head, even on PRs with a deep or
@@ -73,7 +73,7 @@ jobs:
       - name: No relevant files changed — skipping
         if: steps.changes.outputs.relevant == 'false'
         run: echo "No backend/**.py, backend/requirements*.txt, environment.yml, or workflow changes in this PR — nothing for import-guard to check."
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         if: steps.changes.outputs.relevant == 'true'
         with:
           python-version: "3.12"

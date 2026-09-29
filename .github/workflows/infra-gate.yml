@@ -97,10 +97,10 @@ jobs:
     steps:
       # No `submodules:` — deliberate. No .tf file references a submodule path,
       # so cloning them would cost minutes for zero signal.
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Terraform
-        uses: hashicorp/setup-terraform@v4
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
         with:
           # Pinned, not "latest": `terraform fmt` is a formatter, and a formatter
           # that silently changes its mind between releases turns this gate red on

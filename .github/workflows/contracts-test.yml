@@ -39,14 +39,14 @@ jobs:
     name: Contracts — forge build + test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Restores contracts/lib/forge-std + contracts/lib/openzeppelin-contracts
           # at the revs pinned in .gitmodules / foundry.lock so forge can resolve the
           # @openzeppelin/ and forge-std/ import remappings.
           submodules: recursive
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
         with:
           # Pinned 2026-08-31. Unpinned, this action tracks latest stable, and the
           # toolchain moved under us between the last green run (08-20) and today:

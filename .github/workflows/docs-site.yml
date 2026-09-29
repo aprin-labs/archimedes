@@ -85,11 +85,11 @@ jobs:
       # On the default shallow clone every page would report the same date (or
       # none), which is exactly the hand-typed-stamp problem the plugin
       # replaces. It costs a few seconds on a repo this size.
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
 
@@ -117,7 +117,7 @@ jobs:
       # a PR run stops at "did it build", with nothing uploaded.
       - name: Upload the built site
         if: ${{ github.event_name != 'pull_request' }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: docs-site
           path: _site
@@ -155,7 +155,7 @@ jobs:
       DOCS_DOMAIN: docs.archimedes-arc.com
     steps:
       - name: Download the built site
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           name: docs-site
           path: _site
