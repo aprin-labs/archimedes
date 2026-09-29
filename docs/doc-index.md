@@ -232,6 +232,7 @@ Repo root: [`../README.md`](../README.md) · [`../SETUP.md`](../SETUP.md) · [`.
 | [`audits/2026-06-13-Onder-findings.md`](audits/2026-06-13-Onder-findings.md) | audit | Önder Akkaya | 2026-06-13 | Resilience and stress-test report. |
 | [`audits/2026-07-09-curated-consolidation.md`](audits/2026-07-09-curated-consolidation.md) | audit | Önder Akkaya | 2026-07-09 | Curated-example consolidation build and verification. |
 | [`audits/merge-handoff-2026-06-10.md`](audits/merge-handoff-2026-06-10.md) | historical log | Dan Browne | 2026-06-10 | Merge handoff for the 2026-06-10 remediation PRs. |
+| [`audits/2026-09-27-owasp-fourlane-audit.md`](audits/2026-09-27-owasp-fourlane-audit.md) | audit | Önder Akkaya | 2026-09-27 | OWASP Top 10/ASVS/CWE 4-lane SAST pass (backend, contracts, frontend, infra/CI). 4 High findings: `Vault.sol` `creator` role outlives ownership transfer + contradicts the non-custodial ADR, `setTargetAllocations()` churn-guard bypass, unbounded client-side payment-key deposit, and a PR-triggered Terraform OIDC role that can reach the prod Aurora password. No fixes applied. |
 | [`audits/rigor-gate-fixes.md`](audits/rigor-gate-fixes.md) | needs owner | Önder Akkaya | — | A bare patch list with no findings, owner or dates. Should be tracked issues, then deleted. |
 
 ## Handovers and session logs (historical — not current state)
