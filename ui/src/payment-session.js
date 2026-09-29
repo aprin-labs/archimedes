@@ -46,6 +46,13 @@ import { canStore } from "./storage-consent.js";
 
 const STORAGE_PREFIX = "archimedes_payment_key:";
 
+// FE-01 (2026-09-27 audit): the key above lives in cleartext localStorage —
+// its blast radius under XSS/supply-chain compromise is bounded only by
+// what's deposited into it. Cap deposits so that bound stays small, matching
+// the "deposits default small" custody claim above instead of leaving it as
+// an unenforced UI default.
+export const MAX_SESSION_KEY_DEPOSIT_RAW = 50_000_000n; // 50.00 USDC (6 decimals)
+
 const storageKey = (scaAddress) => `${STORAGE_PREFIX}${(scaAddress || "").toLowerCase()}`;
 
 /** The stored payment-key account for this SCA, or null if none exists. */

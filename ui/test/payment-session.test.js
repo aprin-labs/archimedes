@@ -54,6 +54,14 @@ test("the paid /start names the payment key in X-Wallet-Address", () => {
 	assert.match(generate, /payerAddress: session\.address/);
 });
 
+test("device payment key deposits are capped (FE-01: cleartext key, bounded blast radius)", () => {
+	assert.match(session, /export const MAX_SESSION_KEY_DEPOSIT_RAW = 50_000_000n/);
+	// Both handlePayAndGenerate call sites import and enforce the cap above
+	// the existing lower bound, never in place of it.
+	const guards = [...generate.matchAll(/if \(amountRaw < need\) \{[\s\S]*?\n\t*\}\n\t*if \(amountRaw > MAX_SESSION_KEY_DEPOSIT_RAW\) \{[\s\S]*?\n\t*\}/g)];
+	assert.equal(guards.length, 2, "expected both call sites to enforce the deposit cap after the lower bound");
+});
+
 test("the balance shown is the PAYER's, and the panel says where the key lives", () => {
 	assert.match(generate, /paymentPayerAddress\(\)/);
 	assert.match(generate, /device payment key/);
