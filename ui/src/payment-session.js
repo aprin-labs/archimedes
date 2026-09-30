@@ -30,7 +30,7 @@
 // balance (never the passkey wallet's own funds — those stay behind the
 // enclave). Losing the device/storage strands the remainder. Both bounds
 // are deliberate v1 trade-offs, surfaced in the pay panel copy; deposits
-// default small.
+// default small and are capped (payment-deposit-cap.js).
 //
 // ACCOUNT BINDING. The generation paywall requires authorization.from to be
 // a wallet LINKED to the paying account (enforce_generation_payment). The
@@ -45,13 +45,6 @@ import { listLinkedWallets } from "./linked-wallets";
 import { canStore } from "./storage-consent.js";
 
 const STORAGE_PREFIX = "archimedes_payment_key:";
-
-// FE-01 (2026-09-27 audit): the key above lives in cleartext localStorage —
-// its blast radius under XSS/supply-chain compromise is bounded only by
-// what's deposited into it. Cap deposits so that bound stays small, matching
-// the "deposits default small" custody claim above instead of leaving it as
-// an unenforced UI default.
-export const MAX_SESSION_KEY_DEPOSIT_RAW = 50_000_000n; // 50.00 USDC (6 decimals)
 
 const storageKey = (scaAddress) => `${STORAGE_PREFIX}${(scaAddress || "").toLowerCase()}`;
 

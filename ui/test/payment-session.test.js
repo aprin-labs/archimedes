@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { MAX_SESSION_KEY_DEPOSIT_RAW, sessionKeyDepositError } from "../src/payment-deposit-cap.js";
 
 // #1467 — the passkey payment rail. Circle's nanopayments facilitator
 // verifies EOA ERC-3009 signatures ONLY (field-proven 2026-08-21: SCA
@@ -54,12 +55,24 @@ test("the paid /start names the payment key in X-Wallet-Address", () => {
 	assert.match(generate, /payerAddress: session\.address/);
 });
 
-test("device payment key deposits are capped (FE-01: cleartext key, bounded blast radius)", () => {
-	assert.match(session, /export const MAX_SESSION_KEY_DEPOSIT_RAW = 50_000_000n/);
-	// Both handlePayAndGenerate call sites import and enforce the cap above
-	// the existing lower bound, never in place of it.
-	const guards = [...generate.matchAll(/if \(amountRaw < need\) \{[\s\S]*?\n\t*\}\n\t*if \(amountRaw > MAX_SESSION_KEY_DEPOSIT_RAW\) \{[\s\S]*?\n\t*\}/g)];
-	assert.equal(guards.length, 2, "expected both call sites to enforce the deposit cap after the lower bound");
+test("device payment key deposit cap: at cap ok, above cap and below price rejected (#1892)", () => {
+	const need = 2_000_000n; // $2 generation
+	assert.equal(MAX_SESSION_KEY_DEPOSIT_RAW, 50_000_000n);
+	assert.equal(sessionKeyDepositError(need, need), null);
+	assert.equal(sessionKeyDepositError(MAX_SESSION_KEY_DEPOSIT_RAW, need), null);
+	assert.match(sessionKeyDepositError(MAX_SESSION_KEY_DEPOSIT_RAW + 1n, need), /capped at \$50/);
+	assert.match(sessionKeyDepositError(need - 1n, need), /at least cover the generation price/);
+});
+
+test("only the passkey branch caps deposits; EOA wallets keep the lower bound alone", () => {
+	// The EOA path funds the connected wallet, not the cleartext localStorage
+	// key, so the cap (and its "stored unencrypted" copy) would be false there.
+	const branches = generate.split('if (paymentWalletKind() === "circle") {');
+	assert.equal(branches.length, 2, "expected exactly one circle branch in Generate.jsx");
+	const [circleBranch, eoaPath] = branches[1].split("const held = heldSignableRequirements();");
+	assert.match(circleBranch, /sessionKeyDepositError\(amountRaw, need\)/);
+	assert.doesNotMatch(eoaPath.split("return (")[0], /sessionKeyDepositError|MAX_SESSION_KEY_DEPOSIT/);
+	assert.match(eoaPath, /if \(amountRaw < need\) \{/);
 });
 
 test("the balance shown is the PAYER's, and the panel says where the key lives", () => {
