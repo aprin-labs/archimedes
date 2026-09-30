@@ -13,6 +13,7 @@ import { getAddress } from "../config";
 import { listLinkedWallets } from "../linked-wallets";
 import { GENERATION_QUOTE_ENABLED } from "../featureFlags";
 import { depositToGateway, getGatewayBalance, parseUsdcAmount, paymentPayerAddress, paymentWalletKind, signGatewayPayment, walletSupportsPayment } from "../x402";
+import { MAX_SESSION_KEY_DEPOSIT_USD, sessionKeyDepositError } from "../payment-deposit-cap";
 import { ensureSessionLinked, getOrCreateSessionAccount } from "../payment-session";
 import {
 	DEFAULT_DEPTH,
@@ -600,9 +601,8 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 				let bal = await getGatewayBalance(req, session.address);
 				if (bal == null || bal < need) {
 					const amountRaw = parseUsdcAmount(depositAmount || "20.00");
-					if (amountRaw < need) {
-						throw new Error("Deposit amount must at least cover the generation price.");
-					}
+					const depositProblem = sessionKeyDepositError(amountRaw, need);
+					if (depositProblem) throw new Error(depositProblem);
 					await depositToGateway(req, amountRaw, (step) =>
 						setPayStep(step === "approving" ? "approving" : "depositing"),
 					);
@@ -1428,6 +1428,12 @@ export default function Generate({ onNavigate, onStageChange, user }) {
 													style={{ width: 110, marginTop: 6 }}
 													disabled={paying}
 												/>
+												{paymentWalletKind() === "circle" && (
+													<p className="caption" style={{ marginTop: 4 }}>
+														Max ${MAX_SESSION_KEY_DEPOSIT_USD} per deposit to the device
+														payment key.
+													</p>
+												)}
 											</details>
 										)}
 										{depositError && (
