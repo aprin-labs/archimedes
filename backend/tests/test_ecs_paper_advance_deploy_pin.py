@@ -304,7 +304,9 @@ class TestRewritePinsBackendStartPeriod:
 class TestDeployYmlIsThePathThatShips:
     def test_deploy_ecs_checks_out_the_repo_and_invokes_the_rewrite_script(self):
         job = _deploy_ecs_job()
-        assert "actions/checkout@v7" in job, (
+        # Match the action, not the ref: actions are SHA-pinned (#1895) and
+        # Dependabot bumps the pin, neither of which changes what this guards.
+        assert "uses: actions/checkout@" in job, (
             "deploy-ecs has no checkout — the rewrite script is in the tree and "
             "cannot run unless this job checks it out"
         )
