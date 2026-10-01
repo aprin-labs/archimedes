@@ -415,14 +415,39 @@ def test_entitlement_402_after_settlement_still_leaves_exactly_one_receipt(monke
     assert listed[0]["job_id"] is None
 
 
-@pytest.mark.parametrize("idempotency_key", ["retry-same-key", None])
-def test_a_retry_after_a_post_settle_failure_does_not_write_a_second_receipt(monkeypatch, idempotency_key):
+@pytest.mark.parametrize(
+    ("idempotency_key", "credit_lookup_fails"),
+    [
+        pytest.param("retry-same-key", False, id="same-key"),
+        pytest.param(None, False, id="keyless"),
+        pytest.param("retry-same-key", True, id="same-key-credit-lookup-fails"),
+    ],
+)
+def test_a_retry_after_a_post_settle_failure_does_not_write_a_second_receipt(
+    monkeypatch, idempotency_key, credit_lookup_fails
+):
     """One charge, one receipt — however many times the payer retries.
 
-    The retry is served from the #1441 credit (the same key reads
-    ``already_settled``; a keyless retry finds the unspent credit), takes no
-    second charge, and so must write no second receipt."""
+    The retry is served from the #1441 credit, so ``_paywall_with_credit``
+    returns ``payment=None`` and the receipt write (``if payment is not None``)
+    does not run. Which branch of ``_paywall_with_credit`` serves it:
+
+    - ``same-key`` and ``keyless``: the unspent-credit lookup that runs FIRST,
+      before the Idempotency-Key is read (``generation_credits.take_credit``,
+      ``api/generate_routes.py:323-326``), finds the ``available`` credit the
+      failed attempt left behind and returns ``(None, credit_id)``. The key is
+      never claimed, so ``generation_credits.claim`` is not called. The key
+      makes no difference on this path.
+    - ``same-key-credit-lookup-fails``: ``take_credit`` is quiet on a ledger
+      read error and reports no credit. The same key then reaches
+      ``generation_credits.claim``, which finds the key's ``available`` credit
+      and returns ``already_settled`` (``api/generate_routes.py:338-340``),
+      also ``(None, credit_id)``.
+
+    The test records what ``take_credit`` and ``claim`` return on the retry
+    and asserts the branch named above, not only the receipt count."""
     from archimedes.models.generation_credit import CREDIT_CONSUMED
+    from archimedes.services import generation_credits
 
     _settled(monkeypatch)
     headers = {"Idempotency-Key": idempotency_key} if idempotency_key else {}
@@ -433,6 +458,32 @@ def test_a_retry_after_a_post_settle_failure_does_not_write_a_second_receipt(mon
     p1, p2 = _harness(failing)
     with p1, p2, _client() as client, pytest.raises(RuntimeError):
         client.post("/api/generate/start", json=_BODY, cookies=cookies, headers=headers)
+    _assert_one_unlinked_receipt_and_an_unspent_credit()
+    credit_id = _all_credits()[0].id
+
+    # Record what the two credit-ledger entry points return on the retry.
+    real_take_credit, real_claim = generation_credits.take_credit, generation_credits.claim
+    take_credit_returned: list = []
+    claim_returned: list = []
+
+    def _recording_take_credit(user_id):
+        result = real_take_credit(user_id)
+        take_credit_returned.append(result)
+        return result
+
+    def _recording_claim(user_id, key):
+        result = real_claim(user_id, key)
+        claim_returned.append(result)
+        return result
+
+    monkeypatch.setattr(generation_credits, "take_credit", _recording_take_credit)
+    monkeypatch.setattr(generation_credits, "claim", _recording_claim)
+    if credit_lookup_fails:
+        monkeypatch.setattr(
+            generation_credits,
+            "take_available_credit",
+            MagicMock(side_effect=RuntimeError("ledger read failed")),
+        )
 
     healthy = _mock_store("job-retry")
     p1, p2 = _harness(healthy)
@@ -440,6 +491,14 @@ def test_a_retry_after_a_post_settle_failure_does_not_write_a_second_receipt(mon
         resp = client.post("/api/generate/start", json=_BODY, cookies=cookies, headers=headers)
     assert resp.status_code == 202, resp.text
     assert resp.json()["job_id"] == "job-retry"
+
+    # The branch that served the retry, as the docstring names it.
+    if credit_lookup_fails:
+        assert take_credit_returned == [None]
+        assert claim_returned == [("already_settled", credit_id)]
+    else:
+        assert take_credit_returned == [credit_id]
+        assert claim_returned == []
 
     # One charge was taken across both attempts…
     generation_payment.enforce_generation_payment.assert_awaited_once()
