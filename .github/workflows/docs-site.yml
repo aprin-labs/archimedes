@@ -155,7 +155,7 @@ jobs:
       DOCS_DOMAIN: docs.archimedes-arc.com
     steps:
       - name: Download the built site
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: docs-site
           path: _site
