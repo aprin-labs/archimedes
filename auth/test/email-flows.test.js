@@ -368,8 +368,9 @@ test('a refused sign-in does not silently re-send verification mail — the user
 // exhausted /request-password-reset for everybody.
 //
 // The fix (option A in #1691): nginx SETS `X-Client-IP: $remote_addr` — its
-// realip-resolved address, bound to the trusted ALB CIDR — and auth.js points
-// ipAddressHeaders at that one header. The tests below are a matched set:
+// realip-resolved address (ALB CIDR + CloudFront origin-facing ranges, #1908) —
+// and auth.js points ipAddressHeaders at that one header. The tests below are a
+// matched set:
 //   1. control      — buckets separate per client when X-Client-IP resolves,
 //                     WITH the multi-hop X-Forwarded-For production sends.
 //   2. adversarial  — a caller rotating X-Forwarded-For, and forging its own
@@ -475,13 +476,18 @@ test('SECURITY: nginx SETS X-Client-IP, so a spoof from a non-edge source never 
   assert.equal((conf.match(/proxy_set_header X-Client-IP/g) ?? []).length, 1)
 
   // $remote_addr is only ever influenced by X-Forwarded-For when the socket
-  // peer is inside the ALB CIDR: `real_ip_header` is bound by set_real_ip_from,
-  // and that CIDR is the narrowed one from AUDIT I7 (not the RFC1918 ranges,
-  // which would have let the box itself spoof). A request from any other
-  // source contributes nothing to the value it is keyed on.
+  // peer is a trusted proxy (in production always the ALB), and realip's
+  // recursive walk stops at the first hop outside the trusted set. That set is
+  // the VPC CIDR narrowed by AUDIT I7 (not the RFC1918 ranges, which would have
+  // let the box itself spoof) plus CloudFront's origin-facing ranges from a
+  // generated include (#1908), so the value is the viewer CloudFront saw. The
+  // include's contents are pinned by backend/tests/test_nginx_real_client_ip.py;
+  // here: no other set_real_ip_from DIRECTIVE may appear in nginx.conf itself.
   assert.match(conf, /^\s*set_real_ip_from 10\.0\.0\.0\/16;$/m)
+  assert.match(conf, /^\s*include \/etc\/nginx\/cloudfront-origin-facing\.conf;$/m)
   assert.match(conf, /^\s*real_ip_header X-Forwarded-For;$/m)
-  assert.equal(/set_real_ip_from (?!10\.0\.0\.0\/16)/.test(conf), false)
+  assert.match(conf, /^\s*real_ip_recursive on;$/m)
+  assert.equal(/^\s*set_real_ip_from (?!10\.0\.0\.0\/16;)/m.test(conf), false)
 })
 
 test('fail-safe: a request that never passed through nginx gets the shared bucket, not a key it controls', async () => {

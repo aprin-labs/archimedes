@@ -69,8 +69,8 @@ except Exception as exc:
 # request.client.host is the nginx peer (10.x inside the container), so
 # get_remote_address collapsed every caller into one shared bucket — per-IP
 # limits were effectively global. client_ip reads the nginx-set X-Real-IP
-# header (it overwrites any client-supplied value and is bound to the trusted
-# ALB CIDR). It
+# header (it overwrites any client-supplied value and is bound to the ALB CIDR
+# + CloudFront origin-facing ranges, so it is the viewer's address, #1908). It
 # deliberately does NOT trust X-Forwarded-For, whose first hop is spoofable.
 limiter = Limiter(
     key_func=client_ip,

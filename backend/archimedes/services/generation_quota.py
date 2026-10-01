@@ -102,7 +102,8 @@ def client_ip(request: Request) -> str:
     the quota key:
       1. ``X-Real-IP`` — set by nginx from its ``real_ip``-resolved ``$remote_addr``
          (it OVERWRITES any client-supplied value and binds ``real_ip_header`` to
-         the trusted ALB CIDR), so it is not client-spoofable.
+         the ALB CIDR + CloudFront origin-facing ranges, #1908), so it is the
+         viewer's address and not client-spoofable.
       2. the socket peer (``request.client.host``) — for local/non-proxied runs.
 
     ``X-Forwarded-For`` is DELIBERATELY NOT used: its first hop is the original

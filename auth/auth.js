@@ -877,14 +877,14 @@ export function createAuth({ database, env = process.env, mailer = createMailer(
       // so a caller cannot supply it: whatever the client sends under that name
       // is overwritten before the request reaches this process. It is the same
       // value the FastAPI limiter and the daily generation cap already key on
-      // via X-Real-IP. Behind CloudFront it identifies the CloudFront EDGE, not
-      // the viewer (nginx trusts only the ALB CIDR) — so buckets are per-edge:
-      // unspoofable, no longer global, coarser than one caller. Say that, don't
-      // round it up to "per user".
+      // via X-Real-IP. Since #1908 nginx trusts CloudFront's origin-facing
+      // ranges as well as the ALB's VPC, so this is the VIEWER's address as
+      // CloudFront saw it: buckets are per viewer IP (viewers behind one NAT
+      // still share one). Say that, don't round it up to "per user".
       //
       // Deliberately NOT trustedProxies: that would re-admit X-Forwarded-For
-      // and require carrying CloudFront's published edge ranges in this file,
-      // where a stale list degrades silently back to the shared bucket. And
+      // here and need a second copy of the CloudFront ranges nginx already
+      // carries (nginx/cloudfront-origin-facing.conf). And
       // deliberately not a fallback to 'x-forwarded-for' after this one — a
       // single-valued XFF reaching this process is exactly the shape a
       // direct-to-container caller can forge. No header, no key: the limiter
