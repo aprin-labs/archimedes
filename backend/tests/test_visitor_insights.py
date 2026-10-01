@@ -602,3 +602,51 @@ async def test_ids_in_the_pre_1908_unbounded_set_are_honoured_then_expire():
     assert devices["mobile"] == 0
     legacy_ttl = await r.ttl("archimedes:visitors:attributed")
     assert 0 < legacy_ttl <= _VID_TTL_SECONDS, f"the pre-#1908 set still never expires (TTL {legacy_ttl})"
+
+
+def _trace_top_level_commands(r) -> list[str]:
+    """Record the name of every non-pipelined command sent to ``r`` from now on."""
+    sent: list[str] = []
+    execute = r.execute_command
+
+    async def traced(*args, **options):
+        sent.append(str(args[0]).upper())
+        return await execute(*args, **options)
+
+    r.execute_command = traced
+    return sent
+
+
+async def test_the_pre_1908_set_expires_a_lifetime_after_the_first_recording_and_nothing_later_moves_it():
+    """The old SET gets ONE TTL, from the first post-deploy recording, and keeps it.
+
+    "The old SET expires 180 days after deploy" needs two things in
+    ``_claim_first_seen``. EXPIRE must say NX: without it every new visitor
+    restarts the old set's clock, so on a live site it never runs out. And it
+    must come after the SET NX first-seen check: issued before it, it would
+    also run on every repeat visit, which then costs two round trips instead
+    of one (and, without NX, restarts the clock on every visit).
+    """
+    legacy = "archimedes:visitors:attributed"
+    store, r = _fakeredis_store()
+    await r.sadd(legacy, "vid-legacy")
+    await store.record("US", "desktop", "vid-first")
+    assert 0 < await r.ttl(legacy) <= _VID_TTL_SECONDS
+
+    # 170 days on: cut what is left of the old set's TTL to 10 days.
+    ten_days = 10 * 24 * 60 * 60
+    await r.expire(legacy, ten_days)
+
+    # A new visitor and an id from the old set both pass the first-seen check,
+    # so both reach the EXPIRE; neither may move the expiry back.
+    for vid in ("vid-new", "vid-legacy"):
+        await store.record("DE", "mobile", vid)
+        ttl = await r.ttl(legacy)
+        assert 0 < ttl <= ten_days, f"recording {vid} pushed the old set's expiry back to {ttl}s"
+
+    # A repeat visitor stops at the first-seen check: one command, the SET NX.
+    sent = _trace_top_level_commands(r)
+    await store.record("FR", "tablet", "vid-first")
+    assert sent == ["SET"], f"a repeat visit sent {sent}; the first-seen check alone decides it"
+    ttl = await r.ttl(legacy)
+    assert 0 < ttl <= ten_days, f"a repeat visit pushed the old set's expiry back to {ttl}s"

@@ -5,16 +5,27 @@
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
+import { inspect } from 'node:util'
 
-import { sweepExpiredSessions } from '../session-sweep.js'
-import { authWithSessions, credentials, remainingTokens } from './fixtures/sessions.js'
+import pg from 'pg'
+
+import { startSessionSweep, sweepExpiredSessions } from '../session-sweep.js'
+import { authWithSessions, credentials, remainingTokens, settle } from './fixtures/sessions.js'
+
+const MINUTE_MS = 60 * 1000
+const HOUR_MS = 60 * MINUTE_MS
+
+function recordingLog() {
+  const lines = []
+  return { lines, log: { log: (...args) => lines.push(['log', ...args]), error: (...args) => lines.push(['error', ...args]) } }
+}
 
 test('the sweep deletes sessions whose expiresAt has passed and keeps live ones', async () => {
   const database = new DatabaseSync(':memory:')
   const { auth, liveCookies, liveTokens, expiredTokens } = await authWithSessions(database, { live: 2, expired: 3 })
-  // Every row carries the user agent it was created with (and, in
-  // production, an IP address): that is the data that used to stay forever.
-  assert.equal(database.prepare('SELECT COUNT(*) AS n FROM auth_sessions WHERE userAgent IS NOT NULL').get().n, 5)
+  // Every row carries the IP address and user agent it was created with:
+  // that is the data that used to stay forever.
+  assert.equal(database.prepare('SELECT COUNT(*) AS n FROM auth_sessions WHERE ipAddress IS NOT NULL AND userAgent IS NOT NULL').get().n, 5)
 
   assert.equal(await sweepExpiredSessions(auth), expiredTokens.length)
   assert.deepEqual(remainingTokens(database), [...liveTokens].sort())
@@ -73,4 +84,101 @@ test('a session that stops being expired between the select and the delete is ke
 
   assert.equal(await sweepExpiredSessions(auth), 1)
   assert.deepEqual(remainingTokens(database), [expiredTokens[0]])
+})
+
+test('a database error fails only that run: it is logged by error class alone and the next run retries', async t => {
+  // Production runs the sweep on a timer inside the auth sidecar. An Aurora
+  // failover, or Postgres aborting one of two overlapping DELETEs, must cost
+  // one run, not the timer, and must not put session data in the logs.
+  const database = new DatabaseSync(':memory:')
+  const { auth, liveTokens, expiredTokens } = await authWithSessions(database, { live: 1, expired: 2 })
+  const row = database.prepare('SELECT id, token, ipAddress, userAgent FROM auth_sessions WHERE token = ?').get(expiredTokens[0])
+  const { adapter } = await auth.$context
+  const deleteMany = adapter.deleteMany
+  let failuresLeft = 1
+  adapter.deleteMany = async args => {
+    if (failuresLeft-- > 0) {
+      // The error pg raises, carrying session data the way a real one can
+      // (message, detail, where), so a log of the error itself would leak it.
+      const error = new pg.DatabaseError(`deadlock detected on session ${row.id} (${row.token})`, 0, 'error')
+      Object.assign(error, { code: '40P01', detail: `Key (token)=(${row.token}) ipAddress=${row.ipAddress}`, where: `userAgent=${row.userAgent}` })
+      throw error
+    }
+    return deleteMany(args)
+  }
+  const { lines, log } = recordingLog()
+
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] })
+  const sweep = startSessionSweep(auth, { log })
+  t.after(sweep.stop)
+
+  t.mock.timers.tick(MINUTE_MS)
+  await settle(() => lines.length > 0)
+  assert.deepEqual(lines, [['error', 'AUTH_SESSION_SWEEP_FAILED', { error: 'DatabaseError' }]])
+  const logged = inspect(lines, { depth: null })
+  for (const value of [row.id, row.token, row.ipAddress, row.userAgent, 'deadlock', 'Key (token)']) {
+    assert.ok(!logged.includes(value), `the failure log contains ${JSON.stringify(value)}`)
+  }
+  assert.equal(remainingTokens(database).length, 3, 'the failed run still deleted rows')
+
+  // Next tick: the timer is still armed and the same statement now succeeds.
+  t.mock.timers.tick(HOUR_MS - MINUTE_MS)
+  await settle(() => remainingTokens(database).length === 1)
+  assert.deepEqual(remainingTokens(database), liveTokens, 'the run after a failed one did not retry')
+  assert.deepEqual(lines.at(-1), ['log', 'auth session sweep: deleted 2 expired session(s)'])
+})
+
+test('a failed run resolves to 0 rather than throwing, whatever was thrown', async () => {
+  // run() is called from timers, where a rejection would be unhandled.
+  for (const [thrown, logged] of [[new TypeError('t'), 'TypeError'], ['a bare string', 'UnknownError']]) {
+    const auth = { $context: Promise.resolve({ adapter: { findMany: async () => { throw thrown } } }) }
+    const { lines, log } = recordingLog()
+    const sweep = startSessionSweep(auth, { log })
+    try {
+      assert.equal(await sweep.run(), 0)
+    } finally {
+      sweep.stop()
+    }
+    assert.deepEqual(lines, [['error', 'AUTH_SESSION_SWEEP_FAILED', { error: logged }]])
+  }
+})
+
+test('a run still going when the next one is due is not doubled up, and the one after that runs', async t => {
+  const database = new DatabaseSync(':memory:')
+  const { auth, liveTokens } = await authWithSessions(database, { live: 1, expired: 2 })
+  const { adapter } = await auth.$context
+  const findMany = adapter.findMany
+  let selects = 0
+  let release
+  const stuck = new Promise(resolve => { release = resolve })
+  adapter.findMany = async args => {
+    selects++
+    if (selects === 1) await stuck // the first run hangs, e.g. on a lock or a slow failover
+    return findMany(args)
+  }
+  const { log } = recordingLog()
+
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] })
+  const sweep = startSessionSweep(auth, { log })
+  t.after(sweep.stop)
+
+  t.mock.timers.tick(MINUTE_MS)
+  await settle(() => selects === 1)
+  assert.equal(selects, 1, 'the first run never started')
+
+  // The hourly run comes due while the first is still stuck, and so does a
+  // direct call: both join the run in flight instead of starting another.
+  t.mock.timers.tick(HOUR_MS - MINUTE_MS)
+  const joined = sweep.run()
+  await settle(() => selects > 1)
+  assert.equal(selects, 1, 'a second run started while the first was still going')
+
+  release()
+  assert.equal(await joined, 2, 'the joined call did not get the stuck run\'s result')
+  assert.deepEqual(remainingTokens(database), liveTokens)
+
+  // Once that run has finished, the next one due must actually run.
+  t.mock.timers.tick(HOUR_MS)
+  await settle(() => selects === 2)
+  assert.equal(selects, 2, 'no run started after the stuck one finished')
 })

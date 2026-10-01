@@ -21,8 +21,11 @@
 //     the counts the two runs report add up to the rows actually removed. No
 //     transaction or lock is held between the select and the delete;
 //   - each run deletes at most batchSize rows, so one run is one short
-//     statement however large a backlog is. A backlog drains at batchSize per
-//     task per interval;
+//     statement however large a backlog is. A backlog drains at up to
+//     batchSize rows per task per interval, and at least batchSize per
+//     interval while any task is up. Overlapping runs are why it can be the
+//     lower figure: both can select the same ids, and then the two runs
+//     together delete one batch, not two;
 //   - any database error (Aurora failover, or Postgres aborting one of two
 //     overlapping DELETEs) fails only that run. It is logged and the next run
 //     simply repeats the same idempotent statement.
@@ -76,8 +79,12 @@ export function startSessionSweep(auth, {
         return deleted
       })
       .catch(error => {
-        // Counts and error class only: never a row, a token, an IP or a user agent.
-        log.error('AUTH_SESSION_SWEEP_FAILED', { error: error instanceof Error ? error.name : 'UnknownError' })
+        // Counts and error class only: never a row, a token, an IP or a user
+        // agent, so never the error's message, detail or stack, which a
+        // database error can fill with the statement's values. The class comes
+        // from the constructor, not error.name: pg's DatabaseError sets name
+        // to the protocol message type, the string 'error'.
+        log.error('AUTH_SESSION_SWEEP_FAILED', { error: error instanceof Error ? error.constructor.name : 'UnknownError' })
         return 0
       })
       .finally(() => {

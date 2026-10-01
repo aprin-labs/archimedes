@@ -33,7 +33,9 @@ export async function authWithSessions(database, { live, expired }) {
   for (let i = 0; i < live + expired; i++) {
     const response = await auth.api.signInEmail({
       body: credentials,
-      headers: new Headers({ 'user-agent': `sweep-test-agent/${i}` }),
+      // x-client-ip is the header auth.js reads the client IP from, so each
+      // row carries an IP and a user agent, as it does in production.
+      headers: new Headers({ 'user-agent': `sweep-test-agent/${i}`, 'x-client-ip': `203.0.113.${i + 1}` }),
       asResponse: true,
     })
     assert.equal(response.status, 200)
@@ -52,4 +54,12 @@ export async function authWithSessions(database, { live, expired }) {
 
 export function remainingTokens(database) {
   return database.prepare('SELECT token FROM auth_sessions ORDER BY token').all().map(row => row.token)
+}
+
+// The sweep is asynchronous (it awaits the database); give it real event-loop
+// turns to finish after a mocked timer fires. Returns once `predicate` holds or
+// after 500 turns, so asserting afterwards also checks that something did NOT
+// happen.
+export async function settle(predicate) {
+  for (let i = 0; i < 500 && !predicate(); i++) await new Promise(resolve => setImmediate(resolve))
 }
