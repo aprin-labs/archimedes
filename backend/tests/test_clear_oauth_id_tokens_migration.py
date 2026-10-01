@@ -7,7 +7,8 @@ be able to point this at a docker-compose Postgres or at production.
 
 Three behaviours, one test each:
 
-  1. upgrade clears every stored ``idToken`` and writes nothing else;
+  1. upgrade clears every stored ``idToken``, whatever the provider, and
+     writes nothing else;
   2. a second upgrade is a no-op;
   3. downgrade succeeds, restores nothing, and leaves the schema as it was.
 
@@ -47,12 +48,20 @@ _GOOGLE_ID_TOKEN = ".".join(
     ]
 )
 
+#: A non-Google row holding an ID token. GitHub's OAuth flow issues none, so
+#: this is not a real GitHub value; it stands in for any non-Google provider.
+#: The revision clears the column on every row, not just Google's. With this
+#: row seeded, a revision that scoped its UPDATE to ``providerId = 'google'``
+#: leaves a token behind and fails the clear test.
+_NON_GOOGLE_ID_TOKEN = "non-google-provider-id-token"
+
 _ACCOUNTS = [
     # (id, providerId, accountId, userId, accessToken, refreshToken, idToken, scope, password)
     ("acc-google-1", "google", "100", "user-1", "enc:access-1", "enc:rt-1", _GOOGLE_ID_TOKEN, "openid", None),
     ("acc-google-2", "google", "200", "user-2", "enc:access-2", None, _GOOGLE_ID_TOKEN + "2", "openid", None),
     ("acc-google-3", "google", "300", "user-3", "enc:access-3", None, None, "openid", None),
     ("acc-github-1", "github", "400", "user-1", "enc:access-4", None, None, "read:user,user:email", None),
+    ("acc-github-2", "github", "500", "user-3", "enc:access-5", None, _NON_GOOGLE_ID_TOKEN, "read:user", None),
     ("acc-cred-1", "credential", "user-2", "user-2", None, None, None, None, "scrypt:hash"),
 ]
 _OTHER_COLUMNS = (
@@ -160,7 +169,9 @@ def _prepared(tmp_path: Path, name: str) -> tuple[Path, str]:
     pre = _run_alembic("upgrade", _down_revision(), database_url=url)
     assert pre.returncode == 0, pre.stderr
     _seed(db_path)
-    assert sum(1 for _, token in _id_tokens(db_path) if token is not None) == 2
+    seeded = _rows(db_path, 'SELECT "providerId" FROM auth_accounts WHERE "idToken" IS NOT NULL ORDER BY "id"')
+    # Two Google tokens and one non-Google token, so a Google-only clear fails.
+    assert seeded == [("github",), ("google",), ("google",)]
     return db_path, url
 
 
@@ -170,9 +181,9 @@ def test_upgrade_clears_every_stored_id_token_and_nothing_else(tmp_path):
 
     result = _run_alembic("upgrade", _REVISION, database_url=url)
     assert result.returncode == 0, f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
-    assert "#1908 cleared 2 stored OAuth ID token(s)" in result.stdout + result.stderr
-
     assert _id_tokens(db_path) == [(row_id, None) for row_id, *_ in sorted(_ACCOUNTS)]
+    assert "#1908 cleared 3 stored OAuth ID token(s)" in result.stdout + result.stderr
+
     assert _other_columns(db_path) == others_before
     assert _rows(db_path, "SELECT COUNT(*) FROM auth_users") == [(3,)]
 

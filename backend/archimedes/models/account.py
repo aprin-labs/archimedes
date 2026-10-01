@@ -129,8 +129,10 @@ class AuthAccount(Base):
     )
     access_token: Mapped[str | None] = mapped_column("accessToken", Text, nullable=True)
     refresh_token: Mapped[str | None] = mapped_column("refreshToken", Text, nullable=True)
-    # Always NULL (#1908): the auth service never stores the provider's ID
-    # token (auth/auth.js dropIdToken); revision 7d2f9a4c1e60 cleared old rows.
+    # #1908: auth code from that change on nulls this before every account
+    # write (auth/auth.js dropIdToken), and revision 7d2f9a4c1e60 clears the
+    # rows stored before it. Not a schema guarantee: older auth code, such as
+    # the old container mid-rollout or a rollback, still stores the token.
     id_token: Mapped[str | None] = mapped_column("idToken", Text, nullable=True)
     access_token_expires_at: Mapped[datetime | None] = mapped_column(
         "accessTokenExpiresAt", DateTime(timezone=True), nullable=True
