@@ -154,15 +154,20 @@ circle-titanoboa-sdk[x402,wallets] @ git+https://github.com/vyperlang/circle-tit
 anthropic>=1.5.0
 
 # On-chain / Web3
-web3>=7.16.0
+# web3 8 requires eth-abi>=6, so web3 and eth-abi move TOGETHER: bumping one
+# without the other is the ResolutionImpossible that failed #1869's CI.
+web3>=8.0.0
 eth-account>=0.14.0
 eth-utils>=6.0.0
 cryptography>=50.0.1
 # direct import in marketplace/encoding.py (derive_pool_id); do not rely on web3 transitive.
-# Cap <6: eth-account declares `eth-abi>=4.0.0-b.2`, whose pre-release specifier lets pip
-# resolve the 6.0.0b1 BETA on a fresh build (observed 2026-07-13 in the Docker image) —
-# no betas on the funds-path ABI codec. Lift the cap deliberately once 6.x is stable.
-eth-abi>=5.2.0,<6
+# Cap history: <6 went in on 2026-07-13 because eth-account 0.13 declared
+# `eth-abi>=4.0.0-b.2`, whose pre-release specifier let pip resolve the 6.0.0b1
+# BETA on a fresh Docker build — no betas on the funds-path ABI codec. 6.0.0
+# final shipped 2026-08-22, so the cap was lifted deliberately for web3 8. It
+# now sits at <7 for the same reason: a 7.x beta cannot slip in, and the next
+# major is a deliberate lift with web3, not a side effect of a resolver run.
+eth-abi>=6.0.0,<7
 
 ## Rate limiting
 slowapi>=0.1.10
