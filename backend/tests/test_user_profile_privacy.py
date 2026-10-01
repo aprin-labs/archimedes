@@ -3,7 +3,8 @@
 Verifies:
   1. Email is encrypted at rest (Fernet round-trip)
   2. Log scrubber strips PII fields
-  3. GET /api/user/profile/{wallet} returns PII only to owner wallet
+  3. GET /api/user/profile/{wallet} returns the profile only to its owner;
+     every other caller gets the same 404 as a missing profile (#1908)
 """
 
 from __future__ import annotations
@@ -87,8 +88,8 @@ class TestLogScrubber:
 
 
 class TestOwnerOnlyEcho:
-    """Test that the GET endpoint strips PII for anonymous callers and
-    returns full data for the owner.
+    """Test that the GET endpoint hides the whole profile from non-owners
+    and returns full data for the owner.
     """
 
     @pytest.fixture()
@@ -101,26 +102,39 @@ class TestOwnerOnlyEcho:
         p.interests = json.dumps(["defi", "quant"])
         p.attribution = "Owner"
         p.marketing_opt_in = True
+        p.owner_user_id = "owner-user"
         return p
 
-    def test_anonymous_get_strips_pii(self, _mock_profile):
-        """Anonymous caller (no X-Wallet-Address header) gets no PII."""
-        from archimedes.api.user_routes import _profile_to_response
+    def test_non_owner_get_is_404_not_a_public_subset(self, _mock_profile):
+        """#1908: a signed-in non-owner gets no profile fields at all.
 
-        resp = _profile_to_response(_mock_profile, owner=False)
-        assert resp.email is None
-        assert resp.display_name is None
-        assert resp.marketing_opt_in is False
-        # Public fields are present
-        assert resp.wallet_address == "0xowner123"
-        assert resp.interests == ["defi", "quant"]
-        assert resp.attribution == "Owner"
+        Interests and attribution used to be returned to any session as
+        "public" fields; nothing reads them for another wallet, so the only
+        safe answer is the same 404 a missing profile gets.
+        """
+        import asyncio
+
+        from archimedes.api.user_routes import get_profile
+        from fastapi import HTTPException
+
+        mock_session = MagicMock()
+        mock_session.query.return_value.filter.return_value.first.return_value = _mock_profile
+        with (
+            patch("archimedes.api.user_routes.get_session", return_value=mock_session),
+            patch("archimedes.api.user_routes.get_current_user", return_value=MagicMock(id="someone-else")),
+            patch("archimedes.api.user_routes._extract_linked_wallet", return_value="0xsomeoneelse"),
+            pytest.raises(HTTPException) as exc,
+        ):
+            result = asyncio.run(get_profile("0xowner123", request=MagicMock()))
+            pytest.fail(f"non-owner read returned a profile: {result!r}")
+        assert exc.value.status_code == 404
+        assert exc.value.detail == "Profile not found"
 
     def test_owner_get_decrypts_email(self, _mock_profile):
         """Owner caller gets decrypted email + full PII."""
         from archimedes.api.user_routes import _profile_to_response
 
-        resp = _profile_to_response(_mock_profile, owner=True)
+        resp = _profile_to_response(_mock_profile)
         assert resp.email == "owner@example.com", "Email must be decrypted for owner"
         assert resp.display_name == "Owner Name"
         assert resp.marketing_opt_in is True

@@ -344,10 +344,11 @@ class TestUserProfileRoutes:
             json={"wallet_address": wallet_a, "email": "a@example.com"},
             cookies=_siwe_cookies(wallet_a),
         )
-        # Session is for wallet_b, trying to read wallet_a
+        # Session is for wallet_b, trying to read wallet_a: answered like a
+        # missing profile (#1908), so nothing of wallet_a's comes back.
         res = client.get(f"/api/user/profile/{wallet_a}", cookies=_siwe_cookies(wallet_b))
-        assert res.status_code == 200
-        assert res.json()["email"] is None, "Wrong wallet session must not reveal PII"
+        assert res.status_code == 404
+        assert "a@example.com" not in res.text, "Wrong wallet session must not reveal PII"
 
     def test_write_without_any_auth_fails(self, client):
         """POST without account auth returns 401."""
@@ -432,3 +433,94 @@ class TestUserProfileRoutes:
         )
         assert res.status_code == 409
         assert res.json()["detail"] == "Account already has a canonical profile"
+
+
+# ── #1908: profile answers are owner-only ────────────────────────────────────
+#
+# The profile row holds what a user typed into WelcomeProfileModal: display
+# name, email, interests, "how did you hear about us" (attribution) and the
+# marketing opt-in. None of it is meant for other accounts, and no caller
+# reads another wallet's profile, so a non-owner must learn nothing — not even
+# that a profile exists. Non-owner reads therefore answer exactly like a
+# missing profile (404), never with a "public subset".
+
+_W_1908_OWNER = "0x1908000000000000000000000000000000000001"
+_W_1908_OTHER = "0x1908000000000000000000000000000000000002"
+_W_1908_MISSING = "0x1908000000000000000000000000000000000003"
+_W_1908_LEGACY = "0x1908000000000000000000000000000000000004"
+_PRIVATE_1908 = {
+    "display_name": "Owner1908",
+    "email": "owner1908@example.com",
+    "interests": ["Bonds", "FX"],
+    "attribution": "heard-from-a-friend-1908",
+    "marketing_opt_in": True,
+}
+
+
+def _private_values_in(body: str) -> list[str]:
+    """Every private profile answer that appears anywhere in a response body."""
+    values = [
+        _PRIVATE_1908["display_name"],
+        _PRIVATE_1908["email"],
+        _PRIVATE_1908["attribution"],
+        *_PRIVATE_1908["interests"],
+    ]
+    return [v for v in values if v in body]
+
+
+class TestProfileReadIsOwnerOnly:
+    """GET /api/user/profile/{wallet} returns profile answers only to the owner (#1908)."""
+
+    @pytest.fixture
+    def owned_profile(self, client):
+        res = client.post(
+            "/api/user/profile",
+            json={"wallet_address": _W_1908_OWNER, **_PRIVATE_1908},
+            cookies=_siwe_cookies(_W_1908_OWNER),
+        )
+        assert res.status_code == 200, res.text
+
+    def test_non_owner_gets_no_private_fields(self, client, owned_profile):
+        res = client.get(f"/api/user/profile/{_W_1908_OWNER}", cookies=_siwe_cookies(_W_1908_OTHER))
+        assert _private_values_in(res.text) == [], f"non-owner read leaked profile answers: {res.text}"
+        assert res.status_code == 404
+
+    def test_non_owner_response_is_indistinguishable_from_missing_profile(self, client, owned_profile):
+        """No existence oracle: someone else's profile looks exactly like no profile."""
+        other = client.get(f"/api/user/profile/{_W_1908_OWNER}", cookies=_siwe_cookies(_W_1908_OTHER))
+        missing = client.get(f"/api/user/profile/{_W_1908_MISSING}", cookies=_siwe_cookies(_W_1908_OTHER))
+        assert (other.status_code, other.json()) == (missing.status_code, missing.json())
+
+    def test_owner_still_sees_every_field(self, client, owned_profile):
+        res = client.get(f"/api/user/profile/{_W_1908_OWNER}", cookies=_siwe_cookies(_W_1908_OWNER))
+        assert res.status_code == 200
+        assert res.json() == {"wallet_address": _W_1908_OWNER.lower(), **_PRIVATE_1908}
+
+    def test_unauthenticated_is_still_401(self, client, owned_profile):
+        res = client.get(f"/api/user/profile/{_W_1908_OWNER}")
+        assert res.status_code == 401
+        assert _private_values_in(res.text) == []
+
+    def test_unclaimed_legacy_profile_is_owner_only(self, client):
+        """Pre-account rows (owner_user_id NULL) are readable only via the matching linked wallet."""
+        with get_session() as session:
+            session.query(UserProfile).filter(UserProfile.wallet_address == _W_1908_LEGACY.lower()).delete()
+            session.add(
+                UserProfile(
+                    wallet_address=_W_1908_LEGACY.lower(),
+                    owner_user_id=None,
+                    display_name=_PRIVATE_1908["display_name"],
+                    interests='["Bonds", "FX"]',
+                    attribution=_PRIVATE_1908["attribution"],
+                )
+            )
+            session.commit()
+
+        other = client.get(f"/api/user/profile/{_W_1908_LEGACY}", cookies=_siwe_cookies(_W_1908_OTHER))
+        assert _private_values_in(other.text) == [], f"non-owner read leaked legacy answers: {other.text}"
+        assert other.status_code == 404
+
+        owner = client.get(f"/api/user/profile/{_W_1908_LEGACY}", cookies=_siwe_cookies(_W_1908_LEGACY))
+        assert owner.status_code == 200
+        assert owner.json()["interests"] == ["Bonds", "FX"]
+        assert owner.json()["attribution"] == _PRIVATE_1908["attribution"]
