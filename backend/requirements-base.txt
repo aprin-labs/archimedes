@@ -156,7 +156,14 @@ anthropic>=1.5.0
 # On-chain / Web3
 # web3 8 requires eth-abi>=6, so web3 and eth-abi move TOGETHER: bumping one
 # without the other is the ResolutionImpossible that failed #1869's CI.
-web3>=8.0.0
+# Cap <9 is explicit. Before web3 8, the eth-abi <6 cap was a de-facto web3 <8
+# ceiling (web3 8 needs eth-abi>=6); lifting it removed that ceiling, so web3
+# needs its own. chain/client.py subclasses web3's AsyncHTTPProvider
+# (BoundedAsyncHTTPProvider) and its docstrings lean on web3's session-manager
+# internals, so a web3 major must be its own reviewed bump, not a resolver pick.
+# Dependabot still proposes 9.x as a PR: it reads the latest release past the
+# cap and rewrites both bounds, as it did for numpy in #489 (<2.0 -> <3.0).
+web3>=8.0.0,<9
 eth-account>=0.14.0
 eth-utils>=6.0.0
 cryptography>=50.0.1

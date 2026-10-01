@@ -398,7 +398,7 @@ class BoundedAsyncHTTPProvider(AsyncHTTPProvider):
     rollout sat at 1/2 for its full 1200s budget while the serving task's event
     loop starved every other route.
 
-    What lives in that gap, in ``web3`` 7.16, on the path of every single async
+    What lives in that gap, in ``web3`` 7.16 and 8.0 alike, on the path of every single async
     RPC (``HTTPSessionManager.async_get_response_from_post_request`` →
     ``async_cache_and_return_session``)::
 
@@ -502,7 +502,7 @@ class BoundedAsyncHTTPProvider(AsyncHTTPProvider):
         Not chosen, and why — the other two options #1632 lists:
 
         * *Per-call sessions.* Sound in principle, but it pays a TCP+TLS handshake
-          on every JSON-RPC, and web3 7.16 caches by ``(loop id, endpoint)`` inside
+          on every JSON-RPC, and web3 (7.16 and 8.0) caches by ``(loop id, endpoint)`` inside
           ``HTTPSessionManager``, so getting there means fighting the library on
           the hot path to fix a shutdown-ordering bug.
         * *A dedicated never-closed session for strays.* Unsound as stated: you
