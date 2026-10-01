@@ -115,7 +115,9 @@ Independently of enforcement, disposable accounts are bounded by three layers:
    `X-Client-IP` cannot reach the auth service. **Stated exactly: since
    [#1908](https://github.com/aprin-labs/archimedes/issues/1908) nginx trusts the ALB's VPC
    CIDR plus CloudFront's origin-facing ranges, so this address is the viewer CloudFront
-   saw** — buckets are per viewer IP (viewers behind one NAT share one). The ranges are a
+   saw** — buckets are per viewer IPv4 address, or per IPv6 /64 (`ipv6Subnet: 64`; a host
+   can use any address in its /64, so a per-address key would let one caller rotate past
+   the limit), and viewers behind one NAT share one. The ranges are a
    generated, checked-in file (`nginx/cloudfront-origin-facing.conf`, refreshed by
    `scripts/refresh_cloudfront_origin_ranges.py`); a range missing from a stale copy falls
    back to that edge's shared bucket, not open. Until #1908 only the VPC was trusted and

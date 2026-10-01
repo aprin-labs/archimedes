@@ -879,8 +879,16 @@ export function createAuth({ database, env = process.env, mailer = createMailer(
       // value the FastAPI limiter and the daily generation cap already key on
       // via X-Real-IP. Since #1908 nginx trusts CloudFront's origin-facing
       // ranges as well as the ALB's VPC, so this is the VIEWER's address as
-      // CloudFront saw it: buckets are per viewer IP (viewers behind one NAT
-      // still share one). Say that, don't round it up to "per user".
+      // CloudFront saw it: buckets are per viewer IPv4 address, or per IPv6 /64
+      // (viewers behind one NAT still share one). Say that, don't round it up
+      // to "per user".
+      //
+      // ipv6Subnet: 64 is the library default (@better-auth/core normalizeIP),
+      // written out because it is a security setting, not a detail: a host can
+      // use any address in its /64, so a /128 key would let one IPv6 caller
+      // rotate through 2**64 buckets. The two backend limiters key IPv6 on the
+      // same /64 (backend/archimedes/services/client_ip.py); IPv4 stays the
+      // address. Pinned by the IPv6 rotation test in test/email-flows.test.js.
       //
       // Deliberately NOT trustedProxies: that would re-admit X-Forwarded-For
       // here and need a second copy of the CloudFront ranges nginx already
@@ -892,6 +900,7 @@ export function createAuth({ database, env = process.env, mailer = createMailer(
       // open.
       ipAddress: {
         ipAddressHeaders: ['x-client-ip'],
+        ipv6Subnet: 64,
       },
       useSecureCookies: production,
       defaultCookieAttributes: {

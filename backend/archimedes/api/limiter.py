@@ -17,27 +17,14 @@ The limiter is Redis-backed when ``REDIS_URL`` is available (production / ASG),
 falling back to in-memory storage for local dev and CI.
 """
 
-import ipaddress
 import logging
 import os
 
 from slowapi import Limiter
-from starlette.requests import Request
+
+from archimedes.services.client_ip import client_ip
 
 logger = logging.getLogger(__name__)
-
-
-def client_ip(request: Request) -> str:
-    """Use nginx-overwritten X-Real-IP, then socket peer; never trust X-Forwarded-For."""
-    candidates = (request.headers.get("x-real-ip"), request.client.host if request.client else None)
-    for candidate in candidates:
-        value = (candidate or "").strip()
-        try:
-            ipaddress.ip_address(value)
-        except ValueError:
-            continue
-        return value
-    return "unknown"
 
 
 _redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/1")
@@ -68,10 +55,12 @@ except Exception as exc:
 # Key on the REAL client IP, not slowapi's get_remote_address. Behind nginx,
 # request.client.host is the nginx peer (10.x inside the container), so
 # get_remote_address collapsed every caller into one shared bucket — per-IP
-# limits were effectively global. client_ip reads the nginx-set X-Real-IP
-# header (it overwrites any client-supplied value and is bound to the ALB CIDR
-# + CloudFront origin-facing ranges, so it is the viewer's address, #1908). It
-# deliberately does NOT trust X-Forwarded-For, whose first hop is spoofable.
+# limits were effectively global. client_ip (services/client_ip.py, shared with
+# the daily generation cap) reads the nginx-set X-Real-IP header (it overwrites
+# any client-supplied value and is bound to the ALB CIDR + CloudFront
+# origin-facing ranges, so it is the viewer's address, #1908). It deliberately
+# does NOT trust X-Forwarded-For, whose first hop is spoofable. IPv6 callers are
+# keyed on their /64, so one cannot dodge the limit by rotating addresses.
 limiter = Limiter(
     key_func=client_ip,
     storage_uri=_storage_uri,

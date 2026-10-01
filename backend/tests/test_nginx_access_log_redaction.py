@@ -15,7 +15,11 @@ with identical rules, declared on the server{} block so it REPLACES the stock
 http-level ``access_log``. These tests pin:
 
 * the format reads only the redacted variables, never the raw request/Referer;
-* it is the server's access log, and nothing re-adds an http-level one;
+* it is declared once at server{} level (parsed by block, not by position in the
+  file), nothing re-adds an http-level one, and no location logs with any other
+  format (``access_log <path>;`` with no format means the unredacted ``combined``);
+* limit_req rejections are logged below the stock error_log level, because each
+  error-log entry carries the raw request line and Referer;
 * the map rules, executed (PCRE named groups translated to Python), redact
   every real Better Auth/SPA token URL shape and leave ordinary query strings
   (``/api/strategies?limit=5``, ``/api/swap/quote?token_in=…``) alone;
@@ -180,16 +184,125 @@ def test_log_format_reads_only_the_redacted_variables() -> None:
     assert not raw, f"{FORMAT} still logs raw ${raw[0]}, which carries the auth tokens"
 
 
+def _directives_in_context(conf: str) -> list[tuple[tuple[str, ...], list[str]]]:
+    """Every directive in the fragment with the block path it sits in.
+
+    ``((), ["limit_req_zone", ...])`` is http level (this file is spliced into the
+    stock ``http {}``); ``(("server",), [...])`` is server level;
+    ``(("server", "location /api/auth/"), [...])`` is inside that location. A small
+    nginx tokenizer: quotes, backslash escapes, ``#`` comments, and the
+    ``${NGINX_*}`` envsubst placeholders the image renders at boot (a placeholder
+    that stands alone, like ``${NGINX_RESOLVER_LINE}``, is dropped).
+    """
+    out: list[tuple[tuple[str, ...], list[str]]] = []
+    stack: list[str] = []
+    words: list[str] = []
+    i, n = 0, len(conf)
+    while i < n:
+        c = conf[i]
+        if c.isspace():
+            i += 1
+        elif c == "#":
+            while i < n and conf[i] != "\n":
+                i += 1
+        elif c == ";":
+            out.append((tuple(stack), words))
+            words, i = [], i + 1
+        elif c == "{":
+            stack.append(" ".join(words))
+            words, i = [], i + 1
+        elif c == "}":
+            assert not words, f"unterminated directive before '}}': {words}"
+            stack.pop()
+            i += 1
+        else:
+            word = []
+            while i < n and not conf[i].isspace() and conf[i] not in ";{}":
+                if conf[i] in "\"'":
+                    quote, j = conf[i], i + 1
+                    while conf[j] != quote:
+                        j += 2 if conf[j] == "\\" else 1
+                    word.append(conf[i + 1 : j])
+                    i = j + 1
+                elif conf.startswith("${", i):
+                    j = conf.index("}", i)
+                    word.append(conf[i : j + 1])
+                    i = j + 1
+                else:
+                    word.append(conf[i])
+                    i += 1
+            token = "".join(word)
+            if not (not words and re.fullmatch(r"\$\{\w+\}", token)):
+                words.append(token)
+    assert not stack, f"unclosed block(s): {stack}"
+    return out
+
+
+def test_the_tokenizer_sees_the_whole_server_block() -> None:
+    """Anti-vacuity for the two tests below: the parse reaches every location."""
+    directives = _directives_in_context(_conf())
+    locations = {ctx[1] for ctx, _ in directives if len(ctx) >= 2 and ctx[0] == "server"}
+    assert {"location /api/auth/", "location = /nginx-health", "location /", "location ^~ /app"} <= locations
+    assert ((), ["limit_req_zone", "$binary_remote_addr", "zone=api_write:10m", "rate=20r/m"]) in directives
+    assert [ctx for ctx, args in directives if args[0] == "server_name"] == [("server",)]
+
+
 def test_server_access_log_uses_the_redacted_format_and_replaces_the_stock_one() -> None:
-    conf = _conf()
-    server = re.search(r"^server\s*\{", conf, re.M)
-    assert server
-    http_part, server_part = conf[: server.start()], conf[server.start() :]
-    directives = lambda text: [ln.strip() for ln in text.splitlines() if ln.strip().startswith("access_log")]  # noqa: E731
-    assert not directives(http_part), (
+    """One redacted access_log at SERVER level, and nothing anywhere logs unredacted.
+
+    Server level, not merely "first in the file": an access_log inside one
+    location applies to that location only, and every other location would keep
+    inheriting the stock http-level ``access_log … main``. Inside a location the
+    only acceptable forms are ``off`` and this same format; ``access_log <path>;``
+    with no format means ``combined``, which prints the raw request and Referer.
+    """
+    logs = [(ctx, args) for ctx, args in _directives_in_context(_conf()) if args[0] == "access_log"]
+    assert not [args for ctx, args in logs if ctx == ()], (
         "an http-level access_log in this conf.d fragment ADDS to the base image's `access_log … main`, "
         "so every request would also be logged unredacted"
     )
-    server_logs = directives(server_part)
-    assert server_logs[0] == f"access_log /var/log/nginx/access.log {FORMAT};"
-    assert all(d == "access_log off;" for d in server_logs[1:]), server_logs
+    assert [args for ctx, args in logs if ctx == ("server",)] == [
+        ["access_log", "/var/log/nginx/access.log", FORMAT]
+    ], (
+        "the redacted access_log must be declared once at server{} level, so it replaces the stock one "
+        "for every location"
+    )
+    nested = [(ctx, args) for ctx, args in logs if len(ctx) > 1]
+    for ctx, args in nested:
+        assert args[1] == "off" or (len(args) >= 3 and args[2] == FORMAT), (
+            f"`{' '.join(args)}` in `{ctx[-1]}` logs that location with "
+            f"{args[2] if len(args) >= 3 else 'the default `combined`'} format, which prints the raw "
+            "request line and Referer"
+        )
+    assert [ctx[-1] for ctx, _ in nested] == ["location = /nginx-health"]
+
+
+def test_limit_req_rejections_stay_out_of_the_error_log() -> None:
+    """A limit_req rejection is an error-log entry carrying the raw request line and Referer.
+
+    The stock image's error_log is ``notice``; rejections logged at ``info`` fall
+    below it (checked in the built 1.31.2 image for the PR). Every location that
+    applies ``limit_req`` must therefore resolve ``limit_req_log_level`` to
+    ``info`` through location → server → http inheritance, and nothing in this
+    fragment may lower an ``error_log`` to ``info``/``debug``, which would bring
+    the entries back.
+    """
+    directives = _directives_in_context(_conf())
+
+    def effective(ctx: tuple[str, ...]) -> str | None:
+        for depth in range(len(ctx), -1, -1):
+            found = [args[1] for c, args in directives if c == ctx[:depth] and args[0] == "limit_req_log_level"]
+            if found:
+                return found[-1]
+        return None  # nginx default: error
+
+    limited = sorted({ctx for ctx, args in directives if args[0] == "limit_req"})
+    assert len(limited) >= 4, limited  # /api/auth/, /api/, the SSE stream, /docs, /openapi.json
+    for ctx in limited:
+        assert effective(ctx) == "info", (
+            f"`{ctx[-1]}` applies limit_req but its rejections are logged at {effective(ctx) or 'error (default)'}, "
+            "at or above the stock error_log level `notice`: each one would write the raw request line and "
+            "Referer (a verify JWT, a reset token) to CloudWatch"
+        )
+    lowered = [args for _, args in directives if args[0] == "error_log" and args[-1] in {"info", "debug"}]
+    assert not lowered, lowered

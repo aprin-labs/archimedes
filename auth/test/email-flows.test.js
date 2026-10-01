@@ -375,6 +375,8 @@ test('a refused sign-in does not silently re-send verification mail — the user
 //                     WITH the multi-hop X-Forwarded-For production sends.
 //   2. adversarial  — a caller rotating X-Forwarded-For, and forging its own
 //                     X-Client-IP as an XFF token, buys no extra bucket.
+//   2b. adversarial — an IPv6 viewer rotating its own address inside its /64
+//                     buys no extra bucket (ipv6Subnet: 64, #1908).
 //   3. adversarial  — nginx OVERWRITES a client-supplied X-Client-IP, so a
 //                     spoof from a non-edge source never reaches this process
 //                     (source-pinned against nginx/nginx.conf).
@@ -459,6 +461,34 @@ test('SECURITY: forging X-Forwarded-For buys no extra bucket — the key follows
     429,
     'rotating X-Forwarded-For minted a fresh bucket — a spoofable token is being trusted (#1691 anti-goal)',
   )
+})
+
+test('an IPv6 viewer rotating addresses inside its /64 gets no extra bucket; another /64 and IPv4 neighbours do (#1908)', async () => {
+  const { auth } = await harness({ NODE_ENV: 'production' })
+  // Since #1908 X-Client-IP is the viewer's own address, and for an IPv6
+  // viewer that is a /128 the host picks from its /64. auth.js sets
+  // advanced.ipAddress.ipv6Subnet to 64, the prefix the two backend limiters
+  // key on too (backend/archimedes/services/client_ip.py).
+  //
+  // MUTATION GUARD: set ipv6Subnet to 128 and the fourth request below, from a
+  // fresh address in the same /64, is a 200 instead of a 429.
+  const v6 = address => ({ 'x-client-ip': address, 'x-forwarded-for': MULTI_HOP_XFF(address) })
+  for (let i = 1; i <= 3; i += 1) {
+    assert.equal(await signUpOverHttp(auth, `v6-a${i}@example.com`, v6(`2001:db8:1:2::${i}`)), 200)
+  }
+  assert.equal(
+    await signUpOverHttp(auth, 'v6-a4@example.com', v6('2001:db8:1:2:ffff:ffff:ffff:fffe')),
+    429,
+    'a new address inside the same /64 minted a fresh bucket — IPv6 is keyed per /128',
+  )
+  assert.equal(await signUpOverHttp(auth, 'v6-b1@example.com', v6('2001:db8:1:3::1')), 200, 'a different /64 shared the bucket')
+
+  // IPv4 is the address, never widened: two neighbours in one /24 are two callers.
+  for (let i = 1; i <= 3; i += 1) {
+    assert.equal(await signUpOverHttp(auth, `v4-a${i}@example.com`, v6('203.0.113.7')), 200)
+  }
+  assert.equal(await signUpOverHttp(auth, 'v4-a4@example.com', v6('203.0.113.7')), 429)
+  assert.equal(await signUpOverHttp(auth, 'v4-b1@example.com', v6('203.0.113.8')), 200, 'IPv4 neighbours shared a bucket')
 })
 
 test('SECURITY: nginx SETS X-Client-IP, so a spoof from a non-edge source never reaches this process', async () => {
