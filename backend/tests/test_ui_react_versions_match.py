@@ -126,24 +126,179 @@ def test_ui_ships_react_and_react_dom_at_the_same_version() -> None:
     assert not problems, "\n".join(problems)
 
 
-def test_dependabot_bumps_the_four_react_packages_in_one_pr() -> None:
-    """The upstream half: #1872 was a Dependabot PR that moved react alone.
+# ── Dependabot: the four must land in ONE group, for every kind of bump ──
+#
+# A model of Dependabot's documented assignment rules (docs.github.com, "Optimizing
+# PR creation for Dependabot version updates" and the dependabot.yml reference),
+# limited to the keys that can split the four:
+#   * per update type (`applies-to`, default version-updates), a dependency joins
+#     the FIRST group, in file order, whose `patterns` (default: everything) match
+#     its name, whose `exclude-patterns` do not, whose `dependency-type`
+#     (production / development) is its own, and whose `update-types`
+#     (major / minor / patch) include this bump; no group = a PR of its own;
+#   * an `ignore` rule naming some of the four stops their bumps, not the others';
+#   * an `allow` list, when present, is the only set Dependabot updates at all.
+# Patterns use `*` as the only wildcard.
 
-    Dependabot assigns a dependency to the first group whose patterns match,
-    per update type, so each type needs one group naming all four.
-    """
+SEMVER_LEVELS = ("major", "minor", "patch")
+UPDATE_TYPES = ("version-updates", "security-updates")
+
+
+def _dependabot_glob(pattern: str, name: str) -> bool:
+    regex = ".*".join(re.escape(part) for part in str(pattern).split("*"))
+    return re.fullmatch(regex, name, flags=re.IGNORECASE) is not None
+
+
+def dependabot_group_for(update: dict, package: str, dep_type: str, applies_to: str, level: str) -> str | None:
+    """The group Dependabot puts this bump of ``package`` in, or ``None`` (its own PR)."""
+    for name, group in (update.get("groups") or {}).items():
+        group = group or {}
+        if group.get("applies-to", "version-updates") != applies_to:
+            continue
+        if "dependency-type" in group and group["dependency-type"] != dep_type:
+            continue
+        if "update-types" in group and level not in group["update-types"]:
+            continue
+        if not any(_dependabot_glob(p, package) for p in group.get("patterns", ["*"])):
+            continue
+        if any(_dependabot_glob(p, package) for p in group.get("exclude-patterns", [])):
+            continue
+        return name
+    return None
+
+
+def _allowed(update: dict, package: str, dep_type: str) -> bool:
+    rules = update.get("allow")
+    if not rules:
+        return True
+    for rule in rules:
+        if "dependency-name" in rule and not _dependabot_glob(rule["dependency-name"], package):
+            continue
+        if rule.get("dependency-type", "all") in ("all", "direct", dep_type):
+            return True
+    return False
+
+
+def react_grouping_problems(config: dict, dep_types: dict[str, str]) -> list[str]:
+    """Every way ``dependabot.yml`` can open a PR that moves some of the four but not all."""
+    ui = [
+        u
+        for u in config.get("updates", [])
+        if u.get("package-ecosystem") == "npm" and "/ui" in [u.get("directory"), *(u.get("directories") or [])]
+    ]
+    if len(ui) != 1:
+        return [f"expected exactly one npm update entry for /ui, found {len(ui)}"]
+    update = ui[0]
+    problems: list[str] = []
+    for package, dep_type in dep_types.items():
+        if not _allowed(update, package, dep_type):
+            problems.append(f"`allow` leaves {package} out: it is never bumped, so the others move without it")
+    for rule in update.get("ignore") or []:
+        hit = sorted(p for p in dep_types if _dependabot_glob(rule.get("dependency-name", ""), p))
+        if hit and (len(hit) != len(dep_types) or "versions" in rule):
+            problems.append(f"ignore rule {rule} holds back {hit} while the rest of the four still move")
+    for applies_to in UPDATE_TYPES:
+        for level in SEMVER_LEVELS:
+            assigned = {p: dependabot_group_for(update, p, t, applies_to, level) for p, t in dep_types.items()}
+            if None in assigned.values() or len(set(assigned.values())) != 1:
+                problems.append(f"{applies_to}, {level} bump: the four land in {assigned} (None = a PR of its own)")
+    return problems
+
+
+def _ui_dep_types() -> dict[str, str]:
+    manifest = json.loads((UI_DIR / "package.json").read_text(encoding="utf-8"))
+    types = {}
+    for name in (*RUNTIME_PAIR, *TYPES_PAIR):
+        types[name] = "production" if name in manifest.get("dependencies", {}) else "development"
+    return types
+
+
+def test_dependabot_bumps_the_four_react_packages_in_one_pr() -> None:
+    """The upstream half: #1872 was a Dependabot PR that moved react alone."""
     config = yaml.safe_load(DEPENDABOT_YML.read_text(encoding="utf-8"))
-    ui = [u for u in config["updates"] if u["package-ecosystem"] == "npm" and u["directory"] == "/ui"]
-    assert len(ui) == 1, ui
-    groups = ui[0].get("groups", {})
-    wanted = {*RUNTIME_PAIR, *TYPES_PAIR}
-    for update_type in ("version-updates", "security-updates"):
-        covering = [
-            name
-            for name, group in groups.items()
-            if group.get("applies-to", "version-updates") == update_type and wanted <= set(group.get("patterns", []))
-        ]
-        assert covering, f"no {update_type} group in {DEPENDABOT_YML.name} names all of {sorted(wanted)}: {groups}"
+    dep_types = _ui_dep_types()
+    assert dep_types == {
+        "react": "production",
+        "react-dom": "production",
+        "@types/react": "development",
+        "@types/react-dom": "development",
+    }, dep_types
+    problems = react_grouping_problems(config, dep_types)
+    assert not problems, "\n".join(problems)
+
+
+def _dependabot(groups: dict, **update_keys: object) -> dict:
+    return {
+        "version": 2,
+        "updates": [{"package-ecosystem": "npm", "directory": "/ui", "groups": groups, **update_keys}],
+    }
+
+
+_FOUR = ["react", "react-dom", "@types/react", "@types/react-dom"]
+_GOOD_GROUPS = {
+    "react": {"applies-to": "version-updates", "patterns": _FOUR},
+    "react-security": {"applies-to": "security-updates", "patterns": _FOUR},
+}
+_DEP_TYPES = {
+    "react": "production",
+    "react-dom": "production",
+    "@types/react": "development",
+    "@types/react-dom": "development",
+}
+
+
+class TestTheGroupingCheckRejects:
+    """react_grouping_problems, fed configs that split the four."""
+
+    @pytest.mark.parametrize(
+        ("label", "config"),
+        [
+            # The #1872 shape: react-dom is not in the group, so it moves alone.
+            ("react-dom dropped", _dependabot({**_GOOD_GROUPS, "react": {"patterns": _FOUR[:1] + _FOUR[2:]}})),
+            # First match wins: an earlier group takes react + react-dom, so the
+            # types land in `react` and the runtime pair in another PR. A superset
+            # check of the `react` group's patterns passes this one.
+            ("earlier group", _dependabot({"runtime": {"patterns": ["react", "react-dom"]}, **_GOOD_GROUPS})),
+            ("excluded", _dependabot({**_GOOD_GROUPS, "react": {"patterns": _FOUR, "exclude-patterns": ["@types/*"]}})),
+            ("prod only", _dependabot({**_GOOD_GROUPS, "react": {"patterns": _FOUR, "dependency-type": "production"}})),
+            ("no majors", _dependabot({**_GOOD_GROUPS, "react": {"patterns": _FOUR, "update-types": ["minor"]}})),
+            ("no security group", _dependabot({"react": _GOOD_GROUPS["react"]})),
+            (
+                "ignored",
+                _dependabot(
+                    _GOOD_GROUPS,
+                    ignore=[{"dependency-name": "react-dom", "update-types": ["version-update:semver-minor"]}],
+                ),
+            ),
+            ("version-pinned", _dependabot(_GOOD_GROUPS, ignore=[{"dependency-name": "*", "versions": [">=20"]}])),
+            ("allow-listed", _dependabot(_GOOD_GROUPS, allow=[{"dependency-name": "react"}])),
+            ("two /ui entries", {"updates": [_dependabot(_GOOD_GROUPS)["updates"][0]] * 2}),
+        ],
+    )
+    def test_a_split_is_named(self, label: str, config: dict) -> None:
+        assert react_grouping_problems(config, _DEP_TYPES), label
+
+    @pytest.mark.parametrize(
+        ("label", "config"),
+        [
+            ("as committed", _dependabot(_GOOD_GROUPS)),
+            (
+                "wildcards",
+                _dependabot({"r": {"patterns": ["react*", "@types/react*"]}, "s": {"applies-to": "security-updates"}}),
+            ),
+            ("one catch-all group first", _dependabot({"all": {"patterns": ["*"]}, **_GOOD_GROUPS})),
+            (
+                "an ignore rule that holds all four alike",
+                _dependabot(
+                    _GOOD_GROUPS,
+                    ignore=[{"dependency-name": "*react*", "update-types": ["version-update:semver-major"]}],
+                ),
+            ),
+            ("allow all direct deps", _dependabot(_GOOD_GROUPS, allow=[{"dependency-type": "direct"}])),
+        ],
+    )
+    def test_and_accepts_configs_that_keep_them_together(self, label: str, config: dict) -> None:
+        assert react_grouping_problems(config, _DEP_TYPES) == [], label
 
 
 def _tree(
