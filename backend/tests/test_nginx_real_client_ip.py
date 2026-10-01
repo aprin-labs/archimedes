@@ -105,7 +105,7 @@ def resolve_remote_addr(peer: str, xff: str, trusted: list, recursive: bool = Tr
     Not a trusted peer → the peer. Otherwise walk X-Forwarded-For right to left:
     the first hop that is not trusted (or any hop at all, when not recursive) is
     the answer; if every hop is trusted, the leftmost one is. An unparsable hop
-    declines, leaving the peer.
+    stops the walk on the last address already accepted (the peer, if none).
     """
 
     def is_trusted(addr) -> bool:
@@ -119,7 +119,7 @@ def resolve_remote_addr(peer: str, xff: str, trusted: list, recursive: bool = Tr
         try:
             addr = ipaddress.ip_address(hop)
         except ValueError:
-            return peer
+            return answer
         answer = hop
         if not (recursive and is_trusted(addr)):
             return answer
@@ -164,6 +164,19 @@ def test_guard_an_over_broad_trust_set_would_be_caught() -> None:
 def test_a_peer_outside_the_trust_set_is_taken_at_face_value() -> None:
     """realip only acts for a trusted socket peer; anything else keeps its own address."""
     assert resolve_remote_addr(ATTACKER, f"{FORGED}", trusted_networks()) == ATTACKER
+
+
+@pytest.mark.parametrize(
+    ("xff", "expected"),
+    [
+        (f"{VIEWER}, garbage, {CLOUDFRONT_HOP}", CLOUDFRONT_HOP),
+        (f"garbage, {CLOUDFRONT_HOP}", CLOUDFRONT_HOP),
+        ("garbage", ALB_PEER),
+    ],
+)
+def test_an_unparsable_hop_stops_the_walk_on_the_last_accepted_address(xff: str, expected: str) -> None:
+    """Fidelity check for the mirror: these are the answers nginx 1.31.2 itself gave (PR body)."""
+    assert resolve_remote_addr(ALB_PEER, xff, trusted_networks(), recursive=recursive_enabled()) == expected
 
 
 def test_nginx_conf_wires_the_include_where_the_dockerfile_installs_it() -> None:
