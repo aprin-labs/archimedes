@@ -368,7 +368,7 @@ async function loadOnce(target) {
     // first paint or by a lazy chunk still counts. A crash card ends the wait
     // at once. A page whose #root is still empty MOUNT_MS after load is blank;
     // one still empty SETTLE_MS after an uncaught error will not recover.
-    let root = { present: false, children: 0, text: 0, crashed: null };
+    let root; // assigned by the first probe; the loop always runs at least once
     let renderedAt = null;
     for (;;) {
       const { result } = await send('Runtime.evaluate', { expression: ROOT_PROBE, returnByValue: true }, sessionId);
