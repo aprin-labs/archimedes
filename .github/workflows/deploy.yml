@@ -28,7 +28,9 @@
 #                    boots each in a throwaway container and curls /health
 #                    (backend directly; nginx through its reverse-proxy path,
 #                    which also exercises the docker-network DNS resolution to
-#                    a `backend` container) — a bad image is caught HERE,
+#                    a `backend` container), then renders / in headless
+#                    Chrome (a blank SPA is a bad image too: React #527,
+#                    2026-09-25) — a bad image is caught HERE,
 #                    before it ever reaches ECR or a serving host — then tags
 #                    both <commit-sha> + latest and pushes to ECR.
 #   migrate          (needs: build-and-push) Runs `alembic upgrade head` as a
@@ -439,6 +441,24 @@ jobs:
           curl -fsS -b /tmp/auth-cookie http://localhost:18080/app >/dev/null
           echo "nginx public + auth + protected app boundary OK"
 
+      - name: Set up Node 22 (for the SPA render check)
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Render the SPA in headless Chrome (blank-page gate)
+        # From 2026-09-25 to 2026-10-01 prod served a blank page: #1872 bumped
+        # react without react-dom, the bundle threw React error #527 at load
+        # and never mounted, and every check above stayed green — a curl of /
+        # gets a valid index.html either way. Only executing the bundle sees
+        # it. This loads / from nginx-validate (the exact image pushed below)
+        # in the runner's preinstalled Google Chrome and fails on any uncaught
+        # startup exception or an empty #root. The script caps itself at 60s;
+        # it and its tests: .github/scripts/spa_render_check.mjs,
+        # backend/tests/test_spa_render_check.py.
+        timeout-minutes: 2
+        run: node .github/scripts/spa_render_check.mjs http://localhost:18080/
+
       - name: Teardown validation containers
         if: always()
         run: |
@@ -662,7 +682,8 @@ jobs:
     # and the CloudFront invalidation wait — otherwise the job timeout silently
     # becomes the real budget and #1532 returns with a bigger number. 30 min
     # covers the 20-min default budget + the probe + the invalidation wait
-    # with margin. The probe is ~35s when the app is healthy and hard-caps its
+    # (+ the <=60s SPA render check after it) with margin. The probe is ~35s
+    # when the app is healthy and hard-caps its
     # own wall clock at MAX_TOTAL_SECONDS (300s, see
     # .github/scripts/post_rollout_probe.sh). That is a REAL ceiling, not a
     # check between samples: the script starts no request whose deadline
@@ -834,11 +855,13 @@ jobs:
           # A budget larger than the job's own timeout is fiction: the outer
           # timeout would kill the job first, with no verdict — exactly #1532's
           # bug wearing a bigger number. Reserve 7 min for the post-rollout
-          # probe + the CloudFront invalidation wait that follow this step.
+          # probe + the CloudFront invalidation wait + the SPA render check
+          # that follow this step.
           # The probe can consume at most MAX_TOTAL_SECONDS=300s of that 420s
-          # (a hard wall-clock ceiling, see .github/scripts/post_rollout_probe.sh);
-          # the rest is the invalidation wait's, and a test asserts the probe's
-          # ceiling stays strictly smaller than this reserve.
+          # (a hard wall-clock ceiling, see .github/scripts/post_rollout_probe.sh)
+          # and the SPA render check at most 60s (.github/scripts/spa_render_check.mjs);
+          # the rest is the invalidation wait's, and tests assert those
+          # ceilings stay strictly smaller than this reserve.
           JOB_TIMEOUT_SECONDS=$(( DEPLOY_JOB_TIMEOUT_MINUTES * 60 ))
           if [ "$BUDGET" -gt $(( JOB_TIMEOUT_SECONDS - 420 )) ]; then
             echo "::error::DEPLOY_ROLLOUT_BUDGET_SECONDS=${BUDGET}s leaves under 7 minutes of the deploy-ecs job's ${DEPLOY_JOB_TIMEOUT_MINUTES}-minute timeout for the answer probe and the CloudFront invalidation. Raise timeout-minutes on the deploy-ecs job (and DEPLOY_JOB_TIMEOUT_MINUTES here) alongside the budget."
@@ -1118,3 +1141,23 @@ jobs:
           else
             echo "::warning::CloudFront invalidation $INVALIDATION_ID did not report completion within the CLI waiter's timeout — the ECS deploy above already succeeded and IS serving the new image; this does not fail the deploy. Check status manually: aws cloudfront get-invalidation --distribution-id $CLOUDFRONT_DISTRIBUTION_ID --id $INVALIDATION_ID"
           fi
+
+      - name: Set up Node 22 (for the post-rollout render check)
+        if: ${{ !cancelled() && steps.rollout.outputs.rollout == 'completed' }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Render the live SPA in headless Chrome (post-rollout smoke)
+        # The build-and-push render gate, re-run against prod through
+        # CloudFront. It runs AFTER the invalidation so it loads the index.html
+        # this deploy shipped, not the edge's cached one. A blank page that
+        # slips past the pre-push gate (a CDN, asset-path or env-only fault)
+        # becomes a red deploy run instead of a silent blank site, which is
+        # what 2026-09-25 to 2026-10-01 was: /api/health green, / blank. Same
+        # gate as the invalidation, so it still runs when the answer probe
+        # failed — what a user sees is a separate verdict. Capped at 60s by
+        # the script, inside the tail reserve the poll step holds back.
+        if: ${{ !cancelled() && steps.rollout.outputs.rollout == 'completed' }}
+        timeout-minutes: 2
+        run: node .github/scripts/spa_render_check.mjs https://archimedes-arc.com/

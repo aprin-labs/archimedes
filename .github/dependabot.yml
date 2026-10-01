@@ -16,6 +16,20 @@ updates:
       - frontend
     commit-message:
       prefix: "[deps][frontend]"
+    groups:
+      # react-dom throws React error #527 at load when its version differs
+      # from react's by anything, patch included, and npm's peer range does
+      # not stop it. #1872 bumped react alone and prod rendered a blank page
+      # from 2026-09-25 to 2026-10-01. These four move in ONE PR, always;
+      # backend/tests/test_ui_react_versions_match.py fails any tree that
+      # splits them anyway. One group per update type, because a group
+      # applies to version updates OR security updates, not both.
+      react:
+        applies-to: version-updates
+        patterns: ["react", "react-dom", "@types/react", "@types/react-dom"]
+      react-security:
+        applies-to: security-updates
+        patterns: ["react", "react-dom", "@types/react", "@types/react-dom"]
 
   # Backend — pip (FastAPI + Python deps)
   - package-ecosystem: pip
