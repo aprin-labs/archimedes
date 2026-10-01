@@ -30,11 +30,13 @@ recorded in the file). Every vector must stay byte-identical:
 * ``events`` -- the four events the backend decodes with ``process_log``
   (``TraceCommitted``, ``TracePublished``, ``TraceRevealed``, ``VaultCreated``).
 
-Argument values are not stored: ``_gen`` derives them from a SHA-256 of the
-vector's id, so the same id always yields the same values. Each vector is checked
-in both directions (values -> golden hex, and golden hex -> values), and the whole
-set is run twice in interleaved order so the second pass goes through eth-abi
-6's warm encoder/decoder cache with different values for the same type tuple.
+Argument values are not in the fixture. The direct cases list theirs explicitly
+below; function and event values come from ``_gen``, a SHA-256 of the signature,
+so the same signature always yields the same values. Encodings are checked values
+-> golden hex, and decodings golden hex -> values (direct vectors, call results,
+events). The direct set is then re-run in interleaved order (forward, reversed,
+forward), so later passes go through eth-abi 6's warm encoder/decoder cache with
+different values for the same type tuple.
 
 Hermetic: no RPC, no chain, no network. ``build_transaction`` gets every field it
 would otherwise look up, and the provider raises if anything asks it for one.
