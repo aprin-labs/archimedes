@@ -1,6 +1,4 @@
-# Archimedes docs site — mkdocs-material config. Builds the existing docs/ tree
-# plus the agent-generated openwiki/ tree as-is; no content was moved or
-# rewritten to make this file (#1381).
+# Archimedes docs site — mkdocs-material config.
 #
 # The built site is served from our own S3 + CloudFront at the site_url below
 # (docs-site/infra/main.tf, issue #1634 — not GitHub Pages). See
@@ -10,25 +8,76 @@
 #
 # site_url is the canonical host and is not free to drift: ui/test/docs-link.test.js
 # asserts the product's Docs links point at the same host.
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# THE NAV IS THE ALLOW-LIST. PUBLICATION IS DEFAULT-DENY (#1751).
+#
+# Removing a page from the nav used not to take it off the site: six pages with
+# no nav entry were verified returning HTTP 200 on 2026-09-01, and /robots.txt
+# is 404, so all of it was crawlable. `exclude_docs` fixed that page by page —
+# a deny-list, which only ever catches the files someone already thought of, so
+# a NEW docs/runbooks/*.md or docs/api/*.md published the day it was committed.
+#
+# It is inverted now. `.github/scripts/mkdocs_hooks.py` (`deny_unlisted`) keeps a
+# file under docs/ only if THIS nav names it or `not_in_nav` allow-lists it, and
+# marks everything else excluded — off the site — with a WARNING that
+# `mkdocs build --strict` fails on. So the three publication controls are:
+#
+#   nav:           publishes a page, and lists it.
+#   not_in_nav:    publishes a file without a nav entry (the site's own assets).
+#   exclude_docs:  states that a file is internal — it is never built.
+#
+# A file in none of the three does not publish, and turns the build red until
+# somebody says which of the three it is.
+#
+# Nav LABELS are the product's language; the PATHS under them are unchanged.
+# docs/CONVENTIONS.md § 2 — "The slug is a stable identifier — other docs, ADRs,
+# and PR descriptions link to it." A rename here is a label change, never a
+# `git mv`, so no inbound link in the repo or on GitHub breaks.
+# ═══════════════════════════════════════════════════════════════════════════
 
 site_name: Archimedes
 site_url: https://docs.archimedes-arc.com
-repo_url: https://github.com/a-apin/archimedes
-repo_name: a-apin/archimedes
+# One sentence, and it is the identity line: it fills <meta name="description">
+# and is what every Slack/X/Discord unfurl of this site shows. The head carried
+# only charset/viewport/generator before, so every unfurl was a bare "Archimedes".
+site_description: "Portfolio strategy, under scrutiny — research, rigor, proof. How Archimedes generates strategies, gates them, and shows the work."
+repo_url: https://github.com/aprin-labs/archimedes
+repo_name: aprin-labs/archimedes
 edit_uri: edit/main/docs/
+copyright: "© 2026 Aprin Labs — the Unlicense (public domain)."
 
 docs_dir: docs
 
 theme:
   name: material
+  # Only the 404 page is overridden — see docs-site/overrides/404.html. This PR
+  # takes ~90 URLs off the site, so the page a stale link lands on has to say
+  # where the content went instead of rendering a bare "404 - Not found".
+  custom_dir: docs-site/overrides
+  logo: assets/logo.svg
+  favicon: assets/favicon.png
+  # Matches the product surface (ui/src/App.css § .public-site: --sans is
+  # "IBM Plex Sans", --mono is "IBM Plex Mono"), so the docs and the app read as
+  # one surface rather than as a stock theme parked next to a designed product.
+  font:
+    text: IBM Plex Sans
+    code: IBM Plex Mono
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
+      # Near-black chrome + the product's gold accent (ui/src/App.css
+      # --canvas #09090b, --accent #d4a853). Default indigo is the visual tell
+      # that nobody configured the theme.
+      primary: black
+      accent: amber
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
+      primary: black
+      accent: amber
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -37,17 +86,82 @@ theme:
     - navigation.tracking
     - navigation.top
     - navigation.indexes
+    # Seven top-level sections move into the header instead of stacking in one
+    # vertical rail; the left rail then shows only the section you are in.
+    - navigation.tabs
+    - navigation.tabs.sticky
+    # Second-level groups render as headed blocks rather than another accordion.
+    - navigation.sections
+    # Without this the whole tree is inlined into every page — the live
+    # /index.html was 141,005 bytes on 2026-09-01, mostly repeated sidebar.
+    - navigation.prune
+    - navigation.footer
+    - toc.follow
     - search.suggest
     - search.highlight
     - content.code.copy
     - content.action.edit
+    - content.action.view
+
+# `search` is mkdocs' default, but the key stops defaulting the moment it is
+# declared — so it must be listed explicitly beside the second plugin.
+#
+# git-revision-date-localized replaces a hand-typed freshness stamp with a real
+# one: docs/README.md carried "Last rebuilt 2026-07-28" in body prose while the
+# site itself was current. `fallback_to_build_date: false` is the honest
+# setting — a page with no git history gets no date rather than today's.
+# It needs full history: .github/workflows/docs-site.yml checks out with
+# `fetch-depth: 0` for this reason.
+plugins:
+  - search
+  - git-revision-date-localized:
+      enable_creation_date: false
+      fallback_to_build_date: false
 
 markdown_extensions:
   - toc:
       permalink: true
   - tables
-  - fenced_code
   - admonition
+  - attr_list
+  - md_in_html
+  - def_list
+  - footnotes
+  # superfences REPLACES fenced_code. It is the only change that turns nine
+  # pages of raw grey ```mermaid text into diagrams — verified broken before
+  # this: the built architectural-principles page emitted
+  # `<pre><code class="language-mermaid">`. mkdocs-material bundles the mermaid
+  # runtime for exactly this fence config, so no extra_javascript is needed.
+  #
+  # The `!!python/name:` tag is mkdocs-material's documented way to name the
+  # formatter. `yaml.safe_load` cannot construct it, so the two suites that
+  # parse this file (backend/tests/test_docs_site.py,
+  # backend/tests/test_local_mode_contract.py) load it with a SafeLoader that
+  # tolerates the tag. ui/test/docs-link.test.js reads site_url by regex and is
+  # unaffected.
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+extra:
+  social:
+    - icon: material/web
+      link: https://archimedes-arc.com
+      name: The live product — Arc public testnet
+    - icon: fontawesome/brands/github
+      link: https://github.com/aprin-labs/archimedes
+      name: Source on GitHub — the Unlicense
 
 # Build hooks — see the module docstring for the full reasoning.
 #   1. mounts the agent-generated openwiki/ tree (it lives outside docs_dir,
@@ -57,6 +171,8 @@ markdown_extensions:
 #      URLs. Those links are correct on GitHub and are already gated there by
 #      docs-gate.yml's docs_links.py; they simply cannot resolve inside a site
 #      rooted at docs/. Committed markdown is never modified.
+#   3. fixes the edit pencil for the mounted openwiki/ pages, whose source is
+#      NOT under docs/ and whose edit_uri-derived URL therefore 404s.
 hooks:
   - .github/scripts/mkdocs_hooks.py
 
@@ -67,7 +183,7 @@ hooks:
 watch:
   - openwiki
 
-# `mkdocs build --strict` is now the build command (here and in
+# `mkdocs build --strict` is the build command (here and in
 # .github/workflows/docs-site.yml), and it is clean. It was previously
 # rejected because ~300 WARNINGs were produced by correct out-of-docs_dir
 # links; the hook above removes that entire class by repointing them at
@@ -78,192 +194,350 @@ watch:
 # § "mkdocs --strict is the gate".
 
 nav:
-  - Home: README.md
+  # ── 1 ── Everyone, first visit.
+  - Start here:
+      - Archimedes documentation: index.md
+      # TODO(PR 3): the four first-visit pages land with their own PR. Rows are
+      # written out here so the IA is reviewable now and admitting each page is
+      # one uncommented line — `mkdocs build --strict` fails on a nav entry
+      # whose file does not exist, so they cannot be uncommented early.
+      # - Your first strategy in 10 minutes: start/quickstart.md
+      # - What ships today — and what it will not do: start/what-ships-today.md
+      # - What a generation costs: start/pricing-and-limits.md
+      # - Glossary: start/glossary.md
 
-  - Architecture — start here:
-      - architecture.md
-      - reference/file-tree.md
-      - database-architecture.md
-      - deployment.md
-      - local-vs-prod.md
-      - architectural-principles.md
-      - anti-features.md
+  # ── 2 ── The shipped spine, in the order it happens on prod:
+  #         generate → rigor gate → explore → paper trade.
+  #         Nothing in this section is roadmap.
+  - Use Archimedes:
+      - The journey, end to end: user-stories.md
+      - Generate a strategy:
+          - Writing a brief that works: writing-a-brief.md
+          - What a brief is rejected for, and why: brief-guidelines.md
+          - What you can build over — the asset universe: asset-universe.md
+          - Inside a generation run — the debate society: specs/multi-agent-debate-spec.md
+          - Why a strategy fuses several papers: specs/strategy-fusion-spec.md
+      - Read the verdict:
+          # TODO(PR 3): - What your verdict means — pass, fail, pending, degenerate: use/reading-a-verdict.md
+          - Reading a passport adversarially: quant/backtest-interpretation.md
+          - The admission gate and its thresholds: quant/admission-criteria.md
+          - Worked example — same Sharpe, opposite verdicts: analysis/faber-dsr-finding.md
+      - Explore the evidence:
+          - What a strategy passport contains: specs/strategy-passport-spec.md
+          - Passport diagrams: diagrams/strategy-passport-architecture.md
+          - Reasoning traces — what the hash does and does not prove: specs/commit-reveal-trace-spec.md
+          - The curated strategy shelf: quant/strategy-library.md
+          - Where each surface gets its prices: adr/market-data-sourcing.md
+      - Paper trade it forward:
+          # TODO(PR 4): - Paper trading — the execution engine's venue: use/paper-trading.md
+          - Intraday marks and their two limits: plans/2026-08-30-intraday-paper-trading.md
 
-  - Product:
-      - user-stories.md
-      - agent-api.md
-      - specs/agent-native-onboarding-spec.md
-      - asset-universe.md
-      - demo-script-lepton.md
+  # ── 3 ── The researcher / quant reviewer. What the verdict means and what
+  #         backs it. The honesty artifacts live here, one click from Home.
+  - Rigor and evidence:
+      - Reading order: quant/README.md
+      - What the four checks actually do: rigor-methods.md
+      - Statistical and portfolio-math reference: quant/methodology.md
+      - Reproducibility protocols (Xia et al. 2026): specs/xia-2026-protocols.md
+      - Transaction costs and turnover: specs/transaction-cost-turnover-model.md
+      - Replicating a paper end to end: plans/paper-replication-spec.md
+      - Claims ledger — every public claim, and its evidence: claims-ledger.md
+      - The papers the gate rests on — including two cited against us: cited-literature.md
+      - Decisions behind the gate:
+          - One authoritative rigor gate: adr/rigor-gate-unification.md
+          - The rigor gate runs outside the generator: adr/k1-generation-external-rigor-gate.md
+          - A strategy's trial count is self-contained: adr/num-trials-self-containment.md
+          - Backtests are frozen evidence: adr/backtests-are-frozen-evidence.md
+          - A strategy is graded once, and the verdict is stored: adr/rigor-verdict-of-record.md
+      - Measured findings (dated):
+          - Library-level PBO (2026-06-11): quant/library-pbo.md
+          - Third-wave retest — alpha-absent, not cost-bled (2026-06-11): quant/third-wave-retest.md
+          - Does a bigger universe rescue the second wave? (2026-06-11): quant/second-wave-universe-experiment.md
+          - What we are improving next: plans/quant-roadmap.md
 
-  - Quant and rigor:
-      - quant/README.md
-      - quant/methodology.md
-      - quant/admission-criteria.md
-      - quant/backtest-interpretation.md
-      - quant/strategy-library.md
-      - quant/library-pbo.md
-      - quant/third-wave-retest.md
-      - quant/second-wave-universe-experiment.md
-      - rigor-methods.md
-      - analysis/faber-dsr-finding.md
-      - benchmarks/stockbench-results.md
-      - specs/selection-bias-corrections-spec.md
-      - specs/transaction-cost-turnover-model.md
-      - cited-literature.md
+  # ── 4 ── The agent developer. Choose an interface, then the per-route
+  #         contract.
+  - Build on Archimedes:
+      # TODO(PR 4): - Three ways in — HTTP, CLI, MCP: build/index.md
+      - Agent quickstart — zero to paper-traded: agent-quickstart.md
+      # TODO(PR 4): - The command-line client: build/cli.md
+      # TODO(PR 4): - The MCP server: build/mcp-server.md
+      - Driving the whole journey over HTTP: agent-api.md
+      - Auth model and trust boundaries: security/auth-model.md
+      - Non-browser onboarding — the deltas: specs/agent-native-onboarding-spec.md
+      - HTTP API reference:
+          - Overview and the five-level auth model: api/README.md
+          - Accounts and sessions: api/auth-and-accounts.md
+          - API keys: api/api-keys.md
+          - Wallet linking: api/wallets.md
+          - Generation: api/generation.md
+          - Strategies and the rigor gate: api/strategies-and-rigor.md
+          - Paper trading: api/paper-trading.md
+          - Leaderboards and public metrics: api/leaderboard-and-metrics.md
+          - Platform, config and chain: api/vaults-and-chain.md
+          - Full router census — including the 16 with no doc yet: api-surface-status.md
+      - Wire contracts and schemas:
+          - What a strategy is made of — the DSL: specs/strategy-dsl-spec.md
+          - The quote and payment-gate contract: specs/generation-quote-contract.md
+          - An undelivered generation repays as credit, not a refund: adr/generation-payment-credit-not-refund.md
+          - Trace reveal is hash-only — why storagePointer is empty: adr/ipfs-pinning-not-live.md
 
-  - Corpus and generation:
-      - generation-cost-instrumentation.md
-      - corpus-architecture.md
-      - specs/multi-agent-debate-spec.md
-      - specs/strategy-fusion-spec.md
-      - specs/strategy-passport-spec.md
-      - specs/strategy-dsl-spec.md
-      - specs/strategy-lifecycle-spec.md
-      - specs/generation-streaming-spec.md
-      - specs/generation-quote-contract.md
-      - specs/kb-integration-spec.md
-      - specs/page-roles-spec.md
-      - specs/component-interfaces-spec.md
-      - specs/ecosystem-design-spec.md
-      - specs/xia-2026-protocols.md
-      - specs/architecture-page-design.md
-      - diagrams/strategy-passport-architecture.md
-      - bedrock-model-cost-comparison.md
-      - cost-estimates/generate-llm-costs.md
+  # ── 5 ── The contributor. How the system is put together, and why.
+  - How it works:
+      - System architecture: architecture.md
+      - Design principles: architectural-principles.md
+      - Repository map: reference/file-tree.md
+      - Data stores and schema: database-architecture.md
+      - Arc testnet integration: arc-integration.md
+      - Accounts and wallet linking, internally: account-authentication.md
+      - One job per screen — the surface roles: specs/page-roles-spec.md
+      - Generation pipeline:
+          - Where the research comes from — the paper corpus: corpus-architecture.md
+          # Generated from the agents/prompts.py registry by
+          # scripts/gen_prompt_inventory.py (#1800) — the file is regenerated,
+          # never hand-edited, and backend/tests/test_prompt_inventory_doc.py
+          # fails when it drifts from the registry.
+          - Every prompt we send a model (generated): specs/prompt-inventory.md
+          - Corpus enrichment pipeline (designed, not built): specs/kb-integration-spec.md
+          - Measuring what a generation costs: generation-cost-instrumentation.md
+      - Execution and traces:
+          - Traces from paper-trading decisions (design note): plans/2026-08-30-paper-trading-reasoning-traces.md
+          - Backtest vs live interpreter (design note): plans/2026-08-30-interpreter-unification.md
+          - Considered and rejected — IPFS pinning: specs/ipfs-reasoning-traces-design-note.md
+      # One labelled shelf for everything the shipped build hides
+      # (ui/src/featureFlags.js:28 ROADMAP_SURFACES_ENABLED default false, :57
+      # ROADMAP_PAGES = portfolio, vault-detail, marketplace, market-strategy,
+      # publish, subscriptions, learnings). Nothing above this line is roadmap.
+      - "Roadmap — not in the current cut":
+          - Vault owner is separate from the agent: adr/non-custodial-vault-owner-agent.md
+          - Two-tier marketplace: adr/two-tier-marketplace.md
+          - The execution agent society: specs/execution-trading-agent-society-spec.md
+      # 20 ADRs, retitled to the decision they record. Slugs untouched.
+      - Decision records:
+          - Index and status vocabulary: adr/README.md
+          - Arc is the settlement chain: adr/arc-settlement-chain.md
+          - Aurora Postgres, migrated by Alembic: adr/aurora-postgres-alembic-datastore.md
+          - backtrader runs the backtests: adr/backtrader-backtest-engine.md
+          - Ship from main, build on deploy: adr/build-on-deploy-main-only.md
+          - Chainlink is the primary oracle: adr/chainlink-primary-oracle.md
+          - The debate society is the only generation path: adr/debate-society-sole-generation-pipeline.md
+          - EC2 gave way to ECS Fargate: adr/ec2-to-ecs-fargate-cutover.md
+          - Fusion-primary generation (superseded): adr/fusion-primary-generation.md
+          - GLM gave way to Bedrock: adr/glm-to-bedrock-llm-migration.md
+          - One portfolio constructor, dual-signal: adr/portfolio-constructor-consolidation.md
+          - Harden the DSL rather than move to Lean 4: adr/strategy-dsl-hardening-over-lean4.md
+          - The Unlicense — public domain: adr/unlicense-public-domain.md
 
-  # API Reference — the hand-curated reference that landed with the
-  # bidirectional route drift test (PR #1397,
-  # backend/tests/test_api_docs_drift.py). Wired here as-is; nothing in this
-  # section is generated or hand-written by the site build.
-  - API Reference:
-      - api/README.md
-      - api/auth-and-accounts.md
-      - api/api-keys.md
-      - api/generation.md
-      - api/strategies-and-rigor.md
-      - api/vaults-and-chain.md
-      - api/wallets.md
-      - api/leaderboard-and-metrics.md
-      - api/paper-trading.md
-      - api/admin-private.md
+  # ── 6 ── Contributor / operator. Last on purpose, and the ONLY operator
+  #         shelf that stays public. Everything with a key, a cost lever, a
+  #         deployer wallet or a person's PII is off the site entirely (see
+  #         exclude_docs below) — not filed in a section, gone.
+  - Contribute:
+      - Doc conventions: CONVENTIONS.md
+      - Testing conventions: testing-conventions.md
+      - Local vs production: local-vs-prod.md
+      - Submodules: submodules.md
+      - Doc register: doc-index.md
+      - Running the stack:
+          - Index, and the procedures that do not exist yet: runbooks/README.md
+          - Running the stack: runbooks/operations.md
+          - Building and publishing this site: runbooks/docs-site-setup.md
+          - GitHub security toggles: runbooks/github-security-toggles.md
+          - SES suppression list: runbooks/ses-suppression.md
+          - DMARC aggregate reports, and the p=none ramp: runbooks/dmarc-reports.md
+          - SES bounce and complaint feedback: runbooks/ses-bounce-signal.md
+          - Re-running the curated backtests: runbooks/curated-backtests.md
+          # Incidents are evidence rather than procedure (docs/CONVENTIONS.md § 1),
+          # but an operator looking for "what went wrong last time" looks here.
+          - "2026-09-03: the paper-advance DDL wedge": incidents/2026-09-03-paper-advance-ddl-wedge.md
 
-  - On-chain and Arc:
-      - arc-integration.md
-      - specs/vault-semantics-spec.md
-      - specs/commit-reveal-trace-spec.md
-      - specs/ipfs-reasoning-traces-design-note.md
-      - specs/execution-trading-agent-society-spec.md
-
-  - Security:
-      - security/auth-model.md
-      - runbooks/github-security-toggles.md
-
-  - Runbooks and operations:
-      - runbooks/README.md
-      - runbooks/operations.md
-      - runbooks/arc-testnet-e2e.md
-      - runbooks/arc-testnet-e2e-evidence.md
-      - runbooks/spec-1-walkthrough.md
-      - runbooks/t3.2-contract-redeploy.md
-      - runbooks/docs-site-setup.md
-      - runbooks/email-verification-validation.md
-
-  - Decisions (ADRs):
-      - adr/README.md
-      - adr/unlicense-public-domain.md
-      - adr/arc-settlement-chain.md
-      - adr/two-tier-marketplace.md
-      - adr/backtrader-backtest-engine.md
-      - adr/build-on-deploy-main-only.md
-      - adr/portfolio-constructor-decision-tree.md
-      - adr/k1-generation-external-rigor-gate.md
-      - adr/aws-account-migration.md
-      - adr/glm-to-bedrock-llm-migration.md
-      - adr/non-custodial-vault-owner-agent.md
-      - adr/portfolio-constructor-consolidation.md
-      - adr/rigor-gate-unification.md
-      - adr/fusion-primary-generation.md
-      - adr/chainlink-primary-oracle.md
-      - adr/ec2-to-ecs-fargate-cutover.md
-      - adr/debate-society-sole-generation-pipeline.md
-      - adr/num-trials-self-containment.md
-      - adr/aurora-postgres-alembic-datastore.md
-      - adr/ipfs-pinning-not-live.md
-
-  - Plans and roadmaps:
-      - account-authentication.md
-      - plans/2026-07-28-account-auth-app-boundary.md
-      - plans/2026-08-15-core-app-visual-refresh.md
-      - plans/quant-roadmap.md
-      - plans/spine-plus-v2-plan.md
-      - plans/second-wave-multi-asset-strategies.md
-      - plans/paper-replication-spec.md
-
-  - Sprint session cards:
-      - sprint/README.md
-
-  - Audits and findings:
-      - audits/2026-06-14-full-tree-audit.md
-      - audits/2026-06-14-gpt-oss-findings-verified.md
-      - audits/2026-06-13-Onder-findings.md
-      - audits/2026-07-09-curated-consolidation.md
-      - audits/merge-handoff-2026-06-10.md
-      - audits/rigor-gate-fixes.md
-
-  - Handovers and session logs:
-      - handovers/2026-07-14-architecture-review.md
-      - handovers/second-wave-handover.md
-      - handovers/third-wave-handover.md
-      - handovers/fourth-wave-handover.md
-      - handovers/phase8-9-landing-and-fusion-spec.md
-
-  # Agent-generated wiki — the openwiki/ tree (#1597), which lives OUTSIDE
-  # docs_dir and is mounted into the build by .github/scripts/mkdocs_hooks.py.
-  # Kept as its own top-level section, never mixed into the hand-written
-  # sections above, because the provenance is the point: every page here was
-  # written by an agent from docs/quant/ and published without line-by-line
-  # human review. agent-wiki.md is the section index and carries that note;
-  # the hook stamps the same warning on each page.
-  #
-  # These entries are listed by hand on purpose. Generating them would mean a
-  # regenerated wiki publishes new agent-written pages with no person in the
-  # loop; instead backend/tests/test_docs_site.py fails when an
-  # openwiki/**.md has no entry here, so admitting a new page is a deliberate
-  # act. Add the row in the same PR that adds the page.
+  # ── 7 ── FORCED TOP-LEVEL. backend/tests/test_docs_site.py:90 `_wiki_section`
+  #         iterates TOP-LEVEL nav items only and raises when the label is not
+  #         found; :132 requires agent-wiki.md first with openwiki/-only
+  #         siblings; :119 fails if any openwiki page has no entry. Left here so
+  #         this IA needs ZERO test change. Editorially right too: these 14
+  #         pages are "written by an AI agent" and "not reviewed line by line",
+  #         which is provenance, not evidence — it must not sit inside
+  #         "Rigor and evidence" on a site whose identity is "under scrutiny".
   - Agent-generated wiki:
-      - agent-wiki.md
-      - openwiki/quickstart.md
-      - openwiki/index.md
-      - openwiki/INSTRUCTIONS.md
-      - Rigor:
-          - openwiki/rigor/index.md
-          - openwiki/rigor/admission-gate.md
-          - openwiki/rigor/reading-a-backtest.md
-          - openwiki/rigor/selection-bias-controls.md
-          - openwiki/rigor/documented-conflicts.md
-      - Strategy library:
-          - openwiki/library/index.md
-          - openwiki/library/strategy-shelf.md
-      - Portfolio:
-          - openwiki/portfolio/index.md
-          - openwiki/portfolio/construction-and-sizing.md
-      - Findings:
-          - openwiki/findings/index.md
-          - openwiki/findings/measured-results.md
+      - Provenance and scope: agent-wiki.md
+      - OpenWiki home: openwiki/index.md
+      - Quickstart: openwiki/quickstart.md
+      - How the wiki is regenerated: openwiki/INSTRUCTIONS.md
+      - Rigor — overview: openwiki/rigor/index.md
+      - Rigor — admission gate: openwiki/rigor/admission-gate.md
+      - Rigor — reading a backtest: openwiki/rigor/reading-a-backtest.md
+      - Rigor — selection-bias controls: openwiki/rigor/selection-bias-controls.md
+      - Rigor — documented conflicts: openwiki/rigor/documented-conflicts.md
+      - Library — overview: openwiki/library/index.md
+      - Library — strategy shelf: openwiki/library/strategy-shelf.md
+      - Portfolio — overview: openwiki/portfolio/index.md
+      - Portfolio — construction and sizing: openwiki/portfolio/construction-and-sizing.md
+      - Findings — overview: openwiki/findings/index.md
+      - Findings — measured results: openwiki/findings/measured-results.md
 
-  - Research and prompts:
-      - research/README.md
-      - research/linus-archimedes-comparison.md
-      - research/archimedes-to-linus-portbacks.md
-      - prompts/quant-audit-prompt.md
-      - prompts/agentic-issue-skeleton.md
+# ═══════════════════════════════════════════════════════════════════════════
+# exclude_docs — THIS is what takes a page off the site. Nav removal does not.
+#
+# Verified live 2026-09-01: /team/, /operations/feature-flag-fliplist/,
+# /runbooks/cost-kill-switch/, /sprint/, /api/admin-private/ and
+# /database-relations/ all returned HTTP 200 with no nav entry.
+#
+# A link INTO an excluded page is not left dangling: .github/scripts/mkdocs_hooks.py
+# repoints it at the GitHub blob URL for the file, the same way it treats any
+# other path the site does not serve. So excluding a page does not break the
+# pages that cite it, and `mkdocs build --strict` stays clean.
+#
+# Port each file to the private docs repo FIRST, delete here second, and name
+# where it went in the deletion commit — docs/CONVENTIONS.md § Content routing,
+# whose test is "would we be comfortable if a competitor read this?".
+# docs/archive/README.md records the 2026-08-19 precedent for that port.
+#
+# This block is no longer the only thing between a file and the public site —
+# `deny_unlisted` is (see the banner at the top of this file). It stays, and
+# stays exact, because "off the site" and "recorded as internal" are different
+# claims: a page that is merely absent from the nav is one careless nav row away
+# from being public again, and a reviewer reading this block can see what was
+# decided about each one.
+# ═══════════════════════════════════════════════════════════════════════════
+exclude_docs: |
+  # The site's own pinned toolchain. It lives under docs/ so the workflow and
+  # the runbook install one file, but it is a build input, not a page.
+  requirements.txt
 
-  - Working with the repo and the team:
-      - CONVENTIONS.md
-      - team.md
-      - agent-gotchas.md
-      - submodules.md
+  # ── Directories that are internal by kind. Globs, not file lists, so a new
+  #    sprint card or handover next month is excluded automatically.
+  archive/**
+  audits/**
+  benchmarks/**
+  decisions/**
+  handovers/**
+  operations/**
+  prompts/**
+  research/**
+  sprint/**
 
-  - Archive:
-      - archive/README.md
+  # ── Individually internal pages. One pattern per line, and NOTHING after it:
+  #    these are gitignore-style patterns, where a trailing `# comment` is part
+  #    of the pattern and silently matches no file. (Caught by diffing the built
+  #    URL set against the live one — `team/` was still being published.)
+  #
+  # PII: ages, cities, Discord handles, timezones
+  team.md
+  # Retired branding at :23 and :49
+  demo-script-lepton.md
+  # Vendor cost comparison — competitor-readable
+  infrastructure-provider-analysis.md
+  analysis/insights-analytics-gap-2026-08-31.md
+  adr/aws-account-migration.md
+  adr/lambda-generation-offload.md
+  # Names a competitor
+  plans/2026-08-23-phantom-inspired-public-landing.md
+  plans/2026-08-30-relations-phase2.md
+  # Retired branding at :432, :916, :976
+  plans/spine-plus-v2-plan.md
+  # Retired branding at :261; internal walkthrough
+  runbooks/spec-1-walkthrough.md
+  runbooks/backtest-results-retention.md
+  # AWS spend brake, thresholds, recovery command
+  runbooks/cost-kill-switch.md
+  # The six findings gating EMAIL_VERIFICATION_ENFORCED
+  runbooks/email-verification-validation.md
+  runbooks/erc8004-identity-registration.md
+  runbooks/runner-ec2-wedge.md
+  # Landed after the audit's tree snapshot: an `infra/apply.sh` procedure that
+  # names the distribution and its rollback. Same class as the two runbooks
+  # above, so it is off the site for the same reason.
+  runbooks/cloudfront-cache-behaviour-apply.md
+  # Same class again, landed 2026-09-03. Both name the AWS account number and a
+  # decrypt-and-export procedure for live SSM SecureStrings, which is the
+  # "has a key" half of the cut line above.
+  # market-data-provider-proof.md: `/archimedes/prod/TIINGO_API_TOKEN`,
+  #   `aws ssm get-parameter --with-decryption`, an `ecs execute-command` probe.
+  # terraform-apply-and-task-definition-ownership.md: `TF_VAR_aurora_master_password`
+  #   read out of SSM, the plan/apply IAM role ARN, and the names of the rest of
+  #   the prod secret set (CIRCLE_ENTITY_SECRET, BETTER_AUTH_SECRET, DATABASE_URL).
+  # Neither is in the aprin-labs/docs#10 snapshot — that PR froze #1816's 89
+  # pages on 2026-09-03 and these two landed after it; they port next.
+  runbooks/market-data-provider-proof.md
+  runbooks/terraform-apply-and-task-definition-ownership.md
+  # Deployer-key handling
+  runbooks/t3.2-contract-redeploy.md
+
+  # ── Transitional. These land in docs/archive/ in PR 5 (git mv + ARCHIVED
+  #    banner) and are then covered by the archive/** glob above; listed here
+  #    from PR 1 so there is never a commit where they are published-and-orphaned.
+  #    Delete these lines in PR 5.
+  anti-features.md
+  deployment.md
+  bedrock-model-cost-comparison.md
+  cost-estimates/generate-llm-costs.md
+  specs/architecture-page-design.md
+  specs/component-interfaces-spec.md
+  specs/ecosystem-design-spec.md
+  specs/strategy-lifecycle-spec.md
+  specs/vault-semantics-spec.md
+  runbooks/arc-testnet-e2e.md
+  runbooks/arc-testnet-e2e-evidence.md
+  plans/2026-07-28-account-auth-app-boundary.md
+  plans/2026-08-15-core-app-visual-refresh.md
+  plans/2026-08-22-calm-precision-rebrand.md
+  plans/2026-08-23-security-posture-page.md
+  plans/second-wave-multi-asset-strategies.md
+  # Merged into rigor-methods.md
+  specs/selection-bias-corrections-spec.md
+  # Merged into api/generation.md
+  specs/generation-streaming-spec.md
+  # internal scoping memo (#714 sub-task C, PR #1529) — never on the site
+  specs/mnemonik-integration-scoping.md
+  # Merged into adr/portfolio-constructor-consolidation.md
+  adr/portfolio-constructor-decision-tree.md
+  # Merged into adr/strategy-dsl-hardening-over-lean4.md
+  plans/future-strategy-language-reeval-issue.md
+
+  # assoc/v1 — the paper→strategy association contract (#1637). Internal
+  # engineering reference, owner decision Q6 on #1688: land the spec so it is
+  # not re-derived wrong from a merged diff, keep it off the published site.
+  specs/assoc-v1-spec.md
+
+  # ── Owner decision 1 (#1751), taken 2026-09-02: all four stay OFF the site.
+  # Reversing that call is moving ONE line out of this block and adding one nav
+  # row. No page is edited, no section restructured, no git mv.
+  agent-gotchas.md
+  agent-operations.md
+  api/admin-private.md
+  database-relations.md
+
+# ═══════════════════════════════════════════════════════════════════════════
+# not_in_nav — the explicit allow-list for files that publish WITHOUT a nav row.
+#
+# Under default-deny (#1751) this is the only other way onto the site, so it is
+# deliberately short and deliberately extension-scoped: these are the site's own
+# assets, referenced from inside pages (the logo, the favicon, the two rendered
+# diagrams and the mermaid source one of them is generated from). A `**` glob
+# here would re-open the hole this closes — `reference/**` would silently
+# publish a future `docs/reference/internal-notes.md` with no nav entry and no
+# review — so every pattern names a non-page file type.
+#
+# mkdocs' own use of this key is narrower (it suppresses the "exists but is not
+# in the nav" message for documentation pages, and media files never produce
+# that message). `deny_unlisted` reads the same patterns, which is what makes
+# them an allow-list rather than a comment.
+# ═══════════════════════════════════════════════════════════════════════════
+not_in_nav: |
+  assets/*.png
+  assets/*.svg
+  reference/*.svg
+  reference/*.mmd
+
+# The backstop for "somebody deleted the hook". `deny_unlisted` normally marks an
+# unlisted page excluded before mkdocs ever looks at the nav, so this level is not
+# what fires day to day. Without the hook it is: mkdocs logs every documentation
+# page that is in no nav and no `not_in_nav` at this level, and the docs-site
+# workflow builds with `--strict`, which fails on WARNING. `warn` is the strictest
+# value mkdocs accepts here (mkdocs/config/defaults.py `_LogLevel`: warn/info/
+# ignore); the default is `info`, which --strict ignores — that default is half
+# the reason a page could be published by nobody in the first place.
+validation:
+  nav:
+    omitted_files: warn

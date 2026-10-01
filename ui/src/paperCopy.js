@@ -27,6 +27,14 @@
 //     the status -> sentence mapping StrategyPassport.jsx's PaperDeployCard
 //     already established for the sibling paper CTA.
 
+import { DEGENERATE_TITLE, NOT_GRADED_TITLE } from './libraryStatus.js'
+import {
+  UNKNOWN_RIGOR_LABEL,
+  UNKNOWN_RIGOR_TITLE,
+  isUnknownRigorGateStatus,
+  warnUnknownRigorGateStatus,
+} from './rigorGateStatus.js'
+
 /**
  * Render a `drift_detected_at` ISO timestamp as a plain human date, in UTC
  * so the output is independent of the caller's local timezone (Node's
@@ -107,8 +115,8 @@ export function paperErrorMessage(err, fallback = 'Something went wrong.') {
 // not a re-decision, and NOT a claim about what the strategy is holding right
 // now (see MARK_BASIS_DISCLOSURE: v1 has no position vector, so a strategy
 // sitting in cash is still marked as if invested). The settled daily ledger is
-// the track record that carries to mainnet; a mark is an unsettled decoration
-// the backend deletes past 90 days.
+// the paper track record — Arc testnet, no real funds (#1807); a mark is an
+// unsettled decoration the backend deletes past 90 days.
 // Every helper below exists so the card can never state more than that:
 //
 //   - markLabel: never a bare number. Always value + as-of time, and the word
@@ -216,7 +224,7 @@ export function marksStalenessNote(mark, now = Date.now(), intervalMinutes = 15)
  */
 export function noMarksNote(status) {
   return status === 'active'
-    ? 'No live value yet — the first intraday mark lands at the next 15-minute tick.'
+    ? 'No live value yet — none has been marked for this deployment. The daily settle is the graded number.'
     : 'No live value — marks stop when a deployment is stopped.'
 }
 
@@ -277,4 +285,329 @@ export function markBasisNote(mark) {
  */
 export function marksUnavailableNote(err) {
   return `Live value unavailable — ${paperErrorMessage(err, 'the intraday feed could not be reached.')}`
+}
+
+// ── The verdict of record, beside the forward record (#1764) ─────────────────
+//
+// Deploy is AT WILL: paper_routes checks ownership and that the stored spec
+// still validates, and nothing else — a strategy whose gate said `fail`,
+// `pending` or `degenerate` can be paper-traded exactly like one that passed
+// (docs/claims-ledger.md: "A failing strategy stays a failing strategy.
+// Paper-trading one is allowed. Relabelling one is not."). Owner decision, Dan
+// 2026-09-01: that is the POINT — a gate-failed strategy that performs badly
+// forward validates the gate, and one that passed and tracks its backtest
+// validates it too.
+//
+// That freedom is only honest if the verdict travels with the numbers. Without
+// it, /app/paper renders "+2.10% · total return" for a strategy the rigor gate
+// rejected, with nothing on the card saying so — a performance figure standing
+// alone reads as an endorsement, and the reader has no way to know the gate
+// ever ran. So every helper below exists to make one thing structurally true:
+//
+//   THE PAPER CARD NEVER SHOWS A PERFORMANCE NUMBER WITHOUT THE GATE VERDICT
+//   BESIDE IT — including when the payload carries no verdict at all.
+//
+// `gateVerdict` has no silent arm. A missing `rigor_gate_status` (an old
+// backend behind a new bundle, a truncated payload) yields the explicit
+// "verdict unavailable" state, never `null` and never an empty chip: an
+// absence has to be rendered as an absence, which is the same rule
+// formatTotalReturn's day-0 em-dash follows.
+//
+// The four states and their words come from the shared modules, not from
+// re-typed literals here: `rigorGateStatus.js` owns the four-state list and
+// the unknown-state fallback, `libraryStatus.js` owns the tooltip sentences
+// for ungraded and degenerate rows. #1358 is what happens when two surfaces
+// keep their own copies of the same verdict vocabulary.
+
+/** The `gate_version` the verdict-of-record migration writes on a verdict it
+ * INFERRED from pre-existing columns rather than one a gate run produced.
+ *
+ * Byte-identical to `rigor_gate_version.LEGACY_DERIVED` on the backend —
+ * `backend/tests/test_paper_deploy_verdict.py` reads this file and asserts the
+ * two literals match, so the UI cannot start describing a legacy row as a real
+ * grade because someone renamed the marker on one side.
+ */
+export const LEGACY_DERIVED_GATE_VERSION = 'legacy-derived'
+
+/** What the chip says when the payload carried no verdict at all.
+ *
+ * NOT "not yet graded": that is a CLAIM about the strategy (no gate ran), and
+ * this state cannot support it — the gate may well have run and the answer
+ * simply did not arrive. The honest statement is about the payload.
+ */
+export const VERDICT_UNAVAILABLE_LABEL = 'Gate: verdict unavailable'
+
+export const VERDICT_UNAVAILABLE_TITLE =
+  'This deployment payload carried no rigor-gate verdict, so none is shown. ' +
+  'That is a gap in what was served — not a statement that the strategy passed, ' +
+  'failed, or was never graded. Reload; if it persists the passport page carries the verdict of record.'
+
+/** Why a legacy-derived verdict is not a grade. Appended to the tooltip of any
+ * verdict whose `gate_version` is the migration marker. */
+export const LEGACY_DERIVED_NOTE =
+  'This verdict was inferred from pre-existing columns by the verdict-of-record migration — ' +
+  'no gate run produced it, and it is not comparable to a freshly graded verdict.'
+
+/** The page-level statement of the deploy-at-will rule.
+ *
+ * Kept as a pinned constant for the same reason MARK_BASIS_DISCLOSURE is: the
+ * honesty claim is the product. It states the permission AND its limit in one
+ * breath — the gate result is unchanged by deploying, and the forward record is
+ * not a re-grade. Checked against docs/claims-ledger.md ("A failing strategy
+ * stays a failing strategy. Paper-trading one is allowed. Relabelling one is
+ * not."): no "validated", no "proves", no promotion of a paper return into a
+ * verdict.
+ */
+export const DEPLOY_AT_WILL_NOTE =
+  'Any strategy you can open can be paper-traded — whether its rigor gate passed, failed, ' +
+  'never ran, or had nothing it could score. Deploying changes no verdict: every card below ' +
+  'shows the gate result it was graded with, beside the forward record it is building.'
+
+/** The one sentence that must be on this surface and nowhere weakened: the
+ * forward ledger is evidence ABOUT the gate, not a re-grade of the strategy. */
+export const FORWARD_EVIDENCE_NOTE =
+  'The gate verdict was graded once, before deployment; the forward record beside it is ' +
+  'evidence that tests the gate. Neither re-labels the other — a paper return does not ' +
+  'overturn a failed gate, and a passed gate does not vouch for a paper return.'
+
+/** `graded_at` as a plain human date, or null when it is absent/unusable.
+ *
+ * Parses the leading `YYYY-MM-DD` and rebuilds the day in UTC rather than
+ * handing the raw string to `new Date`. `graded_at` is `datetime.isoformat()`
+ * of a NAIVE column, so it arrives without an offset ("2026-08-30T12:00:00")
+ * and `new Date` would read it as LOCAL time — which silently renders the
+ * previous day for anyone west of UTC. A grade date that moves with the
+ * reader's timezone is a fabricated date.
+ *
+ * Returns null rather than a placeholder so the caller can omit the clause
+ * entirely: "(graded —)" would be worse than no parenthetical at all.
+ */
+export function formatGradedAt(gradedAtIso) {
+  if (typeof gradedAtIso !== 'string') return null
+  const m = gradedAtIso.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!m) return null
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])))
+  if (Number.isNaN(d.getTime())) return null
+  return d.toLocaleDateString('en-US', { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric' })
+}
+
+// The four states' words. Written as "Gate: <verdict>" so the chip is
+// self-describing next to a percentage — "failed" alone, beside +2.10%, is
+// ambiguous about WHAT failed.
+const _VERDICT_WORDS = Object.freeze({
+  pass: 'Gate: passed',
+  fail: 'Gate: failed',
+  pending: 'Gate: not yet graded',
+  degenerate: 'Gate: unevaluable — flat returns',
+})
+
+const _VERDICT_TONES = Object.freeze({
+  pass: 'positive',
+  fail: 'negative',
+  pending: 'muted',
+  degenerate: 'muted',
+})
+
+// The four explanations, WITHOUT the shared forward-evidence sentence —
+// `gateVerdict` appends that to all four, so the sentence exists once and every
+// graded state carries it. `pending` and `degenerate` borrow the Library's own
+// sentences rather than re-typing them: two surfaces, one explanation.
+const _VERDICT_TITLES = Object.freeze({
+  pass: 'The rigor gate graded this strategy and it passed.',
+  fail:
+    'The rigor gate graded this strategy and it did not pass. Paper-trading it anyway is ' +
+    "deliberate: a rejected strategy's forward record is evidence about the gate's call.",
+  pending: NOT_GRADED_TITLE,
+  degenerate: DEGENERATE_TITLE,
+})
+
+/**
+ * The gate verdict for one deployment-summary row. NEVER null, for any input.
+ *
+ * Returns `{ status, label, title, tone, gradedLabel }`:
+ *   - `status`     the raw four-state string, or null when none was served;
+ *   - `label`      the chip's words, always a non-empty string;
+ *   - `gradedLabel` "graded Aug 30, 2026", or null when there is no usable
+ *                  date — never a fabricated one;
+ *   - `tone`       'positive' | 'negative' | 'muted' | 'unknown', for colour
+ *                  only. Only a literal `pass` is ever 'positive'.
+ *
+ * The arm order matters and mirrors `libraryStatus.js`: a payload with no
+ * verdict field is caught FIRST, because every arm below it would otherwise
+ * answer a question the payload never asked. An unrecognised state renders the
+ * shared em-dash and warns in dev — the UI must not map a fifth state the API
+ * grew onto "failed" (or onto "passed", which would be worse).
+ */
+export function gateVerdict(dep) {
+  const status = dep?.rigor_gate_status
+  if (status == null) {
+    return {
+      status: null,
+      label: VERDICT_UNAVAILABLE_LABEL,
+      title: VERDICT_UNAVAILABLE_TITLE,
+      tone: 'unknown',
+      gradedLabel: null,
+    }
+  }
+  if (isUnknownRigorGateStatus(status)) {
+    warnUnknownRigorGateStatus(status, 'PaperTrading')
+    return {
+      status,
+      label: `Gate: ${UNKNOWN_RIGOR_LABEL}`,
+      title: UNKNOWN_RIGOR_TITLE,
+      tone: 'unknown',
+      gradedLabel: null,
+    }
+  }
+  const graded = formatGradedAt(dep?.graded_at)
+  const legacy = dep?.gate_version === LEGACY_DERIVED_GATE_VERSION
+  // Composed here rather than baked into the constants so the forward-evidence
+  // sentence lands on all four states exactly once — appending it at the render
+  // site instead would double it on the two arms that already carried it.
+  const base = legacy ? `${_VERDICT_TITLES[status]} ${LEGACY_DERIVED_NOTE}` : _VERDICT_TITLES[status]
+  const title = `${base} ${FORWARD_EVIDENCE_NOTE}`
+  return {
+    status,
+    label: _VERDICT_WORDS[status],
+    title,
+    tone: _VERDICT_TONES[status],
+    gradedLabel: graded ? `graded ${graded}` : null,
+  }
+}
+
+/**
+ * The verdict as ONE line — "Gate: failed (graded Aug 30, 2026)".
+ *
+ * Both the visible chip and the screen-reader announcement render from this,
+ * so the two can never state different verdicts for the same row.
+ */
+export function gateVerdictText(dep) {
+  const v = gateVerdict(dep)
+  return v.gradedLabel ? `${v.label} (${v.gradedLabel})` : v.label
+}
+
+/**
+ * The screen-reader line for the headline figure — the number and the verdict
+ * in ONE accessible name.
+ *
+ * This is where the "never a number without its verdict" rule is enforced for
+ * assistive tech rather than merely arranged visually: the percentage is a
+ * `<span aria-hidden>` and THIS string is what a screen reader gets, so a
+ * future edit that drops the chip from the layout cannot also silently drop
+ * the verdict from the announcement — they come from the same call.
+ *
+ * The performance clause follows formatTotalReturn's discriminator exactly:
+ * `days === 0` is the normal post-deploy state, not a measurement, and must
+ * never be announced as one.
+ */
+export function paperReturnAnnouncement(dep) {
+  const figure = formatTotalReturn(dep?.total_return, dep?.days)
+  const days = dep?.days
+  const perf =
+    figure === '—'
+      ? 'No settled paper return yet'
+      : `Paper total return ${figure} over ${days} trading day${days === 1 ? '' : 's'}`
+  return `${perf}. ${gateVerdictText(dep)}.`
+}
+
+// ── Page-intro cadence copy (#1802) ──────────────────────────────────────────
+//
+// The intro used to tell EVERY reader, unconditionally, that the live value
+// "re-prices the strategy's asset basket every 15 minutes". That sentence is a
+// claim about a job that runs: `backend/archimedes/services/paper_marks.py` and
+// `backend/archimedes/scripts/run_paper_marks.py` exist, but nothing under `infra/` schedules
+// them (grep -rn paper_marks infra/ -> no hits), so in production no marks are
+// written and the 15-minute cadence is a promise the deployment does not keep.
+//
+// The graded truth is the DAILY settle: `paper_trading.py`'s advance loop runs
+// on PAPER_ADVANCE_INTERVAL_HOURS (default 24) and appends one real-data return
+// per trading day. That sentence is true today and is therefore unconditional.
+// The intraday sentence is now earned per-render: it appears only when the
+// payload actually carries a mark fresh enough to back it, and a mark that has
+// stopped moving gets the existing staleness note instead of a cadence claim.
+//
+// The freshness rule is NOT a new number: it is exactly marksStalenessNote's —
+// two cadence intervals — so the page and the per-card line can never disagree
+// about whether the same mark is live.
+
+/**
+ * The unconditional sentence: what the ledger does today, in production,
+ * without any job that is not deployed. `advance_all` settles one graded
+ * trading day at a time; a mark, when one exists, is decoration on top of it
+ * and is labelled unsettled.
+ *
+ * It says what the settled series IS — a paper track record on Arc testnet,
+ * with no real funds — never what it may one day become. An earlier draft of
+ * this constant promised the series would carry over at a cutover that #1240
+ * cancelled by owner call, with no date scheduled; #1822 retracted that promise
+ * from every paper-trading copy surface, and this wording is what it pins. The
+ * sentence is written across a `' + '` concatenation on purpose: #1822's guard
+ * flattens that before reading it, so where this line happens to wrap can never
+ * decide the verdict.
+ */
+export const PAPER_SETTLE_CADENCE =
+  'The ledger settles once per trading day from the graded replay — that settled series is a paper ' +
+  'track record on Arc testnet, with no real funds. A live value is shown beneath it only when one ' +
+  'has been marked, and it is always unsettled.'
+
+/**
+ * The conditional sentence. Only rendered when `paperCadenceCopy` is handed a
+ * mark that is actually fresh — never as a standing promise about a job.
+ */
+export const PAPER_INTRADAY_CADENCE =
+  "The live value re-prices the strategy's asset basket every 15 minutes — it is unsettled, carries the " +
+  'time it was observed, and never changes what the strategy does.'
+
+/**
+ * The intro's cadence copy for the marks actually in the payload.
+ *
+ * - no usable mark  -> the daily-settle sentence ALONE. No cadence is claimed,
+ *   because with no marks job deployed there is no cadence to claim.
+ * - fresh mark      -> the settle sentence plus the 15-minute sentence, which
+ *   the observed mark has now earned.
+ * - stale mark      -> the settle sentence plus `marksStalenessNote`'s existing
+ *   observation-age wording. Never the cadence sentence: a mark that stopped
+ *   arriving is the exact case where "every 15 minutes" is false.
+ *
+ * `intervalMinutes` is threaded straight through to marksStalenessNote so the
+ * two surfaces share one definition of "fresh".
+ */
+export function paperCadenceCopy(mark, now = Date.now(), intervalMinutes = 15) {
+  const sentences = [PAPER_SETTLE_CADENCE]
+  if (!mark || markLabel(mark) === '—') return { sentences, intraday: false, staleness: null }
+  const staleness = marksStalenessNote(mark, now, intervalMinutes)
+  if (staleness) return { sentences, intraday: false, staleness }
+  sentences.push(PAPER_INTRADAY_CADENCE)
+  return { sentences, intraday: true, staleness: null }
+}
+
+/**
+ * The newest mark across every deployment on the page, or null when there is
+ * none — the input `paperCadenceCopy` is gated on.
+ *
+ * Prefers the polled list for a deployment and falls back to the summary's
+ * `latest_mark` (paper_trading.py:1088), matching LiveValue's own precedence so
+ * the intro can never claim a cadence the cards below it are not showing. A
+ * mark with an unusable timestamp is skipped rather than ordered arbitrarily.
+ */
+export function newestMark(deployments, marksById = {}, errorsById = {}) {
+  let best = null
+  let bestTs = -Infinity
+  for (const dep of deployments || []) {
+    const id = dep?.deployment_id
+    // Same precedence as LiveValue, error branch included: a deployment whose
+    // marks fetch failed shows NO number on its card, so it must not supply
+    // the intro's cadence claim either.
+    if (errorsById[id]) continue
+    const polled = marksById[id]
+    const latest = polled && polled.length > 0 ? polled[polled.length - 1] : dep?.latest_mark
+    if (!latest) continue
+    const t = new Date(latest.ts).getTime()
+    if (Number.isNaN(t)) continue
+    if (t > bestTs) {
+      best = latest
+      bestTs = t
+    }
+  }
+  return best
 }

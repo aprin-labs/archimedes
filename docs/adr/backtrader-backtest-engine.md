@@ -293,13 +293,13 @@ the record matches reality:
 **Disposition after the 2026-08 chaff/test-suite audit:** much of
 `portfolio_backtester.py` was found structurally dead on the production pipeline —
 "bypassed, never decommissioned" (its Phase-2.2 rigor-overlay helpers and the
-`capacity_decay` loop had no live callers). [PR #1259](https://github.com/a-apin/archimedes/pull/1259)
+`capacity_decay` loop had no live callers). [PR #1259](https://github.com/aprin-labs/archimedes/pull/1259)
 (in review at the time of this amendment) deletes the dead clusters with their tests;
 the surviving `portfolio-simulator-v1` surface is exactly `backtest_portfolio` +
 `sensitivity_sweep`. Historical `backtest_results` rows tagged
 `portfolio-simulator-v1` remain valid provenance — the tag did its job.
 
-**Provenance extended beyond the engine tag** ([PR #1242](https://github.com/a-apin/archimedes/pull/1242),
+**Provenance extended beyond the engine tag** ([PR #1242](https://github.com/aprin-labs/archimedes/pull/1242),
 merged, migration `b41c7d9e2a05`): `backtest_results` now also carries
 `cost_model_id` (which cost floor priced the run) and `look_ahead_audit_source`
 (which kind of look-ahead evidence backs the boolean beside it — the distinction

@@ -646,9 +646,9 @@ def _fetch_price_history(symbol: str, period: str = "2y") -> pd.Series:
     (``asset_daily_bars``) is daily-grained; a prior ``interval`` parameter
     was dropped since every caller left it at its "1d" default anyway.
 
-    Fetch goes through the market-data provider seam (#1218:
-    ``archimedes.services.market_data_provider``) rather than yfinance
-    directly — vendor-swappable via ``MARKET_DATA_PROVIDER``, and the
+    Fetch goes through the market-data provider seam's ``daily`` half (#1218 /
+    #1798: ``archimedes.services.market_data_provider``) rather than yfinance
+    directly — vendor-swappable via ``MARKET_DATA_DAILY_PROVIDER``, and the
     provider's own Postgres cache means a warm request never re-hits the
     vendor live. This in-process ``_cache_get``/``_cache_put`` layer is
     unchanged (hot 600s TTL in front of that).
@@ -665,7 +665,7 @@ def _fetch_price_history(symbol: str, period: str = "2y") -> pd.Series:
     try:
         from archimedes.services.market_data_provider import get_provider, provider_name
 
-        fetched = get_provider().get_daily_close_batch({symbol: yf_ticker}, period=period)
+        fetched = get_provider(seam="daily").get_daily_close_batch({symbol: yf_ticker}, period=period)
         close = fetched.get(symbol)
         if close is None or close.empty:
             # Named, never silent (#1710) — same reason as the batch path below.
@@ -674,7 +674,7 @@ def _fetch_price_history(symbol: str, period: str = "2y") -> pd.Series:
                 "EXCLUDED, no series synthesized.",
                 symbol,
                 yf_ticker,
-                provider_name(),
+                provider_name("daily"),
                 period,
             )
             return pd.Series(dtype=float)
@@ -725,7 +725,7 @@ def _fetch_price_histories(
     try:
         from archimedes.services.market_data_provider import get_provider
 
-        fetched = get_provider().get_daily_close_batch(ticker_for_synth, period=period)
+        fetched = get_provider(seam="daily").get_daily_close_batch(ticker_for_synth, period=period)
     except Exception as e:
         logger.warning("Batched market-data fetch failed: %s", e)
         # Fall back to per-symbol fetch for the ones we still need
@@ -762,7 +762,7 @@ def _fetch_price_histories(
             "no series is synthesized to replace them.",
             len(missing),
             len(ticker_for_synth),
-            provider_name(),
+            provider_name("daily"),
             period,
             ", ".join(f"{s}({ticker_for_synth[s]})" for s in missing),
         )

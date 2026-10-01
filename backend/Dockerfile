@@ -124,8 +124,17 @@ USER nonroot
 
 EXPOSE 8000
 
+# CONTAINER health = READINESS, not liveness (#1818 P3). /health/ready answers
+# 200 while this task can still read its database and 503 once the DB-backed
+# probes have been serving cached readings for longer than
+# HEALTH_STALE_UNREADY_S (default 900s) — the state that sat behind a green
+# /health for ten hours during the 2026-09-03 outage. urlopen raises on 503, so
+# the check fails and ECS replaces THIS task; the ALB target group keeps polling
+# /health (still always 200, infra/alb.tf) so a shared transient can never pull
+# every target out of service at once. Mirrored in infra/ecs.tf — an image-only
+# HEALTHCHECK is invisible to the ECS agent for container-dependency purposes.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
 
 # --proxy-headers + --forwarded-allow-ips="*" so request.client.host reflects the
 # real client behind nginx. The container port is never bound to the host — nginx

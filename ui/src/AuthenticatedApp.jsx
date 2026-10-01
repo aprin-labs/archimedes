@@ -257,6 +257,12 @@ export default function AuthenticatedApp({
 				features={features}
 				journeyStage={journeyStage}
 			>
+				{/* Also renders for a wallet whose rows #1283's adoption
+				    migration stamped with the platform account: /api/wallets/check
+				    counts the adoption ledger, so an adopted row still reports
+				    has_legacy_data and linking still hands it back. The copy below
+				    stays true for that case — nothing was deleted, and only the
+				    holder of that address can claim it. */}
 				{legacyWalletDetected && !walletAddr && (
 					<div
 						role="status"

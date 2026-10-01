@@ -44,11 +44,15 @@ def _query_distinct_user_count() -> int | None:
         from sqlalchemy import func
 
         from archimedes.db import get_session
-        from archimedes.models.account import AuthUser
+        from archimedes.models.account import PLATFORM_LEGACY_USER_ID, AuthUser
 
         session = get_session()
         try:
-            return int(session.query(func.count(AuthUser.id)).scalar() or 0)
+            # The #1283 legacy-adoption account is a bookkeeping owner, not a
+            # user — counting it would overstate this number by one forever.
+            return int(
+                session.query(func.count(AuthUser.id)).filter(AuthUser.id != PLATFORM_LEGACY_USER_ID).scalar() or 0
+            )
         finally:
             session.close()
     except Exception as exc:

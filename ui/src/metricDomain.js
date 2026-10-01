@@ -285,10 +285,18 @@ export function absenceReason(row) {
 		return { state: "degenerate", title: DEGENERATE_METRIC_TITLE };
 	}
 	// `is_backtest_placeholder` is the pre-backtest hypothesis flag the
-	// generated-strategies feed sets; a PRESENT-but-null `passes_rigor_gate` is
-	// the same "no verdict yet" case for rows that never carried
-	// rigor_gate_status at all (Strategies.jsx's coerceGenerated sets the key
-	// explicitly to null).
+	// generated-strategies feed sets — `coerceGenerated` hardcodes it `true` on
+	// every generated row; a PRESENT-but-null `passes_rigor_gate` is the same
+	// "no verdict yet" case for rows that never carried rigor_gate_status at all
+	// (coerceGenerated carries the served four-state through, and falls back to
+	// null when the API sent none).
+	//
+	// A `row.status === "pending_backtest"` operand used to sit here too. That
+	// status was a client-side invention of coerceGenerated's, retired with the
+	// verdict of record (docs/adr/rigor-verdict-of-record.md): no producer emits
+	// it any more, and a branch keyed on a string nothing sends is a claim a
+	// future reader would trust. The rows it used to catch are caught by
+	// `is_backtest_placeholder` above, which is set on every one of them.
 	//
 	// The `in` check is load-bearing, not defensive tidiness. A live-paper row
 	// carries neither field, so a bare `row.passes_rigor_gate == null` would be
@@ -298,7 +306,6 @@ export function absenceReason(row) {
 	if (
 		status === "pending" ||
 		row.is_backtest_placeholder === true ||
-		row.status === "pending_backtest" ||
 		("passes_rigor_gate" in row && row.passes_rigor_gate == null)
 	) {
 		return { state: "pending", title: PENDING_METRIC_TITLE };

@@ -63,3 +63,36 @@ class TestDatabaseUrlEnvOverride:
         monkeypatch.setattr(db, "DATABASE_URL", "postgresql://user:pass@host:5432/db")
         postgres_kwargs = db._get_engine_kwargs()
         assert postgres_kwargs == {"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10}
+
+
+class TestBarePostgresUrlResolvesToPsycopg2:
+    """SQLAlchemy 2.1.0 changed the DEFAULT driver a bare ``postgresql://`` URL
+    resolves to — from ``psycopg2`` to ``psycopg`` (v3), which this repo does not
+    install (see the pin comment on ``sqlalchemy`` in requirements-base.txt).
+    Every bare-scheme call site — this module's own ``DATABASE_URL``,
+    ``migrations/env.py``, and every alembic offline-SQL test — imports the
+    driver at ``create_engine()`` time (no live connection needed), so a
+    resolution to the wrong dialect raises ``ModuleNotFoundError`` before a
+    single query runs. Reproduced directly: an isolated venv with sqlalchemy
+    2.1.1 + psycopg2-binary and no ``psycopg`` raises exactly that; the same
+    venv with 2.0.52 resolves ``...postgresql.psycopg2`` cleanly.
+
+    This guard does not re-litigate the version pin (that is a text-only
+    comparison a future dependabot PR is meant to be able to bump past, with
+    review); it pins the OUTCOME the pin protects, so any future upgrade —
+    whether or not it changes this exact number — is caught by whether it
+    breaks bare-scheme resolution, not by whether it changed a version string.
+    """
+
+    def test_bare_postgres_url_resolves_to_psycopg2_dialect(self):
+        from sqlalchemy import create_engine
+
+        engine = create_engine("postgresql://user:pass@host:5432/db")
+        assert engine.dialect.__class__.__module__ == "sqlalchemy.dialects.postgresql.psycopg2", (
+            f"a bare `postgresql://` URL now resolves to {engine.dialect.__class__.__module__!r}, "
+            "not the psycopg2 dialect this repo installs — this is the exact SQLAlchemy 2.1 "
+            "regression the <2.1 ceiling on requirements-base.txt's sqlalchemy pin exists to "
+            "prevent. Either the ceiling was raised without also installing `psycopg` (v3) or "
+            "making every DATABASE_URL construction say `postgresql+psycopg2://` explicitly, "
+            "or something else changed the default. Do not loosen this assertion — fix the cause."
+        )

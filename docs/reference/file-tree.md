@@ -3,7 +3,7 @@
 Top-level layout + the ~25 most load-bearing files. Same content as `file-tree.svg`.
 
 ```
-archimedes/                              the public repo — github.com/a-apin/archimedes
+archimedes/                              the public repo — github.com/aprin-labs/archimedes
 ├─ backend/archimedes/                   the Python monolith: API + agents + services + chain + marketplace
 │  ├─ main.py                            app boot: routers, /health honesty flags, corpus seed
 │  ├─ api/                               FastAPI route layer

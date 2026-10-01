@@ -1,4 +1,4 @@
-> **ARCHIVED 2026-07-28 — historical. Current: [`docs/demo-script-lepton.md`](../../demo-script-lepton.md)**
+> **ARCHIVED 2026-07-28 — historical. See [`docs/archive/demo-script-lepton.md`](../demo-script-lepton.md)**
 >
 > May-2026 Agora demo cue sheet.
 

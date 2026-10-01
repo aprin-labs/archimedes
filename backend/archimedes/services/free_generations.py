@@ -58,6 +58,7 @@ import os
 from archimedes.models.free_generation_grant import (
     claim_free_grant,
     release_grant,
+    release_grant_for_job,
     stamp_grant_job,
     used_count,
 )
@@ -154,15 +155,22 @@ def claim(user_id: str, *, email_verified: bool) -> int | None:
 
 
 def stamp_job(grant_id: int, *, job_id: str) -> None:
-    """Record which job the slot funded. Quiet: the generation is already queued."""
+    """Record which job the slot funded. Quiet: the generation is already queued.
+
+    Not only provenance: :func:`release_for_job` looks the row up BY this stamp,
+    so an unstamped slot is one the terminal-failure path can no longer hand
+    back. The failure log below says exactly that rather than the reassurance it
+    used to carry.
+    """
     try:
         with _session() as session:
             stamp_grant_job(session, grant_id, job_id=job_id)
             session.commit()
     except Exception:
         logger.error(
-            "free-generation grant %s could not be stamped with job %s — the slot is still "
-            "correctly counted as used, only its provenance is missing.",
+            "free-generation grant %s could not be stamped with job %s — the slot stays counted "
+            "as used and, with no job id on the row, cannot be returned automatically if that "
+            "run fails. Manual release needed if it does.",
             grant_id,
             job_id,
             exc_info=True,
@@ -187,6 +195,41 @@ def release(grant_id: int) -> None:
             grant_id,
             exc_info=True,
         )
+
+
+def release_for_job(job_id: str) -> bool:
+    """Hand back the free slot *job_id* spent, because that run delivered nothing.
+
+    The counterpart of :func:`release` for the OTHER half of the failure
+    surface. ``release`` covers the failures ``/api/generate/start`` can see
+    itself (the entitlement gate refusing, the enqueue erroring) and takes the
+    ``grant_id`` it is still holding. This one covers everything that goes
+    wrong AFTER the job is queued — the corpus yielding too few papers to fuse,
+    a pipeline crash, a cancel — where the only handle the terminal path has is
+    the job id the slot was stamped with.
+
+    Returns ``True`` only when a slot actually moved back, so the caller can
+    log the fact rather than claim it unconditionally.
+
+    Quiet on failure, but logged at ``error`` for the same reason ``release``
+    is: a slot that fails to come back costs the account one of its free
+    generations for a run that produced nothing. That errs against the user.
+    """
+    if not job_id:
+        return False
+    try:
+        with _session() as session:
+            released = release_grant_for_job(session, job_id)
+            session.commit()
+            return released is not None
+    except Exception:
+        logger.error(
+            "free-generation slot for job %s could not be released — the account was charged "
+            "one free generation for a run that delivered nothing.",
+            job_id,
+            exc_info=True,
+        )
+        return False
 
 
 def remaining(user_id: str) -> int | None:

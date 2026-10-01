@@ -55,6 +55,14 @@ resource "aws_route53_record" "apex_txt" {
 # p=reject is a separate, evidence-led change: do it once the rua reports show
 # every legitimate sending path is aligned, not before.
 #
+# The reports themselves are collected by dmarc_reports.tf (#1504): an SES
+# receipt rule for var.dmarc_rua_address writing to a private S3 bucket. Until
+# that is applied this record names a mailbox nothing delivers to, so there is
+# no evidence and any change to `p=` below is a guess. The four conditions that
+# have to hold before it moves, and the quarantine → reject ramp, are in
+# docs/runbooks/dmarc-reports.md; scripts/dmarc_report_summary.py produces the
+# table they are read from.
+#
 # p=none is not decorative even before reports arrive — Gmail's and Yahoo's
 # bulk-sender rules require a DMARC record to exist at all.
 resource "aws_route53_record" "dmarc" {

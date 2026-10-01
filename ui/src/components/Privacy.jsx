@@ -545,11 +545,11 @@ export default function Privacy() {
 					policy itself, or a mistake you have spotted on this page — the
 					project&rsquo;s issue tracker works too:{" "}
 					<a
-						href="https://github.com/a-apin/archimedes/issues"
+						href="https://github.com/aprin-labs/archimedes/issues"
 						target="_blank"
 						rel="noopener noreferrer"
 					>
-						github.com/a-apin/archimedes/issues
+						github.com/aprin-labs/archimedes/issues
 					</a>
 					. It is public, so please do not post personal details there; use the
 					email address above for those.

@@ -535,19 +535,43 @@ class LocalStrategyProvider:
         return len(loaded)
 
     def _sync_to_unified_table(self, strategies: dict[str, Strategy]) -> None:
-        """Sync loaded strategies to the unified strategy_passports table."""
+        """Sync loaded strategies to the unified strategy_passports table.
+
+        Writes the CARD — file metadata, papers, and the resolved display
+        metrics. It never writes a grade: the nine verdict columns move only
+        through ``passport_loader._apply_rigor_verdict``, so this sync can run on
+        every process start without disturbing what a gate decided
+        (``docs/adr/rigor-verdict-of-record.md``).
+
+        ``with_display_metrics`` is the #1746 half. The row used to store only
+        the FIRST link of the display chain (the #1187 fixture snapshot), which
+        is why ``GET /api/strategies/passports/{id}`` served ``sharpe_ratio:
+        null`` for ``harvey_2018_volatility_targeting`` while
+        ``GET /api/strategies/{id}`` served ``0.406`` from the persisted backtest
+        — one strategy, two endpoints, two Sharpes. The chain is resolved here,
+        once, and both endpoints now read the answer.
+        """
         try:
+            from archimedes.services.curated_metrics import display_metrics_source, with_display_metrics
             from archimedes.services.passport_loader import ingest_passport
 
             with get_session() as session:
                 synced = 0
                 for strategy in strategies.values():
                     try:
+                        bt = self._backtests.get(strategy.id)
                         ingest_passport(
                             session,
-                            strategy,
+                            with_display_metrics(strategy, bt),
                             generation_method="curated",
                             force_update=True,
+                            # The label travels with the numbers. Derived from
+                            # the SAME (strategy, bt) pair `with_display_metrics`
+                            # resolves from, and written in the same call, so no
+                            # reader has to re-derive it from a provider memo of
+                            # a different vintage — and so the passport payload
+                            # can say which link a number came from at all.
+                            display_metrics_source=display_metrics_source(strategy, bt),
                         )
                         synced += 1
                     except Exception as exc:

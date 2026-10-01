@@ -7,7 +7,7 @@
 > **Supersedes:** —
 > **Superseded-by:** —
 > **Question being decided:** Should every Tier-1 strategy pass the four selection-bias controls via ONE authoritative gate path, or are different gate definitions (a fast one for the library list, a strict one for the passport) acceptable?
-> **Related:** [PR #710](https://github.com/a-apin/archimedes/pull/710) (full-tree technical audit), [`docs/specs/selection-bias-corrections-spec.md`](../specs/selection-bias-corrections-spec.md), `backend/archimedes/services/rigor_evaluator.py` (`run_rigor_gate`).
+> **Related:** [PR #710](https://github.com/aprin-labs/archimedes/pull/710) (full-tree technical audit), [`docs/specs/selection-bias-corrections-spec.md`](../specs/selection-bias-corrections-spec.md), `backend/archimedes/services/rigor_evaluator.py` (`run_rigor_gate`).
 
 ## TL;DR
 

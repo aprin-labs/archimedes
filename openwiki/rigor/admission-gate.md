@@ -16,6 +16,15 @@ generated: { by: "claude-code", at: "2026-08-31T05:55:43.566Z" }
 
 # Tier-1 admission gate
 
+> **STALE ON ONE NUMBER — regenerate.** This page was generated 2026-08-31 from the quant
+> slice as it then stood. On 2026-09-03,
+> [#1794](https://github.com/aprin-labs/archimedes/issues/1794) retired the lower DSR bar:
+> the badge bar is **0.95**, defined once as `DSR_P_BADGE_MIN` in
+> `backend/archimedes/services/rigor_profiles.py`, and the "the slice does not agree with
+> itself" note below describes a disagreement that no longer exists. Every `0.90` on this
+> page is the retired bar. The body is left as generated rather than hand-patched, so the
+> `generated:` provenance above stays true; the next openwiki run supersedes it.
+
 Tier-1 strategies get full agent autonomy and become eligible for vault deployment. The
 bar to enter is the **four-primitive admission gate**: a strategy is admitted only when
 **all four controls pass simultaneously**.

@@ -43,13 +43,37 @@ class StrategyStatus(str, Enum):
 
 
 class PositionSizing(str, Enum):
+    """Sizing rules a passport can declare.
+
+    This enum must remain a SUPERSET of ``strategy_dsl.POSITION_SIZING_TYPES``
+    (#1769). The passport card's sizing field is derived from the validated DSL
+    spec, and ``StrategyPassportRecord.to_strategy_passport`` coerces the stored
+    column back through this enum — so a DSL sizing type with no member here is
+    not "unsupported", it is a ``ValueError`` on read for every row that uses
+    it. ``test_passport_spec_parity.py`` fails if the DSL grows a type this list
+    has not grown with it. ``risk_parity`` / ``kelly`` have no DSL counterpart
+    and are curated-YAML vocabulary; the superset direction is the safe one.
+    """
+
     EQUAL_WEIGHT = "equal_weight"
     RISK_PARITY = "risk_parity"
     KELLY = "kelly"
     INVERSE_VOL = "inverse_vol"
+    FULL_INVESTED_WHEN_IN_MARKET = "full_invested_when_in_market"
+    VOLATILITY_TARGET = "volatility_target"
 
 
 class RebalanceFrequency(str, Enum):
+    """Rebalance cadences a passport can declare.
+
+    Same superset rule as ``PositionSizing`` above, and pinned by the same file:
+    ``_passport_spec_fields`` constructs this enum from a validated spec's
+    ``rebalance_frequency``, so a DSL cadence with no member here is a
+    ``ValueError`` out of every generated persist — not an unsupported option.
+    Today the two vocabularies happen to be identical; the test is what keeps
+    them from drifting apart silently.
+    """
+
     DAILY = "daily"
     WEEKLY = "weekly"
     MONTHLY = "monthly"
@@ -186,7 +210,16 @@ class StrategyPassport:
 
     @property
     def paper_arxiv_id(self) -> str:
-        """arxiv_id of the primary (first) paper, or empty string."""
+        """arxiv_id of the primary (first) paper, or empty string.
+
+        **Display only. Never use this for provenance (#1637).** A fusion
+        strategy synthesizes from several papers and this names exactly one of
+        them, so anything that binds a decision, a trace or a hash to it
+        under-reports the strategy by construction — which is precisely how
+        ``agent_runner`` came to write a single-element ``consulted_paper_hashes``
+        for multi-paper strategies and sign it. The provenance surface is
+        ``papers`` — the full cited list.
+        """
         return (self.papers[0].arxiv_id or "") if self.papers else ""
 
     @property

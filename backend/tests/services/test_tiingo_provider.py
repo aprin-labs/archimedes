@@ -654,16 +654,21 @@ class TestProviderSelectionWiring:
         from archimedes.services.market_data_provider import CachingMarketDataProvider
 
         monkeypatch.setenv("MARKET_DATA_PROVIDER", "tiingo")
-        provider = get_provider()
-        assert isinstance(provider, CachingMarketDataProvider)
-        assert isinstance(provider._inner, TiingoProvider)
-        assert provider._source_name == "tiingo"
+        # Since #1798 this variable selects the DAILY seam's vendor when
+        # MARKET_DATA_DAILY_PROVIDER is unset (back-compat), and never the
+        # intraday seam's — see test_market_data_seams.py.
+        monkeypatch.delenv("MARKET_DATA_DAILY_PROVIDER", raising=False)
+        provider = get_provider(seam="daily")
+        assert isinstance(provider._inner, CachingMarketDataProvider)
+        assert isinstance(provider._inner._inner, TiingoProvider)
+        assert provider._inner._source_name == "tiingo"
 
     def test_market_data_provider_tiingo_without_key_fails_loud(self, monkeypatch):
         monkeypatch.setenv("MARKET_DATA_PROVIDER", "tiingo")
+        monkeypatch.delenv("MARKET_DATA_DAILY_PROVIDER", raising=False)
         monkeypatch.delenv("TIINGO_API_KEY", raising=False)
         with pytest.raises(TiingoAPIKeyMissingError):
-            get_provider()
+            get_provider(seam="daily")
 
 
 # ─── Free-tier politeness: pacing + honest rate-limit surfacing (#1218) ──
@@ -1118,8 +1123,9 @@ class TestCredentialEnvVarNaming:
         from archimedes.services.market_data_provider import YFinanceProvider
 
         monkeypatch.setenv("MARKET_DATA_PROVIDER", "tiingo")
+        monkeypatch.delenv("MARKET_DATA_DAILY_PROVIDER", raising=False)
         monkeypatch.delenv("TIINGO_API_TOKEN", raising=False)
         monkeypatch.delenv("TIINGO_API_KEY", raising=False)
         with pytest.raises(TiingoAPIKeyMissingError):
-            provider = get_provider()
-            assert not isinstance(provider._inner, YFinanceProvider), "silent yfinance fallback"
+            provider = get_provider(seam="daily")
+            assert not isinstance(provider._inner._inner, YFinanceProvider), "silent yfinance fallback"

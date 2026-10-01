@@ -67,6 +67,45 @@ def _fake_model(embeddings: dict[str, list[float]] | None = None):
     return model
 
 
+@contextlib.contextmanager
+def _stub_sentence_transformers(constructor):
+    """Stub ``sentence_transformers`` — and ``torch`` — for the duration.
+
+    Stubbing only ``sentence_transformers`` is not enough. Once that import
+    succeeds, ``_get_embedding_model`` runs straight on into its CPU-guardrail
+    ``import torch`` (``archimedes/services/paper_rag.py:277-285``). On a box
+    that HAS torch installed, that is a real, first-time C-extension import
+    performed *inside* a ``patch.dict("sys.modules")`` block — and on exit
+    ``patch.dict`` rips the freshly created ``torch.*`` entries back out of
+    ``sys.modules``, leaving dangling extension state that segfaults CPython
+    (``Fatal Python error: Segmentation fault``, exit 139) either immediately
+    or in some later, innocent-looking test.
+
+    This file only survived on main because ``tests/services/test_paper_rag.py``
+    sorts first, loaded the real MiniLM model, and left torch in ``sys.modules``
+    — so the import was a harmless cache hit. The crash is therefore already
+    reachable on main today, by running this file on its own on a torch box::
+
+        pytest backend/tests/test_paper_rag.py   # → Segmentation fault (139)
+
+    Pinning that sibling to its TF-IDF path (suite audit P1-3) removes the
+    accidental pre-import, which also brings the latent crash into the normal
+    full-suite ordering. Stubbing torch alongside sentence_transformers keeps
+    every ordering hermetic: no real model, no real torch, no dangling C
+    extensions.
+
+    The torch stub carries a working ``set_num_threads`` so the 2026-07-04 CPU
+    guardrail still runs its intended branch instead of being diverted into the
+    ``except Exception`` arm.
+    """
+    st_mod = types.ModuleType("sentence_transformers")
+    st_mod.SentenceTransformer = constructor
+    torch_stub = types.ModuleType("torch")
+    torch_stub.set_num_threads = MagicMock()
+    with patch.dict("sys.modules", {"sentence_transformers": st_mod, "torch": torch_stub}):
+        yield st_mod
+
+
 def _mk_paper(arxiv_id: str, title: str, abstract: str = "") -> dict:
     return {"arxiv_id": arxiv_id, "title": title, "abstract": abstract}
 
@@ -125,12 +164,8 @@ class TestPaperRAGHealth:
         monkeypatch.setenv("FUSION_SEMANTIC_RETRIEVAL", "true")
         _reset_model_cache()
 
-        # Patch SentenceTransformer to raise an exception
-        with patch.dict("sys.modules", {"sentence_transformers": types.ModuleType("sentence_transformers")}):
-            import sys
-
-            st_mod = sys.modules["sentence_transformers"]
-            st_mod.SentenceTransformer = MagicMock(side_effect=OSError("corrupted model files"))
+        # Constructor raises the way a corrupted on-disk model cache would.
+        with _stub_sentence_transformers(MagicMock(side_effect=OSError("corrupted model files"))):
             h = paper_rag_health(probe=True)
         # Reset after test
         _reset_model_cache()
@@ -223,11 +258,27 @@ class TestGetEmbeddingModelCaching:
         _reset_model_cache()
 
     def test_returns_none_on_import_error(self, monkeypatch):
-        """If sentence_transformers is not importable, returns None."""
+        """If sentence_transformers is not importable, returns None.
+
+        ``sys.modules[name] = None`` makes the *import statement itself* raise
+        ImportError, which is the condition this test is named for and the one
+        CI actually runs under (``requirements-base.txt`` ships no
+        sentence-transformers). The previous version installed a fake module
+        whose ``SentenceTransformer`` raised only when CALLED, so the import
+        succeeded and ``_get_embedding_model`` ran on into its CPU-guardrail
+        ``import torch`` — a real, first-time torch import performed *inside*
+        a ``patch.dict("sys.modules")`` block, which segfaults CPython when
+        the patch tears the freshly-created C extension modules back out.
+
+        That never fired on main only because ``tests/services/test_paper_rag.py``
+        happened to load the real MiniLM model first and left torch in
+        ``sys.modules``, making this import a cheap cache hit. Pinning that file
+        to its TF-IDF path (audit P1-3) removed the accidental pre-import and
+        exposed the order dependency. Failing at the import keeps the test on
+        the branch it claims and never touches torch at all.
+        """
         _reset_model_cache()
-        fake_mod = types.ModuleType("sentence_transformers")
-        fake_mod.SentenceTransformer = MagicMock(side_effect=ImportError("no module"))
-        with patch.dict("sys.modules", {"sentence_transformers": fake_mod}):
+        with patch.dict("sys.modules", {"sentence_transformers": None}):
             result = rag_module._get_embedding_model()
         _reset_model_cache()
         assert result is None
@@ -238,10 +289,6 @@ class TestGetEmbeddingModelCaching:
         stub = _fake_model()
         call_count = [0]
 
-        import types as _types
-
-        fake_st = _types.ModuleType("sentence_transformers")
-
         # Use a plain function on a ModuleType (not a class attribute) so it is
         # never treated as a bound method and receives exactly the one positional
         # arg that _get_embedding_model passes.
@@ -249,8 +296,7 @@ class TestGetEmbeddingModelCaching:
             call_count[0] += 1
             return stub
 
-        fake_st.SentenceTransformer = _fake_constructor
-        with patch.dict("sys.modules", {"sentence_transformers": fake_st}):
+        with _stub_sentence_transformers(_fake_constructor):
             r1 = rag_module._get_embedding_model()  # triggers real load path
             r2 = rag_module._get_embedding_model()  # must hit the cache
         # Both calls must return the same cached stub.

@@ -41,6 +41,7 @@ if str(_BACKEND_DIR) not in sys.path:
 from archimedes.db import DATABASE_URL  # noqa: E402
 from archimedes.models.account import (  # noqa: E402
     AuthAccount,
+    AuthEmailDelivery,
     AuthSession,
     AuthUser,
     AuthVerification,
@@ -83,6 +84,7 @@ from archimedes.models.user_profile import UserProfile  # noqa: E402
 __all__ = [
     "DATABASE_URL",
     "AuthAccount",
+    "AuthEmailDelivery",
     "AuthSession",
     "AuthUser",
     "AuthVerification",

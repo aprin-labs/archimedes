@@ -64,7 +64,12 @@ operations. Circle wallet passkeys control Circle wallets; they do not log in to
   and passed. Since PBO and look-ahead can never run here the verdict is CAPPED and is
   not the strategy passport's gate. Read `legs_evaluated` / `legs_runnable` /
   `legs_total` / `verdict_capped` alongside it; `passes` alone overstates the evidence.
-  `passes` is true only when at least one check was evaluable and none failed.
+  MINIMUM EVALUATION WINDOW: 250 daily bars (one trading year). Under it you get a
+  422 refusal — `detail.reason: "window_too_short"` with `bars_received` and
+  `bars_required` — and never a verdict, so send more history rather than retrying.
+  Dates must be strict `YYYY-MM-DD`, unique and ASCENDING (the walk-forward split is
+  positional; an out-of-order series is refused, never sorted), and every
+  `daily_return` finite with `|r| <= 1.0`.
 
 ## Optional wallet link (EIP-4361)
 

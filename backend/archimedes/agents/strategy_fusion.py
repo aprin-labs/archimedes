@@ -1,8 +1,8 @@
 """Strategy fusion — multi-paper, user-steered, novelty-seeking synthesis.
 
-A NEW, feature-flagged primitive that originally sat *beside* the interactive
-Strategy Architect (retired — issue #1064; the debate society is now the sole
-strategy-generation path). The architect used to select + weight pre-curated
+A primitive that originally sat *beside* the interactive Strategy Architect
+(retired — issue #1064; the debate society is now the sole strategy-generation
+path), behind a feature flag that was itself retired on 2026-09-02 (deck Q4). The architect used to select + weight pre-curated
 single-paper library strategies (the verified-library path that fed the
 strategy-passport / reasoning-trace data flow). Fusion does the
 opposite-direction thing: synthesizes a *new* strategy hypothesis by fusing
@@ -10,11 +10,17 @@ opposite-direction thing: synthesizes a *new* strategy hypothesis by fusing
 (McLean & Pontiff 2016: published alpha decays — the un-decayed edge is
 combinations not yet in the literature).
 
-Why a separate, flagged module (owner-decided HARD constraint):
+Why a separate module (owner-decided HARD constraint):
 - The construction-trace path is contract-review-grade (the live
-  `ReasoningTraceRegistry`). Fusion is additive, behind
-  `ARCHIMEDES_FUSION_ENABLED` (default OFF), and revertible by deleting this
-  file + its spec. Nothing in the audited flow is touched.
+  `ReasoningTraceRegistry`). Fusion started additive and revertible by
+  deleting this file + its spec. Nothing in the audited flow is touched.
+- Fusion is now UNCONDITIONAL. `ARCHIMEDES_FUSION_ENABLED` was retired on
+  2026-09-02: the debate society is the sole generation pipeline and every
+  proposer routes through `StrategyFusion.propose()`, so the only thing the
+  flag's OFF branch could do in production was return a `disabled` sentinel
+  and make Generate silently produce nothing. A lever that can only break
+  prod is not a lever. Do not reintroduce a switch here —
+  `backend/tests/test_fusion_flag_retired.py` fails if one comes back.
 - The LLM-backend seam, lazy `anthropic` import, `extract_json` (now in
   `agents/generation_json.py`), frozen artifact and honest-fallback
   labelling deliberately mirrored the (now-retired) architect so a later
@@ -40,18 +46,24 @@ import json
 import logging
 import os
 import re
+import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from archimedes.agents.generation_json import extract_json
+from archimedes.agents.prompts import PROMPTS
 from archimedes.models.portfolio import RISK_PROFILE_PARAMS, RiskProfile
 from archimedes.services.llm_backend import LLMBackend, make_llm_backend
 from archimedes.services.strategy_dsl import DSLError, validate_strategy_spec
 from archimedes.services.strategy_signal_evaluator import GLOBAL_ASSETS
 
 logger = logging.getLogger(__name__)
+
+# Serializes load_corpus's DB/file branch. See the comment inside load_corpus:
+# concurrent full-corpus ORM loads abort the interpreter (#1632, prod rev 214).
+_CORPUS_LOAD_LOCK = threading.Lock()
 
 # ── The three paper knobs (#1636) ───────────────────────────────────────────
 #
@@ -89,22 +101,6 @@ FUSION_MAX_PAPERS = 30
 # evidence per generation before a single candidate is backtested. 30 stays
 # available as an explicit user pick; nobody is defaulted into it.
 DEFAULT_MAX_PAPERS = 8
-
-_TRUTHY = {"1", "true", "yes", "on"}
-
-
-# ── Feature flag (mirrors ARCHIMEDES_STRATEGIES_DIR: plain getenv) ──
-
-
-def fusion_enabled() -> bool:
-    """True iff ARCHIMEDES_FUSION_ENABLED is truthy. Default OFF.
-
-    Truthy = {1,true,yes,on} case-insensitive — the env convention shared
-    across the codebase. No central settings module exists; env override is
-    the established pattern (`strategy_provider.default_provider`).
-    """
-    return os.getenv("ARCHIMEDES_FUSION_ENABLED", "").strip().lower() in _TRUTHY
-
 
 # ── Asset-class synonym map (deterministic candidate filtering) ──
 #
@@ -641,31 +637,41 @@ def load_corpus(path: Path | None = None) -> list[CorpusPaper]:
     if path is not None:
         return _load_corpus_from_file(path)
 
-    # DB path first
-    try:
-        from archimedes.services.corpus_service import load_papers_from_db
+    # Serialized: two threads running this branch CONCURRENTLY is the #1632
+    # abort. Prod rev 214 died with two executor threads both inside
+    # load_papers_from_db's session teardown (SQLAlchemy _detach_states /
+    # InstanceState._cleanup), piled up by abandoned /health corpus probes on a
+    # cold task. The lock makes the race unrepresentable for every caller —
+    # generation, warmers, anything — not just the probe path (which no longer
+    # loads at all; /health reads count_corpus_papers instead). The cost is a
+    # waiting thread, which is exactly the safe outcome: the interpreter never
+    # dies from waiting.
+    with _CORPUS_LOAD_LOCK:
+        # DB path first
+        try:
+            from archimedes.services.corpus_service import load_papers_from_db
 
-        db_rows = load_papers_from_db()
-        if db_rows:
-            papers = [
-                CorpusPaper(
-                    arxiv_id=r["arxiv_id"],
-                    title=r["title"],
-                    abstract=r["abstract"],
-                    primary_category=r.get("primary_category", ""),
-                    categories=tuple(r.get("categories", [])),
-                    published=r.get("published", ""),
-                )
-                for r in db_rows
-                if r.get("arxiv_id") and (r.get("title") or r.get("abstract"))
-            ]
-            logger.info("fusion: loaded %d corpus papers from DB", len(papers))
-            return papers
-    except Exception as exc:
-        logger.debug("fusion: DB corpus load failed, falling back to file: %s", exc)
+            db_rows = load_papers_from_db()
+            if db_rows:
+                papers = [
+                    CorpusPaper(
+                        arxiv_id=r["arxiv_id"],
+                        title=r["title"],
+                        abstract=r["abstract"],
+                        primary_category=r.get("primary_category", ""),
+                        categories=tuple(r.get("categories", [])),
+                        published=r.get("published", ""),
+                    )
+                    for r in db_rows
+                    if r.get("arxiv_id") and (r.get("title") or r.get("abstract"))
+                ]
+                logger.info("fusion: loaded %d corpus papers from DB", len(papers))
+                return papers
+        except Exception as exc:
+            logger.debug("fusion: DB corpus load failed, falling back to file: %s", exc)
 
-    # File fallback
-    return _load_corpus_from_file(path)
+        # File fallback
+        return _load_corpus_from_file(path)
 
 
 def _load_corpus_from_file(path: Path | None = None) -> list[CorpusPaper]:
@@ -858,6 +864,20 @@ class FusionProposal:
     # shortfall auditable instead of merely small. 0 on the non-fusion statuses
     # (disabled / insufficient_corpus / unparseable), where no prompt was built.
     papers_offered: int = 0
+    # (#1739) The paper→mechanism map: one entry per CITED paper the model
+    # could tie to a named mechanism AND to indicator aliases that literally
+    # appear in the validated spec's entry/exit conditions. Server-filtered in
+    # ``propose`` — an id the model invented, or a spec_element that is not in
+    # the spec, never survives into this list. Empty on every non-``ok``
+    # status, and empty on an ``ok`` proposal whose model emitted no map.
+    paper_mechanisms: list[dict[str, Any]] = field(default_factory=list)
+    # (#1739) How many of ``source_arxiv_ids`` survive that filter with at
+    # least one spec element attached. This is the honest read of "how many
+    # papers does this strategy actually trade the mechanism of", as opposed
+    # to ``len(source_arxiv_ids)``, which is the model's own claim. It LABELS,
+    # it never gates: a 5-citation / 1-mechanism proposal is still actionable,
+    # it just says so (#1636's honest-shortfall rule).
+    distinct_mechanism_papers: int = 0
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @property
@@ -883,104 +903,26 @@ class FusionProposal:
 
 
 # ── Prompt construction ─────────────────────────────────────────
+#
+# The prompt TEXT lives in `agents/prompts.py` — one registry for every live LLM
+# prompt in the tree, rendered into `docs/specs/prompt-inventory.md` under a
+# drift test and byte-guarded by `test_prompt_registry_goldens.py` (#1800). The
+# three module constants below stay, because that is what the rest of this file
+# (and `test_multi_paper_utilization`) reads; only their SOURCE moved.
 
 
-_SPEC_CONTRACT = """The strategy_spec field is REQUIRED. It is a machine-readable strategy definition \
-using the Archimedes DSL (closed-enum vocabulary). For asset_universe, list the \
-tickers the mechanism trades from the user's selected assets (in user_steer); the \
-platform overrides this with the user's chosen universe, so do not default to a \
-single broad-market proxy. Valid rebalance_frequency values: \
-daily, weekly, monthly. Valid indicators: sma_N, ema_N, rsi_N, momentum_N, \
-realized_vol_N (replace N with an integer period). momentum_N is the trailing \
-N-bar RETURN, centred on 0 (+0.05 means +5%); write momentum thresholds on that \
-scale — e.g. {"gt": ["momentum_20", 0]} means "trailing 20-bar return is \
-positive". realized_vol_N is the ANNUALIZED standard deviation of the last N \
-daily returns, so 0.15 means 15% annualized vol — e.g. \
-{"lt": ["realized_vol_20", 0.15]} means "the last 20 bars were calm". \
-Entry/exit conditions use comparison ops (gt, lt, gte, lte) \
-or logic ops (and, or, not). Position sizing types: full_invested_when_in_market \
-(all-in while the entry condition holds; no other keys), equal_weight (1/N of \
-the account per name in asset_universe; no other keys), inverse_vol \
-(equal_weight scaled by reference_vol_annual / realized vol; the ONLY extra key \
-is reference_vol_annual, optional, must be > 0, defaults to 0.15), \
-volatility_target (the ONLY extra key is annual_pct, required, > 0). \
-position_sizing accepts NO other keys — a key outside that list is a hard \
-validation error, not an ignored field, so do not invent one. Do NOT emit any \
-field asserting the strategy's own correctness or look-ahead safety; the \
-platform derives that structurally from the spec and ignores anything you \
-claim about it. \
->>>>>>> origin/main
-parameter_variants is OPTIONAL: a dict mapping indicator aliases to 2-8 numeric \
-values for CSCV overfitting detection (e.g. {"sma_200": [150, 175, 200, 225, 250]}). \
-Keys must reference indicators used in entry/exit conditions."""
+_SPEC_CONTRACT = PROMPTS["fusion.spec_contract"].text
 
-
-_SYSTEM_PROMPT = (
-    f"""You are Archimedes Fusion, an AI quant-research synthesizer. \
-You design a NOVEL trading-strategy hypothesis by FUSING the mechanisms of \
-MULTIPLE peer-reviewed quantitative-finance papers into one combined approach.
-
-Hard rules:
-- You MUST fuse AT LEAST {FUSE_TARGET_MIN} of the provided papers when that \
-many are provided; NEVER fewer than {MIN_PAPERS}. A single-paper answer is \
-invalid — that is a different tool's job — and never cite a paper not in the \
-provided list.
-- If you cite fewer than {FUSE_TARGET_MIN}, you MUST justify the shortfall in \
-`fusion_reasoning`, naming each rejected paper and why it contributes no \
-distinct mechanism. Padding the citation list with a paper whose mechanism \
-you cannot name is WORSE than an honest shortfall: citation count is read \
-downstream as evidence depth, so a fabricated mechanism launders weak \
-evidence into the provenance record.
-- Reference papers ONLY by an arxiv_id from the provided candidates. Never \
-invent a paper or an arxiv_id.
-- OPTIMIZE FOR NOVELTY. The edge is the combination the literature has NOT \
-published. Published single-paper alpha decays post-publication (McLean & \
-Pontiff 2016) — your value is the non-obvious synthesis, not re-stating one \
-paper. Explain why the COMBINATION is non-obvious relative to each paper alone.
-- This is a HYPOTHESIS, not validated alpha. Do NOT invent Sharpe ratios, \
-returns, or backtest numbers. Do NOT promise or forecast returns. State \
-plainly that empirical validation (backtest / DSR / PBO) is pending.
-- Respect the user's risk envelope (USYC floor/ceiling, target vol, max DD) \
-as a synthesis constraint, not as a paper filter.
-
-"""
-    # NOT an f-string from here down: the JSON schema below is full of literal
-    # braces. The interpolated half is the paper-count rule above.
-    + """Output STRICT JSON ONLY (no prose, no markdown fences), exactly this schema:
-{
-  "strategy_name": "<short working name for the fused strategy>",
-  "thesis": "<the fused strategy in plain language, honest it is pre-backtest>",
-  "source_arxiv_ids": ["<arxiv_id from candidates>", "<another>", ...],
-  "fusion_reasoning": "<what mechanism EACH cited paper contributes and how \
-they combine>",
-  "novelty_rationale": "<why this specific combination is not already in the \
-literature>",
-  "risk_notes": "<key risks + the pre-backtest / selection-bias caveat>",
-  "strategy_spec": {
-    "name": "<same as strategy_name>",
-    "asset_universe": ["<ticker>", "<ticker>", ...],
-    "rebalance_frequency": "monthly",
-    "entry": {"gt": ["close", "sma_200"]},
-    "exit": {"lt": ["close", "sma_200"]},
-    "position_sizing": {"type": "full_invested_when_in_market"},
-    "source_arxiv_ids": ["<from source_arxiv_ids above>"],
-    "indicators": ["sma_200"],
-    "parameter_variants": {"sma_200": [150, 175, 200, 225, 250]}
-  }
-}
-
-"""
-    + _SPEC_CONTRACT
+# The paper-count rule is the only interpolated half of the proposer prompt.
+# Rendering it here — rather than storing "5" and "2" in the registry — keeps
+# the sentence the model reads tied to the constants this module actually
+# enforces (MIN_PAPERS hard-rejects; FUSE_TARGET_MIN is a request, #1636).
+_SYSTEM_PROMPT = PROMPTS["fusion.proposer.system"].render(
+    fuse_target_min=FUSE_TARGET_MIN,
+    min_papers=MIN_PAPERS,
 )
 
-
-_SPEC_REPAIR_SYSTEM = (
-    "You are the spec compiler for Archimedes. A strategy proposal was produced "
-    "WITHOUT the REQUIRED machine-readable strategy_spec. From the proposal JSON "
-    "the user sends, output STRICT JSON ONLY — a single object that IS the "
-    "strategy_spec (no wrapper key, no prose, no markdown fences).\n\n"
-    "" + _SPEC_CONTRACT
-)
+_SPEC_REPAIR_SYSTEM = PROMPTS["fusion.spec_repair.system"].text
 
 
 def _build_user_prompt(brief: FusionBrief, candidates: list[CorpusPaper]) -> str:
@@ -1085,15 +1027,9 @@ class StrategyFusion:
         return self._corpus
 
     def propose(self, brief: FusionBrief) -> FusionProposal:
-        if not fusion_enabled():
-            # Hard inert path: no LLM, no manifest read, sentinel out.
-            return _inert_proposal(
-                brief,
-                "disabled",
-                "Strategy fusion is disabled. Set ARCHIMEDES_FUSION_ENABLED=1 "
-                "to enable multi-paper, novelty-seeking synthesis.",
-            )
-
+        # Unconditional since 2026-09-02 (deck Q4): no flag check here. See the
+        # module docstring for why the OFF branch was deleted rather than
+        # defaulted ON.
         if self._candidates is not None:
             # Pre-selected by the caller (the debate proposer, which already
             # ran select_candidates WITH its regime_bias) — used verbatim so
@@ -1145,6 +1081,18 @@ class StrategyFusion:
         seen: set[str] = set()
         source_ids = [i for i in source_ids if not (i in seen or seen.add(i))]
 
+        # (#1739) Paper→mechanism map, id half — the SAME anti-hallucination
+        # shape as the valid_ids filter directly above: an entry naming a paper
+        # this proposal does not cite is dropped, never repaired. The
+        # spec_elements half runs further down, once there is a VALIDATED spec
+        # whose indicator aliases can be checked against.
+        cited_ids = set(source_ids)
+        paper_mechanisms: list[dict[str, Any]] = [
+            e
+            for e in (parsed.get("paper_mechanisms") or [])
+            if isinstance(e, dict) and str(e.get("arxiv_id", "")) in cited_ids
+        ]
+
         if len(source_ids) < MIN_PAPERS:
             logger.warning(
                 "fusion: model fused %d valid papers (<%d); declined",
@@ -1187,6 +1135,7 @@ class StrategyFusion:
             strategy_spec = _repair_spec(backend, brief, parsed)
         universe_source: str | None = None
         universe_gaps: list[str] = []
+        validated_spec = None
         if not isinstance(strategy_spec, dict):
             strategy_spec = None
         else:
@@ -1204,12 +1153,52 @@ class StrategyFusion:
             # model emission — must degrade to honest text-only HERE, not
             # surface later as a DSLError mid-evaluation/debate.
             try:
-                validate_strategy_spec(strategy_spec)
+                validated_spec = validate_strategy_spec(strategy_spec)
             except DSLError as exc:
                 logger.warning("fusion: strategy_spec failed DSL validation (%s) — falling back to text-only", exc)
                 strategy_spec = None
                 universe_source = None
                 universe_gaps = []
+                validated_spec = None
+
+        # (#1739) Paper→mechanism map, spec_elements half. ``indicators`` on the
+        # VALIDATED spec is exactly the alias set ``strategy_dsl`` checks
+        # ``parameter_variants`` keys against (strategy_dsl.py:269-274) — it is
+        # rebuilt from the entry/exit conditions (``sorted(all_indicators)``),
+        # so it is what the spec TRADES, not the ``indicators`` list the model
+        # declared alongside it. Checking the declared list would validate one
+        # self-report against another, which is the bug this issue is about: an
+        # alias that entry/exit never uses is not part of what this spec
+        # trades, so a paper "attributed" to it is not attributed at all. The
+        # entry is KEPT with its claim and its id — only the unsupported
+        # element is stripped, the debate's keep-the-claim/strip-the-id honesty
+        # pattern (debate_engine.py:467-501) — and it then contributes 0 to the
+        # count. No validated spec (text-only fallback) → no aliases → every
+        # entry is unattributed, which is the honest read of a proposal that
+        # trades nothing yet.
+        valid_elements: set[str] = set(validated_spec.indicators) if validated_spec is not None else set()
+        paper_mechanisms = [
+            {
+                "arxiv_id": str(e.get("arxiv_id", "")),
+                "mechanism": str(e.get("mechanism", "") or "").strip(),
+                "spec_elements": [
+                    el for el in (e.get("spec_elements") or []) if isinstance(el, str) and el in valid_elements
+                ],
+            }
+            for e in paper_mechanisms
+        ]
+        distinct_mechanism_papers = len({e["arxiv_id"] for e in paper_mechanisms if e["spec_elements"]})
+        if distinct_mechanism_papers < len(source_ids):
+            # LABEL, never gate (#1636): a citation the model cannot tie to a
+            # traded indicator is recorded as unattributed, not deleted and not
+            # a reject. The pair is what makes "cites 5" readable.
+            logger.warning(
+                "fusion: paper→mechanism attribution — %d of %d cited paper(s) name a mechanism "
+                "tied to an indicator this spec actually trades; the remainder are recorded as "
+                "unattributed (labelled, never blocked)",
+                distinct_mechanism_papers,
+                len(source_ids),
+            )
 
         risk_notes = str(parsed.get("risk_notes", "")).strip()
         if universe_gaps:
@@ -1235,6 +1224,8 @@ class StrategyFusion:
             universe_source=universe_source,
             universe_gaps=universe_gaps,
             papers_offered=papers_offered,
+            paper_mechanisms=paper_mechanisms,
+            distinct_mechanism_papers=distinct_mechanism_papers,
         )
 
 

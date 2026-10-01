@@ -4,7 +4,12 @@ Implements IOracleUpdater from archimedes/interfaces/chain.py.
 Equity/ETF prices (and the #775 cross-check's secondary reading) come from
 the market-data provider seam (``archimedes.services.market_data_provider``,
 #1218) — default provider yfinance, unchanged behavior; vendor-swappable via
-``MARKET_DATA_PROVIDER``. Crypto reaches that same seam as of #1710, through
+``MARKET_DATA_PROVIDER``. **Every read this module makes is on the ``intraday``
+seam (#1798)**, including ``_fetch_sp500_moving_averages``'s daily ^GSPC bars:
+``fetch_market_snapshot`` reads ^VIX and ^GSPC inside ONE run, and the ADR's
+"never mix vendors inside one run" rule is what pins both to the same vendor.
+Flipping the daily-bar vendor (``MARKET_DATA_DAILY_PROVIDER``) therefore does
+not touch this module. Crypto reaches that same seam as of #1710, through
 an ordered ``ORACLE_CRYPTO_SOURCE`` cascade whose default keeps CoinGecko as
 the primary and adds the provider seam as the documented fallback. Pushes
 prices via Circle Developer Controlled Wallets API (the oracle owner wallet is
@@ -60,8 +65,8 @@ CRYPTO_MAP = {
 #
 # CRYPTO_MAP above stays the push-set SSOT (``oracle_health._push_set_symbols``
 # reads it) and keeps holding CoinGecko ids; this map is the second coordinate
-# the same symbols need to be askable through the ``MARKET_DATA_PROVIDER`` seam
-# (``services.market_data_provider``). Ticker shape is the yfinance/SSOT
+# the same symbols need to be askable through the market-data provider seam
+# (``services.market_data_provider``, ``seam="intraday"``). Ticker shape is the yfinance/SSOT
 # convention ("<BASE>-USD", matching ``synthetic_universe.json``'s
 # ``yfinance_ticker`` for every crypto entry) because that is what the seam's
 # adapters take: ``YFinanceProvider`` passes it straight through and
@@ -103,12 +108,16 @@ CRYPTO_VENDOR_TICKERS = {
 #                        a miss to stay a miss rather than be quietly filled
 #                        from an unlicensed free API.
 #
-# NOTE (verified against the adapter, not assumed): ``TiingoProvider`` raises
-# ``NotImplementedError`` from ``get_intraday_quotes_batch`` — the ADR's
-# "the live oracle push … is not cutover-ready" consequence. So with
-# ``MARKET_DATA_PROVIDER=tiingo``, ``provider`` mode logs that refusal by name
-# and falls back to CoinGecko, and ``provider_only`` prices nothing. Tiingo
-# serves crypto DAILY bars only today.
+# NOTE (verified against the adapter and the seam table, not assumed):
+# ``TiingoProvider`` raises ``NotImplementedError`` from
+# ``get_intraday_quotes_batch`` — Tiingo serves crypto DAILY bars only today.
+# Since #1798 that no longer decides this leg's fate: this leg asks the
+# ``intraday`` seam, and ``_VENDOR_SEAMS`` lists Tiingo on ``daily`` only, so
+# ``MARKET_DATA_PROVIDER=tiingo`` resolves the intraday seam to yfinance (with
+# a warning naming the substitution) and ``provider`` / ``provider_only`` keep
+# pricing this leg from yfinance. The ``NotImplementedError`` handler below
+# stays as the belt-and-braces path for a future vendor that declares the
+# intraday seam without implementing all of it.
 DEFAULT_CRYPTO_SOURCE = "coingecko"
 _CRYPTO_SOURCE_ORDER: dict[str, tuple[str, ...]] = {
     "coingecko": ("coingecko", "provider"),
@@ -993,14 +1002,14 @@ class OracleUpdater:
         """Secondary-source cross-check (#775): compare a primary that is NOT
         the active market-data provider (Pyth/Stork via the PRICE_SOURCE
         cascade) against an independent reading FROM the active provider
-        (``MARKET_DATA_PROVIDER``, #1218 seam — default yfinance, today's
-        behavior) and fail closed when they diverge beyond the band. Returns
-        a rejection reason, or None to proceed.
+        (``MARKET_DATA_PROVIDER``, the #1218 seam's ``intraday`` half — default
+        yfinance, today's behavior) and fail closed when they diverge beyond
+        the band. Returns a rejection reason, or None to proceed.
 
         **The #775/#1218 seam tie-in.** The secondary reading is fetched via
-        ``_fetch_yfinance_single`` → ``market_data_provider.get_provider()``,
+        ``_fetch_yfinance_single`` → ``get_provider(seam="intraday")``,
         and the "same source, skip" guard below compares against
-        ``provider_name()`` rather than a hardcoded ``"yfinance"``. Swap
+        ``provider_name("intraday")`` rather than a hardcoded ``"yfinance"``. Swap
         ``MARKET_DATA_PROVIDER`` to a new vendor and this guardrail's
         secondary source swaps with it automatically — no separate change
         needed here. (The variable/log names below keep saying "yfinance"
@@ -1037,7 +1046,7 @@ class OracleUpdater:
             return None  # disabled
         from archimedes.services.market_data_provider import provider_name
 
-        if price.source in (provider_name(), "admin"):
+        if price.source in (provider_name("intraday"), "admin"):
             # active provider: same source, not an independent second opinion.
             # admin: a last-resort operator pin (ADMIN_PRICES_JSON) — the whole point
             # is to override upstream, so the secondary guardrail must not block it.
@@ -1185,8 +1194,8 @@ class OracleUpdater:
         """
         from archimedes.services.market_data_provider import get_provider, provider_name
 
-        quotes = get_provider().get_intraday_quotes_batch(symbols)
-        source = provider_name()
+        quotes = get_provider(seam="intraday").get_intraday_quotes_batch(symbols)
+        source = provider_name("intraday")
         # Named-exclusion bookkeeping (#1710): a ticker the provider had no data
         # for is absent from `quotes` per the seam's per-item-skip contract. Record
         # WHY here so _log_push_exclusions can name it instead of the push cycle
@@ -1305,7 +1314,9 @@ class OracleUpdater:
         A provider that cannot serve intraday at all (``TiingoProvider`` raises
         ``NotImplementedError`` — the ADR's stated "live oracle push is not
         cutover-ready" consequence) is reported by name for every requested
-        symbol rather than swallowed.
+        symbol rather than swallowed. Since #1798 the seam no longer routes
+        such a vendor here in the first place (``_VENDOR_SEAMS``), so this is
+        the belt-and-braces path, not the expected one.
         """
         from archimedes.services.market_data_provider import get_provider, provider_name
 
@@ -1319,9 +1330,9 @@ class OracleUpdater:
         if not tickers:
             return results, reasons
 
-        name = provider_name()
+        name = provider_name("intraday")
         try:
-            quotes = await asyncio.to_thread(get_provider().get_intraday_quotes_batch, tickers)
+            quotes = await asyncio.to_thread(get_provider(seam="intraday").get_intraday_quotes_batch, tickers)
         except NotImplementedError as e:
             for symbol, ticker in tickers.items():
                 reasons[symbol] = (
@@ -1329,7 +1340,7 @@ class OracleUpdater:
                     f"(daily bars only — see docs/adr/market-data-sourcing.md): {e}"
                 )
             logger.warning(
-                "crypto provider leg unavailable: MARKET_DATA_PROVIDER=%s cannot serve intraday quotes (%s)",
+                "crypto provider leg unavailable: intraday-seam vendor %s cannot serve intraday quotes (%s)",
                 name,
                 e,
             )
@@ -1363,16 +1374,22 @@ class OracleUpdater:
         """
         from archimedes.services.market_data_provider import get_provider
 
-        return await asyncio.to_thread(get_provider().get_intraday_quote, symbol)
+        return await asyncio.to_thread(get_provider(seam="intraday").get_intraday_quote, symbol)
 
     def _fetch_sp500_moving_averages(self) -> dict[str, float]:
         """Fetch S&P 500 50-day and 200-day moving averages via the
         market-data provider seam (#1218) — daily bars, so this also benefits
-        from the provider's ``asset_daily_bars`` Postgres cache."""
+        from the provider's ``asset_daily_bars`` Postgres cache.
+
+        Seam: ``intraday``, not ``daily``, and deliberately (#1798). This read
+        is one half of ``fetch_market_snapshot``'s single regime run (^VIX is
+        the other), so routing it to a different vendor than the ^VIX quote
+        would mix vendors inside one run — the thing the ADR forbids. ^GSPC is
+        also an index ticker, which Tiingo does not serve at all."""
         try:
             from archimedes.services.market_data_provider import get_provider
 
-            close = get_provider().get_daily_close_batch({"^GSPC": "^GSPC"}, period="1y").get("^GSPC")
+            close = get_provider(seam="intraday").get_daily_close_batch({"^GSPC": "^GSPC"}, period="1y").get("^GSPC")
             if close is None or close.empty:
                 return {}
 

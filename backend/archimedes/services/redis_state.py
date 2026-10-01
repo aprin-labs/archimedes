@@ -250,8 +250,17 @@ def safe_json_loads(raw, *, context: str):
 #: If a construction writer that records real strategy ids is ever wired, add
 #: ``"construction"`` here AND fix the two writers above — do not special-case
 #: it at a call site. (``services/construction_trace.py`` used to build such a
-#: trace without persisting it; it was deleted as a zero-caller surface, so
-#: today nothing writes a construction trace at all.)
+#: trace without persisting it; it was deleted as a zero-caller surface, and
+#: #1595 deleted the fusion bypass route that held the other writer, so today
+#: nothing writes a construction trace at all.)
+#:
+#: #1637 considered admitting ``"construction"`` and deliberately did not
+#: (owner decision Q4 on #1688, 2026-09-03). Its case for admission was "fix
+#: the fusion job's writer so the type becomes honest"; #1595 removed that
+#: writer instead. Widening a provenance filter for a decision type nothing
+#: produces would buy nothing and cost the one thing this constant exists for
+#: — the promise that everything inside the scope really does hold strategy
+#: ids. If a construction writer ever returns, it admits itself in that PR.
 STRATEGY_REFERENCE_DECISION_TYPES = frozenset({"rebalance", "rotation", "regime_change", "skip"})
 
 

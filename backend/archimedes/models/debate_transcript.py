@@ -24,10 +24,13 @@ therefore keyed to ``(generation_id, candidate_id)``, not to a strategy:
   "write failed".
 
 Sanitization happens at WRITE time, not read time (see ``sanitize_transcript``
-below): every string field of every turn is stripped of internal-jargon
-patterns before the JSON is serialized, so the stored column is never the
-place a leak has to be caught — a raw read of ``transcript_json`` is already
-safe.
+below): every model-written string in every entry is stripped of
+internal-jargon patterns before the JSON is serialized, so the stored column is
+never the place a leak has to be caught — a raw read of ``transcript_json`` is
+already safe. That contract binds the SANITIZER, not the callers: when the
+stored shape grows a key (#1636's dict claims, #1739's paper-attribution
+entry), the new key is taught to ``sanitize_transcript`` rather than scrubbed
+at one call site, or the next writer of that shape re-opens the leak.
 """
 
 from __future__ import annotations
@@ -99,6 +102,41 @@ def _sanitize_claim(claim: Any) -> Any:
     return claim
 
 
+#: Keys inside one ``paper_verdicts`` row (#1739) whose value is a LIST of
+#: model-written strings. ``title`` is deliberately NOT here: it is corpus
+#: metadata, not model prose, and the jargon patterns would mangle a real
+#: paper ("Phase-Type Models of ..." → "[redacted] Models of ...") — the same
+#: provenance reason ``arxiv_ids`` is left alone in ``_SCRUBBED_CLAIM_KEYS``.
+_SCRUBBED_VERDICT_LIST_KEYS = ("discard_reasons",)
+
+
+def _sanitize_paper_verdict(row: Any) -> Any:
+    """Scrub one per-paper verdict row (#1739).
+
+    ``debate_engine._aggregate_paper_verdicts`` builds these rows off the RAW
+    ``_debate_round`` output, so ``discard_reasons`` holds the bear's own
+    prose — the *same strings* that reach this table as ``discard[].reason``
+    and are scrubbed there by :func:`_sanitize_claim`. The tally used to die
+    with the request; now that it is durable, the rows have to be scrubbed on
+    the way in too, or the identical sentence lands unsanitized under a key the
+    sanitizer did not know about. That is the ``_sanitize_claim`` failure mode
+    exactly: a shape change re-opening the leak the write-time scrubber exists
+    to close.
+
+    ``arxiv_id`` / ``cited_by`` / ``discarded_by`` / ``verdict`` are engine
+    vocabulary rather than model text, and ``title`` is corpus metadata (see
+    ``_SCRUBBED_VERDICT_LIST_KEYS``); all pass through untouched.
+    """
+    if not isinstance(row, dict):
+        return row
+    out = dict(row)
+    for key in _SCRUBBED_VERDICT_LIST_KEYS:
+        value = out.get(key)
+        if isinstance(value, list):
+            out[key] = [sanitize_debate_text(v) if isinstance(v, str) else v for v in value]
+    return out
+
+
 def sanitize_transcript(transcript: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Apply :func:`sanitize_debate_text` to every string field of every turn.
 
@@ -108,6 +146,13 @@ def sanitize_transcript(transcript: list[dict[str, Any]]) -> list[dict[str, Any]
     ``round`` and the validated arXiv ids pass through untouched. A non-dict
     entry is dropped rather than raising, matching the "best-effort, never
     gates" posture of the debate round itself.
+
+    It also scrubs the two keys the paper-attribution entry adds (#1739):
+    ``paper_verdicts`` (per-paper rows carrying the bear's ``discard_reasons``)
+    and ``fusion_reasoning`` (the proposer's per-paper prose). Those are model
+    text arriving under keys no debate TURN has, and the module's contract is
+    that a raw read of ``transcript_json`` is already safe — so the sanitizer,
+    not the caller, is where the new shape has to be known.
     """
     sanitized: list[dict[str, Any]] = []
     for turn in transcript:
@@ -121,6 +166,12 @@ def sanitize_transcript(transcript: list[dict[str, Any]]) -> list[dict[str, Any]
             value = new_turn.get(key)
             if isinstance(value, list):
                 new_turn[key] = [_sanitize_claim(c) for c in value]
+        paper_verdicts = new_turn.get("paper_verdicts")
+        if isinstance(paper_verdicts, list):
+            new_turn["paper_verdicts"] = [_sanitize_paper_verdict(v) for v in paper_verdicts]
+        fusion_reasoning = new_turn.get("fusion_reasoning")
+        if isinstance(fusion_reasoning, str):
+            new_turn["fusion_reasoning"] = sanitize_debate_text(fusion_reasoning)
         sanitized.append(new_turn)
     return sanitized
 

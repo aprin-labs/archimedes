@@ -116,13 +116,70 @@ class StrategyPassportRecord(Base):
     correlation_to_spy = Column(Float, nullable=True)
     backtest_start = Column(String(32), nullable=True)
     backtest_end = Column(String(32), nullable=True)
+    # WHICH LINK of the curated display chain supplied the numbers above —
+    # "strategy_record" (the #1187 fixture snapshot) | "persisted_backtest" |
+    # "stub_placeholder" (a BACKTEST_* constant hand-declared in the strategy
+    # file) | "unavailable". One of ``services.curated_metrics.SOURCE_*``.
+    #
+    # Stored rather than derived per read (#1746 PR-B follow-up). The chain is
+    # resolved once, on the write side, and the ANSWER is written to the columns
+    # above; the label naming which link produced it has to be written by the
+    # same event or the two can disagree. Two ways they did: the passport
+    # payload published the numbers with no label at all — so a hand-declared
+    # stub was indistinguishable from a measured Sharpe on the agent-facing
+    # route — and the detail route derived the label from the provider's
+    # boot-time backtest memo, which in a task whose memo predates the write
+    # could label a real persisted-backtest number "stub_placeholder".
+    #
+    # NULL on a row written before this column existed, and on every GENERATED
+    # row: the chain is a curated-library construct, and a generated strategy's
+    # numbers come from its own pipeline backtest. Never backfilled with a guess.
+    display_metrics_source = Column(String(32), nullable=True)
 
     # ── Rigor gate results ───────────────────────────────────
     deflated_sharpe_ratio = Column(Float, nullable=True)
     dsr_p_value = Column(Float, nullable=True)
     pbo_score = Column(Float, nullable=True)
     out_of_sample_sharpe = Column(Float, nullable=True)
+    # ── The rigor VERDICT OF RECORD ─────────────────────────────────────
+    # docs/adr/rigor-verdict-of-record.md (owner decision, Dan, 2026-09-01).
+    # A strategy is graded ONCE, at backtest time, by the real gate, and every
+    # surface reads THAT verdict from here. It is never recomputed on read and
+    # never silently overwritten: a re-grade is an explicit, versioned event
+    # that rewrites all five fields below together.
+    #
+    # ``passes_rigor_gate`` and ``rigor_gate_status`` are COUPLED by contract —
+    # ``passes_rigor_gate == (rigor_gate_status == "pass")``. The single writer
+    # is ``passport_loader.ingest_passport(rigor_verdict=RigorVerdictWrite(...))``,
+    # whose ``passes`` is a derived property, so the two cannot be set apart.
+    # Every other caller leaves all five columns alone.
     passes_rigor_gate = Column(Boolean, nullable=False, default=False)
+    # Four-state badge, STORED rather than derived (#1184 defined the states;
+    # this column is where they now live): "pass" | "fail" | "pending" |
+    # "degenerate". NOT NULL with a "pending" server default, so a row that has
+    # never been graded says exactly that instead of presenting a fail-closed
+    # False as if it were a verdict.
+    rigor_gate_status = Column(String(16), nullable=False, default="pending", server_default="pending")
+    # When the grade above was produced. NULL means "never graded" and agrees
+    # with rigor_gate_status == "pending" by construction.
+    graded_at = Column(DateTime, nullable=True)
+    # WHICH gate produced it — ``services.rigor_gate_version.gate_version()``, a
+    # digest of the strictness ladder, the always-on floors, the DSR/rf
+    # convention constants and an explicit hand-bumped code revision (that
+    # module's docstring lists the inputs and, just as importantly, what is
+    # deliberately excluded). Two rows with different ``gate_version`` values
+    # were graded by different gates and are NOT comparable. The literal
+    # ``rigor_gate_version.LEGACY_DERIVED`` marks a verdict the verdict-of-record
+    # migration INFERRED from pre-existing columns rather than one a gate run
+    # produced; PR-C replaces those with a real re-grade.
+    gate_version = Column(String(64), nullable=True)
+    # How many return series were in the cohort that supplied this grade's
+    # cohort-scoped inputs (PBO, average pairwise correlation). 1 means the grade
+    # was self-contained — the strategy graded against itself alone, which is
+    # what the generation path does (``num_trials`` is a separate self-contained
+    # quantity; see docs/adr/num-trials-self-containment.md). NULL means the
+    # cohort size was not recorded.
+    cohort_n = Column(Integer, nullable=True)
     kelly_fraction = Column(Float, nullable=True)
     sharpe_ci_lower = Column(Float, nullable=True)
     sharpe_ci_upper = Column(Float, nullable=True)
@@ -213,10 +270,24 @@ class StrategyPassportRecord(Base):
             "status": self.status,
             "regime_tag": self.regime_tag,
             "owner_wallet": self.owner_wallet,
+            # The verdict of record, served verbatim. This endpoint is a PURE
+            # READ of the stored grade — never a recompute — so the four
+            # provenance fields ship beside it and a reader can tell a real
+            # grade from an ungraded row and from a legacy-derived one.
             "passes_rigor_gate": self.passes_rigor_gate,
+            "rigor_gate_status": self.rigor_gate_status,
+            "graded_at": self.graded_at.isoformat() if self.graded_at else None,
+            "gate_version": self.gate_version,
+            "cohort_n": self.cohort_n,
             "sharpe_ratio": self.sharpe_ratio,
             "sortino_ratio": self.sortino_ratio,
             "max_drawdown": self.max_drawdown,
+            # WHICH link of the display chain the numbers above came from.
+            # Published because they are resolved through it: without the label
+            # a `stub_placeholder` constant declared in a strategy file reads
+            # here exactly like a measured backtest number. `GET
+            # /api/strategies/{id}` serves the same value under the same name.
+            "display_metrics_source": self.display_metrics_source,
             "paper_refs": [r.to_dict() for r in (self.paper_refs or [])],
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
@@ -238,6 +309,20 @@ class PassportPaperRef(Base):
     citation_count = Column(Integer, nullable=True)
     contribution = Column(Text, nullable=True)  # Fusion: what this paper contributed
 
+    # ── assoc/v1 projection (#1637) ──────────────────────────────────────
+    # The passport row is a projection of the association record in
+    # ``strategy_store.source_papers``; these four columns are the fields that
+    # projection was silently dropping. All nullable with no server_default:
+    # "not recorded" must stay distinguishable from a real value, and #1091
+    # means ``content_hash`` is genuinely NULL for every production paper.
+    # ``role`` is the one exception — it defaults to "cited" because every
+    # association that existed before this column WAS a citation; that is a
+    # recoverable fact, not a guess.
+    role = Column(String(16), nullable=False, default="cited", server_default="cited")
+    selection_rank = Column(Integer, nullable=True)
+    semantic_score = Column(Float, nullable=True)
+    content_hash = Column(String(64), nullable=True)
+
     passport = relationship("StrategyPassportRecord", back_populates="paper_refs")
 
     def to_paper_ref(self) -> PaperRef:
@@ -250,15 +335,33 @@ class PassportPaperRef(Base):
             year=self.year,
             citation_count=self.citation_count,
             contribution=self.contribution,
+            role=self.role or "cited",
+            selection_rank=self.selection_rank,
+            semantic_score=self.semantic_score,
+            content_hash=self.content_hash,
         )
 
     def to_dict(self) -> dict[str, Any]:
+        """Wire projection of one paper reference.
+
+        ``contribution`` was absent here (#1637) while ``StrategyPassport.jsx``
+        rendered a column for it — the passport promised a table it could not
+        fill. The four ``assoc/v1`` fields ride along for the same reason: the
+        renderer cannot show what the projection never emitted.
+        """
         return {
             "arxiv_id": self.arxiv_id,
-            "title": self.title,
+            # ``""`` is not a title. A blank one becomes None so the renderer
+            # prints "title unavailable — arXiv:<id>" instead of empty quotes.
+            "title": self.title or None,
             "authors": json.loads(self.authors) if self.authors else [],
             "doi": self.doi,
             "venue": self.venue,
             "year": self.year,
             "citation_count": self.citation_count,
+            "contribution": self.contribution,
+            "role": self.role or "cited",
+            "selection_rank": self.selection_rank,
+            "semantic_score": self.semantic_score,
+            "content_hash": self.content_hash,
         }

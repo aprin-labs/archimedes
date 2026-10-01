@@ -26,10 +26,13 @@ the thing it authorises):
     A free slot was spent on a generation. ``job_id`` is stamped once the job
     reaches the queue.
 ``released``
-    The slot was claimed but the request never reached the queue (the premium
-    -model entitlement gate refused it, the enqueue errored). Nothing was
-    delivered, so the allowance is handed back. Kept as a row rather than
-    deleted so the ledger shows the attempt.
+    Nothing was delivered against the slot, so the allowance is handed back.
+    Two moments produce this, and the second is why ``job_id`` is worth
+    stamping: the request never reached the queue at all (the premium-model
+    entitlement gate refused it, the enqueue errored), or the job DID queue and
+    then died inside the pipeline without producing a strategy — the corpus
+    yielded too few papers to fuse, the run crashed, the user cancelled. Kept
+    as a row rather than deleted so the ledger shows the attempt.
 
 ``seq`` is a per-account monotonically increasing ordinal, and
 ``uq_free_generation_grants_user_seq`` is what makes the claim **atomic**:
@@ -77,8 +80,12 @@ class FreeGenerationGrantRecord(Base):
 
     status: Mapped[str] = mapped_column(String(16), nullable=False, default=GRANT_USED)
 
-    #: The generation this slot funded. NULL until the job reaches the queue,
-    #: and NULL forever on a ``released`` row — there was no job.
+    #: The generation this slot funded. NULL until the job reaches the queue.
+    #: A ``released`` row is NULL only on the ``release_grant`` path — the
+    #: request never queued, so there was no job. One released by
+    #: ``release_grant_for_job`` KEEPS its job id: that is how the ledger shows
+    #: which run burned the slot and handed it back, and it is the key the
+    #: terminal-failure release finds the row by.
     job_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -179,6 +186,34 @@ def release_grant(session: Session, grant_id: int) -> FreeGenerationGrantRecord 
     """
     record = session.get(FreeGenerationGrantRecord, grant_id)
     if record is None or record.status != GRANT_USED:
+        return None
+    record.status = GRANT_RELEASED
+    record.released_at = datetime.now(UTC)
+    session.flush()
+    return record
+
+
+def release_grant_for_job(session: Session, job_id: str) -> FreeGenerationGrantRecord | None:
+    """Hand back the slot that funded *job_id* — that run delivered nothing.
+
+    The sibling of ``generation_credit.restore_credit_for_job``, and it exists
+    for the same reason: the claim is taken at ``/start``, but whether anything
+    was DELIVERED is only known when the run ends, in a background task that
+    holds a ``job_id`` and no ``grant_id``. Looking the row up by the job it was
+    stamped with is what lets the terminal-failure path give the slot back
+    without threading state through the task.
+
+    ``job_id`` is left in place: the ledger should show which run burned the
+    slot and handed it back, not silently rewind to a blank row.
+
+    Idempotent, because only a ``used`` row matches: a retried or duplicated
+    cleanup finds a ``released`` row, matches nothing, and returns ``None``
+    rather than minting a second free generation out of one claim.
+    """
+    if not job_id:
+        return None
+    record = session.query(FreeGenerationGrantRecord).filter_by(job_id=job_id, status=GRANT_USED).one_or_none()
+    if record is None:
         return None
     record.status = GRANT_RELEASED
     record.released_at = datetime.now(UTC)

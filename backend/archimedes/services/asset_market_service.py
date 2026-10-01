@@ -462,6 +462,10 @@ def _fetch_yfinance_series(symbol: str, period: str, interval: str) -> list[Expl
     the market-data provider seam (#1218 — default provider yfinance,
     unchanged behavior; vendor-swappable via ``MARKET_DATA_PROVIDER``).
 
+    Seam: ``intraday`` (#1798). This is the arbitrary-``interval`` shape, which
+    the daily-bar vendor does not serve, so the Explore history modal stays on
+    the intraday vendor even after the daily bars flip.
+
     Returns an empty list when the symbol is unknown, the provider is
     unavailable, or the upstream feed returned no data. The caller (route
     handler) turns an empty list into a 404 so the frontend can render an
@@ -483,7 +487,7 @@ def _fetch_yfinance_series(symbol: str, period: str, interval: str) -> list[Expl
     try:
         from archimedes.services.market_data_provider import get_provider
 
-        close = get_provider().get_series(yf_ticker, period, interval)
+        close = get_provider(seam="intraday").get_series(yf_ticker, period, interval)
     except Exception as exc:
         logger.warning("explore: market-data history fetch failed for %s (%s/%s): %s", symbol, period, interval, exc)
         return []

@@ -119,7 +119,7 @@ export default function PublicLayout({ user, children }) {
 							Docs
 						</a>
 						<a
-							href="https://github.com/a-apin/archimedes"
+							href="https://github.com/aprin-labs/archimedes"
 							target="_blank"
 							rel="noreferrer"
 						>
@@ -129,7 +129,7 @@ export default function PublicLayout({ user, children }) {
 					<nav aria-label="Project links">
 						<strong>Project</strong>
 						<a
-							href="https://github.com/a-apin/archimedes/blob/main/LICENSE"
+							href="https://github.com/aprin-labs/archimedes/blob/main/LICENSE"
 							target="_blank"
 							rel="noreferrer"
 						>

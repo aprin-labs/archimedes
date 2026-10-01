@@ -165,8 +165,8 @@ class BacktestResult:
     # ── Deliberately NOT here: passes_validation / passes_rigor_gate ────────
     #
     # This dataclass used to carry its own gate, with its own thresholds
-    # (sharpe>0.5, dsr_p>0.95, pbo<0.5, oos/is>=0.5, sharpe_vs_paper>=0.5,
-    # max_dd<0.5). The curated read path grades through
+    # (a raw-Sharpe floor, its own DSR bar, pbo<0.5, oos/is>=0.5,
+    # sharpe_vs_paper>=0.5, max_dd<0.5). The curated read path grades through
     # ``live_rigor_gate.verdict_from_returns`` and the strictness ladder in
     # ``rigor_profiles``. So "generated and curated are graded on the same
     # scale" was not true — there were two gates, and which one you got

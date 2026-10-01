@@ -186,9 +186,17 @@ test("the long-form prompting guide lives in docs, not in the component", () => 
 	assert.match(generate, /docs\/writing-a-brief\.md/);
 	// The one-line hint stays; the tutorial prose does not move in with it.
 	assert.match(generate, /Name assets, a mechanism, and a goal\./);
+	// The number is a tripwire for "did the tutorial move in here", not a
+	// budget: `docs/writing-a-brief.md` is ~6,500 characters, so any cap
+	// meaningfully below (current size + 6,500) still fires the moment prose
+	// lands. Raised 60,000 -> 62,000 when #1801's brief bound (a maxLength, a
+	// live counter and the guidelines link) merged with main: main alone was
+	// 59,824 characters — 176 under — and the union crossed the line without
+	// a word of tutorial prose moving anywhere. Bump it the same way, with
+	// the same arithmetic, the next time two honest additions collide.
 	assert.ok(
-		generate.length < 60000,
-		"Generate.jsx grew past 60KB — did the tutorial prose land here instead of docs/?",
+		generate.length < 62000,
+		"Generate.jsx grew past 62K characters — did the tutorial prose land here instead of docs/?",
 	);
 });
 

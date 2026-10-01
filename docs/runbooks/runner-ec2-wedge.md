@@ -7,7 +7,7 @@
 
 **Scope:** the oracle+agent runner EC2 (`archimedes-runner`, `infra/runner_ec2.tf`) becoming
 unreachable and unresponsive while the hypervisor reports it healthy. Issue
-[#1402](https://github.com/a-apin/archimedes/issues/1402). This is the box that runs
+[#1402](https://github.com/aprin-labs/archimedes/issues/1402). This is the box that runs
 `archimedes-oracle.service` and `archimedes-agent.service`, and it doubles as the SSM jump
 host used to tunnel to Aurora.
 
@@ -60,7 +60,7 @@ because a reboot worked.
 Two things changed after the incidents above. Knowing which one you are watching decides
 whether you act at all.
 
-**Mitigation ([#1413](https://github.com/a-apin/archimedes/pull/1413), applied to the live box):**
+**Mitigation ([#1413](https://github.com/aprin-labs/archimedes/pull/1413), applied to the live box):**
 a 1 GiB swapfile, and per-container caps — oracle `--memory=512m --cpus=0.50`, agent
 `--memory=900m --cpus=1.00`. A leaking container now gets OOM-killed and restarted by
 systemd instead of taking the host down with it. Applied idempotently by
@@ -239,7 +239,7 @@ runners came up but a unit did not — re-run 4b.
 
 ## 5. After it recovers
 
-1. **Record it in [#1402](https://github.com/a-apin/archimedes/issues/1402)**: the start
+1. **Record it in [#1402](https://github.com/aprin-labs/archimedes/issues/1402)**: the start
    timestamp from step 1, the log gap from step 3, whether the reboot was automatic or
    manual, and any step-5 output. The acceptance criterion is *7 days without a manual
    reboot*, which is unmeasurable if incidents go unlogged.
@@ -249,7 +249,7 @@ runners came up but a unit did not — re-run 4b.
 3. **Two automatic reboots in a day is not a working system, it is a hidden outage.** The
    automation exists to shorten incidents, not to hide a recurring one. At that point escalate
    to the still-open options in #1402: right-size the instance, or move the runners off the
-   pet box entirely ([#1044](https://github.com/a-apin/archimedes/issues/1044)).
+   pet box entirely ([#1044](https://github.com/aprin-labs/archimedes/issues/1044)).
 4. If the runners came back but no trades or oracle pushes followed, that is a separate
    failure — the box being up is not the same as the loops working.
 
@@ -316,7 +316,7 @@ somebody applies it; until then every alarm in the § 2 table is inert.
 
 ## Related
 
-- [#1402](https://github.com/a-apin/archimedes/issues/1402) — the open issue. Still open:
+- [#1402](https://github.com/aprin-labs/archimedes/issues/1402) — the open issue. Still open:
   root cause, and the 7-day quiet window.
 - [`README.md`](README.md) — runbook index.
 - [`../../infra/runbooks/disaster-recovery.md`](../../infra/runbooks/disaster-recovery.md) —

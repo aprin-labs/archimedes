@@ -81,11 +81,6 @@ from archimedes.services.strategy_signal_evaluator import (
 )
 from archimedes.services.vix_regime_detector import VixRegimeDetector
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    stream=sys.stdout,
-)
 logger = logging.getLogger(__name__)
 
 INTERVAL = int(os.getenv("AGENT_INTERVAL_SECONDS", "300"))
@@ -1339,7 +1334,8 @@ class StrategyRunner:
         """Diff current portfolio vs target weights → trade list.
 
         Delegates to ``execution.core.compute_trades`` (#1410) — same body, same
-        ``DRIFT_THRESHOLD``, now shared with the paper venue.
+        ``DRIFT_THRESHOLD``, now shared with the paper venue and, via the same
+        import, the marketplace path (#1719).
         """
         return execution_core.compute_trades(portfolio, targets)
 
@@ -2406,6 +2402,22 @@ if __name__ == "__main__":
     # Lives under __main__ so importing this module in tests never loads .env.
     # (Copilot #765)
     from dotenv import load_dotenv
+
+    # Root-logger config lives here for the same reason: an importable module
+    # must not reconfigure its importer's root logger, and this one is imported
+    # (by 7 test modules today, and by anything that reaches for
+    # StrategyRunner — dev.sh's import check does). It ran at import time until
+    # #1719. Nothing in the API process imports this module: the marketplace
+    # adapter calls `execution.core.compute_trades` directly, so this is
+    # hygiene, not a fix for a live import chain. Both prod entrypoints are
+    # `python -m archimedes.chain.agent_runner` (docker-compose.yml,
+    # infra/runner-user-data.sh), which still lands here, so the standalone
+    # runner logs exactly as before.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        stream=sys.stdout,
+    )
 
     load_dotenv("../.env", override=False)
     load_dotenv(".env", override=False)

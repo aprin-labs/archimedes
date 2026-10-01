@@ -34,10 +34,21 @@ actually running and have produced ledger observations, ranked on realised
 return. Nothing joins the two: there is no blended score anywhere in this
 module, and the anti-fabrication rule for the forward board (no row without
 ledger data) is enforced in exactly one place, ``build_live_paper_leaderboard``.
+
+**Both boards read the database on a worker thread (#1818 P4).** The forward
+board reads ``paper_deployments`` and ``paper_daily_returns`` — the exact two
+tables the paper-advance cycle holds locks on, so it is the endpoint most
+likely to meet the next lock queue. On 2026-09-03 a read that met one on the
+event loop did not make its own endpoint slow, it stopped ``/health`` answering
+and the ALB pulled both tasks out of service. Each route below is a docstring
+plus one ``await asyncio.to_thread(_…_sync, …)``; the blocking body is the
+module-level twin above it. See ``api/strategies_routes`` for why
+``asyncio.to_thread`` rather than a ``def`` handler or a private pool.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
@@ -74,26 +85,22 @@ def _curated_cohort_responses() -> tuple[list, bool, str]:
     """
     # Imported lazily to avoid import-time coupling with the heavy strategies
     # module (and any future cycle).
-    from archimedes.api.strategies_routes import (
-        _live_rigor_results_for_strategies,
-        _to_strategy_response,
-        _verdict_from_result,
-    )
+    from archimedes.api.strategies_routes import _to_strategy_response, stored_passports_for
+    from archimedes.db import get_session
 
     degraded = False
     degraded_reason = ""
     try:
         strategies = strategy_provider().list_strategies()
-        # One batched live-gate run over the whole cohort (single DB session),
-        # then derive the badge from each result. Calling _to_strategy_response
-        # with no verdict recomputes the full gate per strategy (2 DB reads +
-        # 2 gate runs each) — an unauthenticated DoS on a public endpoint.
-        # Mirrors GET /api/strategies/ (#868).
-        rigor_results = _live_rigor_results_for_strategies(strategies)
-        responses = [
-            _to_strategy_response(s, _verdict_from_result(rigor_results.get(s.id)), rigor_results.get(s.id))
-            for s in strategies
-        ]
+        # One batched read of the stored verdicts (#1746 / PR-B), not a batched
+        # gate run. This route used to run the live cohort gate on every call —
+        # an unauthenticated full-library compute on a public endpoint — and the
+        # board it produced could disagree with the same strategy's passport.
+        # The verdict is graded once, when a curated backtest runs, and the board
+        # reads it.
+        with get_session() as session:
+            stored = stored_passports_for(session, [s.id for s in strategies])
+            responses = [_to_strategy_response(s, stored.get(s.id)) for s in strategies]
     except Exception as exc:  # pragma: no cover - defensive
         # Full exception detail is logged server-side only — never echoed to
         # an anonymous, public caller (DB/RPC internals, hostnames, ports —
@@ -172,33 +179,20 @@ def _own_cohort_responses(caller_wallet: str | None, caller_user_id: str | None)
         return [], True, "owned strategies unavailable"
 
 
-@leaderboard_router.get("", response_model=LeaderboardResponse)
-async def get_leaderboard(
+def _get_leaderboard_sync(
     request: Request,
-    scope: str | None = Query(
-        None,
-        pattern="^(own|curated)$",
-        description=(
-            "'own': the signed-in caller's own strategies, ranked against each "
-            "other (single-user MVP default when signed in). 'curated': the "
-            "curated seed library, shown as reference — never a competing "
-            "cohort (default when anonymous). An anonymous request for 'own' "
-            "is transparently served 'curated' instead — this endpoint never "
-            "401s; check the response's own `scope` field for what was "
-            "actually served."
-        ),
-    ),
-    sort_by: str = Query("conviction_score", pattern=f"^({_SORT_FIELDS})$"),
-    order: str = Query("desc", pattern="^(asc|desc)$"),
-    regime_tag: str | None = Query(None, pattern="^(bull|bear|regime_neutral)$"),
-    min_rigor: bool = Query(False),
-    limit: int = Query(50, ge=1, le=200),
+    scope: str | None,
+    sort_by: str,
+    order: str,
+    regime_tag: str | None,
+    min_rigor: bool,
+    limit: int,
 ) -> LeaderboardResponse:
-    """Single-user (signed in) or curated-reference (anonymous) leaderboard.
+    """Resolve the caller's cohort and score it.
 
-    Fail-safe: if the underlying data source is unavailable, returns an empty
-    board (with the scoring-engine metadata intact) rather than erroring — the
-    page must never hard-fail, for either scope.
+    The blocking half of the route below (#1818 P4): it holds the database
+    reads and the scoring compute, and it runs on a worker thread so a slow or
+    lock-blocked read cannot stop the event loop from answering ``/health``.
     """
     user = get_current_user(request)
     caller_wallet = get_linked_wallet_address(request)
@@ -228,6 +222,37 @@ async def get_leaderboard(
         degraded=degraded,
         degraded_reason=degraded_reason,
     )
+
+
+@leaderboard_router.get("", response_model=LeaderboardResponse)
+async def get_leaderboard(
+    request: Request,
+    scope: str | None = Query(
+        None,
+        pattern="^(own|curated)$",
+        description=(
+            "'own': the signed-in caller's own strategies, ranked against each "
+            "other (single-user MVP default when signed in). 'curated': the "
+            "curated seed library, shown as reference — never a competing "
+            "cohort (default when anonymous). An anonymous request for 'own' "
+            "is transparently served 'curated' instead — this endpoint never "
+            "401s; check the response's own `scope` field for what was "
+            "actually served."
+        ),
+    ),
+    sort_by: str = Query("conviction_score", pattern=f"^({_SORT_FIELDS})$"),
+    order: str = Query("desc", pattern="^(asc|desc)$"),
+    regime_tag: str | None = Query(None, pattern="^(bull|bear|regime_neutral)$"),
+    min_rigor: bool = Query(False),
+    limit: int = Query(50, ge=1, le=200),
+) -> LeaderboardResponse:
+    """Single-user (signed in) or curated-reference (anonymous) leaderboard.
+
+    Fail-safe: if the underlying data source is unavailable, returns an empty
+    board (with the scoring-engine metadata intact) rather than erroring — the
+    page must never hard-fail, for either scope.
+    """
+    return await asyncio.to_thread(_get_leaderboard_sync, request, scope, sort_by, order, regime_tag, min_rigor, limit)
 
 
 # ── Live paper board — /api/leaderboard/live-paper (Lane 3.4) ────────────────
@@ -266,6 +291,39 @@ def _spec_name(spec_json: str | None) -> str:
         return ""
 
 
+def _live_paper_verdicts(session, strategy_ids: list[str]) -> dict[str, dict]:
+    """The stored rigor verdict for every strategy on this board — ONE query.
+
+    Batched for the same reason the name lookup is, and — as on
+    ``paper_routes._page_verdicts`` — this is where RECOVERY lives.
+    ``stored_rigor_verdicts`` raises on a DB-level failure by design, because
+    rolling a session back is only safe where nothing uncommitted can be lost
+    (#1764 review: a rollback inside the create route's transaction discarded a
+    just-written deployment). This is a pure read path, so the rollback below
+    can discard nothing and leaves the session usable.
+
+    Degradation is per-FIELD, not per-board: a broken passport read makes every
+    row read "not graded" — never a pass — while the realised forward returns,
+    which are this board's actual subject and are already loaded, still serve.
+    Failing the whole board would be the worse lie of the two.
+    """
+    from archimedes.services.passport_loader import stored_rigor_verdicts, ungraded_verdicts_for
+
+    try:
+        found = stored_rigor_verdicts(session, strategy_ids)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning(
+            "live-paper board: passport verdict read failed (%s) — every row degrades to ungraded",
+            type(exc).__name__,
+        )
+        try:
+            session.rollback()
+        except Exception:
+            logger.debug("rollback after a failed passport verdict read also failed", exc_info=True)
+        return ungraded_verdicts_for(strategy_ids)
+    return {**ungraded_verdicts_for(strategy_ids), **found}
+
+
 def _live_paper_ledgers(user_id: str) -> tuple[list[LivePaperLedger], bool, str]:
     """Load the caller's ACTIVE paper deployments and their forward ledgers.
 
@@ -279,11 +337,10 @@ def _live_paper_ledgers(user_id: str) -> tuple[list[LivePaperLedger], bool, str]
     them out here instead would hide the count and put the anti-fabrication
     rule in two places.
     """
-    from archimedes.db import get_session, init_db
+    from archimedes.db import get_session
     from archimedes.models.paper_store import STATUS_ACTIVE, PaperDailyReturn, PaperDeployment
 
     try:
-        init_db()
         with get_session() as session:
             deps = (
                 session.query(PaperDeployment)
@@ -306,6 +363,7 @@ def _live_paper_ledgers(user_id: str) -> tuple[list[LivePaperLedger], bool, str]
                     last_appended[row.deployment_id] = row.appended_at
 
             names = _display_names(session, {d.strategy_id for d in deps})
+            verdicts = _live_paper_verdicts(session, [d.strategy_id for d in deps])
             return (
                 [
                     LivePaperLedger(
@@ -326,6 +384,14 @@ def _live_paper_ledgers(user_id: str) -> tuple[list[LivePaperLedger], bool, str]
                         # cause) is stated in the field description rather than
                         # papered over.
                         drift_detected=d.drift_detected_at is not None or d.engine_regrade_at is not None,
+                        # The verdict of record, riding along with the forward
+                        # number it qualifies (#1764). Read, never recomputed —
+                        # the same `passport_loader` derivation the deployment
+                        # card reads, so the board and the card cannot show two
+                        # verdicts for one strategy. Always present: a strategy
+                        # with no passport row gets the ungraded verdict here,
+                        # so no row can reach the builder without one.
+                        verdict=verdicts[d.strategy_id],
                     )
                     for d in deps
                 ],
@@ -337,6 +403,27 @@ def _live_paper_ledgers(user_id: str) -> tuple[list[LivePaperLedger], bool, str]
         # server-side only, the wire gets a fixed category string.
         logger.warning("live-paper board: paper deployments unavailable: %s", exc)
         return [], True, "paper deployments unavailable"
+
+
+def _get_live_paper_leaderboard_sync(request: Request, limit: int) -> LivePaperLeaderboardResponse:
+    """Read the caller's active ledgers and rank them.
+
+    The blocking half of the route below (#1818 P4): it holds the database
+    reads and the scoring compute, and it runs on a worker thread so a slow or
+    lock-blocked read cannot stop the event loop from answering ``/health``.
+    """
+    user = get_current_user(request)
+    if user is None:
+        return build_live_paper_leaderboard([], scope="anonymous", limit=limit)
+
+    ledgers, degraded, degraded_reason = _live_paper_ledgers(user.id)
+    return build_live_paper_leaderboard(
+        ledgers,
+        scope="own",
+        limit=limit,
+        degraded=degraded,
+        degraded_reason=degraded_reason,
+    )
 
 
 @leaderboard_router.get("/live-paper", response_model=LivePaperLeaderboardResponse)
@@ -354,15 +441,4 @@ async def get_live_paper_leaderboard(
     (signed in, nothing deployed yet). The UI needs all three to say three
     different true things.
     """
-    user = get_current_user(request)
-    if user is None:
-        return build_live_paper_leaderboard([], scope="anonymous", limit=limit)
-
-    ledgers, degraded, degraded_reason = _live_paper_ledgers(user.id)
-    return build_live_paper_leaderboard(
-        ledgers,
-        scope="own",
-        limit=limit,
-        degraded=degraded,
-        degraded_reason=degraded_reason,
-    )
+    return await asyncio.to_thread(_get_live_paper_leaderboard_sync, request, limit)

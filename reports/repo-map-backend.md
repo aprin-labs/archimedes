@@ -59,6 +59,11 @@ backend, strategy metrics serving). No files edited.
   duplicated `portfolio_constructor` name invites wrong-import bugs.
 - Severity: MED (dead code / duplication).
 - Next issue: "APIN - Backend - Remove `services/_deprecated/` (or document why kelly stays) + resolve `portfolio_constructor` name collision"
+- **RESOLVED 2026-09-01 (audit P1-1).** `_deprecated/{kelly_portfolio,portfolio_constructor}.py`
+  and `tests/services/test_kelly_portfolio.py` were removed earlier; the empty
+  `_deprecated/__init__.py` shell was deleted in the dead-module sweep. `services/_deprecated/`
+  no longer exists, so the import-confusion hazard is gone with it. The rest of this section is
+  the point-in-time record from when the map was taken.
 
 ### 5. Stubbed metrics still served when no real backtest — MED (claim-integrity, needs UI confirm)
 
@@ -146,8 +151,9 @@ single richest claim-integrity surface and the best entry to trace data flow out
 
 ## Clarification questions
 
-1. Is `services/_deprecated/kelly_portfolio.py` intentionally retained (tested) or
-   should it + its test be deleted? (Finding #4)
+1. ~~Is `services/_deprecated/kelly_portfolio.py` intentionally retained (tested) or
+   should it + its test be deleted?~~ (Finding #4) — **Answered: deleted.** Module and test
+   are gone; the empty `_deprecated/` package shell followed on 2026-09-01 (audit P1-1).
 2. Does every frontend metric panel honor `is_backtest_placeholder`, or do any render
    stub Sharpe/CAGR as real? (Finding #5 — blocks severity call)
 3. Is the N>1 multi-agent candidate path (`n_candidates` > 1) live on the Generate

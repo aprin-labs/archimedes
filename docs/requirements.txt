@@ -1,0 +1,27 @@
+# Build dependencies for the docs site (docs.archimedes-arc.com).
+#
+# ONE pin, used everywhere: .github/workflows/docs-site.yml installs this file,
+# and docs/runbooks/docs-site-setup.md tells a person to install the same file.
+# Before this existed the workflow pinned mkdocs-material inline while the
+# archimedes conda env carried 9.5.41 — so "I built it locally and it looked
+# fine" was not the build CI ships. Bump deliberately, in its own commit,
+# re-running `mkdocs build --strict` from the runbook.
+#
+# Every line is pinned exactly: an unpinned docs dependency can change the built
+# site (or its validation warnings) on a PR that touched one paragraph.
+
+# The theme, and the mermaid runtime the superfences custom fence in mkdocs.yml
+# depends on. It brings mkdocs itself (>=1.6) with it.
+mkdocs-material==9.7.7
+
+# Per-page "last updated" dates in the footer, read from git rather than typed
+# into prose — the honest replacement for the hand-maintained "Last rebuilt"
+# stamp the doc register used to carry. Needs full history: the workflow checks
+# out with `fetch-depth: 0`, or every page reports the same date.
+mkdocs-git-revision-date-localized-plugin==1.5.4
+
+# superfences (the mermaid fence), details, highlight, inlinehilite, tabbed and
+# emoji — all declared in mkdocs.yml's markdown_extensions. mkdocs-material
+# depends on this package too; pinning it here states the version the site's
+# rendering actually depends on instead of inheriting whatever resolves.
+pymdown-extensions==11.0.2

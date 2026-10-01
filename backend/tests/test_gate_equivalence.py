@@ -24,6 +24,7 @@ import numpy as np
 import pytest
 from archimedes.models.backtest import BacktestResult
 from archimedes.services.live_rigor_gate import verdict_from_returns
+from archimedes.services.rigor_gate_version import gate_version
 
 
 def _series(seed: int, n: int = 600, mu: float = 0.0006, sigma: float = 0.01) -> list[float]:
@@ -197,8 +198,13 @@ class TestPipelineCallSiteReadsTheLiveVerdict:
     an organic returns series could use to distinguish "graded" from
     "hardcoded" here. Stubbing the gate isolates the one thing this test is
     actually for: does the call site propagate the live gate's OWN verdict, or
-    something else. It is called twice, with the stub answering True and then
-    False, so a hardcoded persisted value in either direction is caught.
+    something else.
+
+    Parametrized over THREE of the four states, not two booleans
+    (docs/adr/rigor-verdict-of-record.md): the call site now persists the live
+    gate's four-state ``status``, so a stuck value in either boolean direction is
+    still caught AND a call site that collapsed "degenerate" into "fail" — which
+    a boolean cannot distinguish, since both are ``passes=False`` — is caught too.
     """
 
     @staticmethod
@@ -207,9 +213,9 @@ class TestPipelineCallSiteReadsTheLiveVerdict:
         return [float(x) for x in rng.normal(0.0012, 0.008, n)]
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("live_gate_passes", [True, False])
+    @pytest.mark.parametrize("live_gate_status", ["pass", "fail", "degenerate"])
     async def test_live_gate_verdict_reaches_the_persisted_passport(
-        self, tmp_path, monkeypatch, live_gate_passes: bool
+        self, tmp_path, monkeypatch, live_gate_status: str
     ) -> None:
         import archimedes.db as _db
         import archimedes.services.live_rigor_gate as lrg
@@ -223,7 +229,7 @@ class TestPipelineCallSiteReadsTheLiveVerdict:
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
 
-        strategy_id = f"gate-call-site-{live_gate_passes}"
+        strategy_id = f"gate-call-site-{live_gate_status}"
 
         test_engine = create_engine(
             f"sqlite:///{tmp_path / 'gate_call_site.db'}",
@@ -260,12 +266,17 @@ class TestPipelineCallSiteReadsTheLiveVerdict:
         gate_calls: list[dict] = []
 
         class _StubVerdict:
-            def __init__(self, passes: bool) -> None:
-                self.passes = passes
+            """The four-state shape ``RigorGateVerdict`` has, with ``passes``
+            derived from ``status`` exactly as the real one derives it — so this
+            double cannot express a decoupled pair the real gate never emits."""
+
+            def __init__(self, status: str) -> None:
+                self.status = status
+                self.passes = status == "pass"
 
         def _fake_verdict_from_returns(sid, daily_returns, **kwargs):
             gate_calls.append({"strategy_id": sid, "daily_returns": list(daily_returns), **kwargs})
-            return _StubVerdict(passes=live_gate_passes)
+            return _StubVerdict(status=live_gate_status)
 
         monkeypatch.setattr(lrg, "verdict_from_returns", _fake_verdict_from_returns)
 
@@ -302,10 +313,18 @@ class TestPipelineCallSiteReadsTheLiveVerdict:
         # And the persisted verdict must be EXACTLY what the live gate returned —
         # not a hardcoded value, and not the deleted property's pbo_score-is-None
         # short-circuit (which was unconditionally False regardless of this
-        # stub's answer). Parametrized both ways so neither a stuck-True nor a
-        # stuck-False persisted value can slip past.
-        assert record.passes_rigor_gate is live_gate_passes, (
-            f"persisted passes_rigor_gate={record.passes_rigor_gate!r} but the live "
-            f"gate returned passes={live_gate_passes!r} — the call site is not "
-            "propagating live.passes verbatim."
+        # stub's answer). Parametrized over three states so neither a stuck-True
+        # nor a stuck-False persisted value can slip past, and neither can a call
+        # site that folds "degenerate" into "fail".
+        assert record.rigor_gate_status == live_gate_status, (
+            f"persisted rigor_gate_status={record.rigor_gate_status!r} but the live "
+            f"gate returned status={live_gate_status!r} — the call site is not "
+            "propagating the live verdict verbatim."
         )
+        assert record.passes_rigor_gate is (live_gate_status == "pass"), (
+            "passes_rigor_gate and rigor_gate_status must be written coupled"
+        )
+        # Provenance ships with the grade, or the stored verdict is undatable.
+        assert record.graded_at is not None
+        assert record.gate_version == gate_version()
+        assert record.cohort_n == 1

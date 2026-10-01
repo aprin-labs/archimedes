@@ -48,6 +48,20 @@ async def test_charge_zero_amount_is_paid_without_network():
 
 @pytest.mark.asyncio
 async def test_charge_success_path():
+    """The happy path, including the AMOUNT handed to circlekit.
+
+    MUTATION: `payments.py:141` -> `fee_to_price(min(action_count, 1), ...)`.
+
+    This test already passed action_count=2 but only asserted that settle was
+    awaited, so it never saw the price: the whole marketplace package (202
+    tests) stayed green while every multi-action tick under-charged to a
+    single action. `test_fee_to_price_basic` pins the helper, not this call
+    site — nothing connected the two until the assertions below.
+
+    All three circlekit legs are checked with the same string: require (the
+    402 the publisher advertises), verify, and settle. A price that drifts
+    between advertise and settle is its own money bug.
+    """
     middleware = MagicMock()
     middleware.require.return_value = {"status": 402, "headers": {}, "body": {}}
     middleware.verify = AsyncMock(return_value=MagicMock(is_valid=True))
@@ -73,6 +87,12 @@ async def test_charge_success_path():
         )
     assert ok is True
     middleware.settle.assert_awaited_once()
+
+    # 2 actions x 100 raw units (6-decimal USDC) = $0.000200, not $0.000100.
+    expected_price = "$0.000200"
+    assert middleware.require.call_args.args[0] == expected_price  # require(price, path)
+    assert middleware.verify.await_args.args[1] == expected_price  # verify(header, price)
+    assert middleware.settle.await_args.args[1] == expected_price  # settle(header, price)
 
 
 @pytest.mark.asyncio

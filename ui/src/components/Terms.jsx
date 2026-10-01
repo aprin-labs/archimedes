@@ -323,11 +323,11 @@ export default function Terms() {
 					Anything you would rather raise in the open, including a mistake on
 					this page, can go to the project&rsquo;s public issue tracker instead:{" "}
 					<a
-						href="https://github.com/a-apin/archimedes/issues"
+						href="https://github.com/aprin-labs/archimedes/issues"
 						target="_blank"
 						rel="noopener noreferrer"
 					>
-						github.com/a-apin/archimedes/issues
+						github.com/aprin-labs/archimedes/issues
 					</a>
 					. Please keep personal details out of it.
 				</p>

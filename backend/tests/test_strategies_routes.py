@@ -1,15 +1,24 @@
-"""Tests for strategies_routes — the library-list rigor badge (#821).
+"""Tests for strategies_routes — the curated rigor badge (#821, #1746).
 
 The user-facing ``passes_rigor_gate`` badge (and the CANDIDATE → VALIDATED 🏆
-promotion) on ``GET /api/strategies/`` must come from a LIVE ``run_rigor_gate``
-verdict computed on the strategy's persisted real returns — the SAME machinery
-the ``/api/selection-bias/gate`` route uses — NOT from the stored fixture boolean
-in ``analytics-engine/strategies/backtest_fixtures.json``. A strategy with no real
+promotion) must come from a real ``run_rigor_gate`` verdict computed on the
+strategy's persisted real returns — the SAME machinery the
+``/api/selection-bias/gate`` route uses — NOT from the stored fixture boolean in
+``analytics-engine/strategies/backtest_fixtures.json``. A strategy with no real
 returns surfaces an explicit ``pending`` badge, never a fixture ``True``/``False``.
 
-These tests mock at the DB boundary (``get_all_daily_returns``) — the persisted
-real-returns source — and assert the served badge equals an independently-computed
-``run_rigor_gate`` verdict on the same returns.
+**Since #1746 / PR-B, that gate run happens on the WRITE side.**
+``services.curated_grading.grade_curated_library`` grades the library when a
+curated backtest runs, stores the verdict on ``strategy_passports``, and every
+read surface — list, detail, leaderboard, ``/passports/{id}`` — serves that one
+row (``docs/adr/rigor-verdict-of-record.md``). So the route tests below mock the
+DB boundary (``get_all_daily_returns``), run the REAL grading job, and then
+assert the served badge equals an independently-computed ``run_rigor_gate``
+verdict on the same returns. The #821 claim is unchanged and the assertions are
+the same; what moved is when the gate runs.
+
+The tests that used to pin "the read path grades the FULL library cohort"
+(#902/#1173) now pin it on the grading job, which is where the cohort lives.
 
 Hermetic gate:
   env -i HOME=$HOME PATH=$PATH PYTHONPATH=backend python -m pytest \\
@@ -42,17 +51,32 @@ from httpx import ASGITransport, AsyncClient
 
 @pytest.fixture(autouse=True)
 def _use_tmp_db(tmp_path, monkeypatch):
-    """Redirect DATABASE_URL to a per-test temp SQLite file.
+    """Redirect the DB to a per-test temp SQLite file — engine and all.
 
-    The list endpoint calls init_db() (via verdicts_for_strategies) before
-    querying persisted backtest data. Isolating the DB per test satisfies the
-    hermetic-test mandate and prevents cross-run state.
+    Setting ``DATABASE_URL`` alone does NOT isolate anything: ``archimedes.db``
+    resolves that env var once, at import time, and every ``get_session()``
+    goes through the module-global ``SessionLocal`` built from it. The env-only
+    version of this fixture asserted isolation it did not provide — harmless
+    while no test in this module WROTE anything, and no longer true now that
+    they run the real grading job (a degenerate verdict written by one test was
+    read as the badge by the next). Rebinding both globals, the way
+    ``test_rigor_verdict_of_record.py`` does, makes the docstring true.
     """
-    from archimedes.db import init_db
+    # `from archimedes import db`, not `import archimedes.db as db`: the rest of
+    # this file reaches the same module with `from archimedes.db import ...`, and
+    # mixing the two import forms for one module is what the code-quality gate
+    # flags. Same module object either way — the binding is what monkeypatch
+    # needs, not the syntax.
+    from archimedes import db
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
 
-    db_path = tmp_path / "test_strategies_routes.db"
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
-    init_db()
+    url = f"sqlite:///{tmp_path / 'test_strategies_routes.db'}"
+    monkeypatch.setenv("DATABASE_URL", url)
+    eng = create_engine(url, connect_args={"check_same_thread": False})
+    monkeypatch.setattr(db, "engine", eng)
+    monkeypatch.setattr(db, "SessionLocal", sessionmaker(bind=eng, autocommit=False, autoflush=False))
+    db.init_db()
     yield
 
 
@@ -60,6 +84,37 @@ def _use_tmp_db(tmp_path, monkeypatch):
 # access). Real curated strategy files also pass; this keeps the test independent
 # of any particular file on disk.
 _CLEAN_CODE = "def init(self):\n    self.sma = 0\n"
+
+
+def _grade_curated_now(strategies=None):
+    """Run the REAL grading job against this test's DB — the write-side event.
+
+    Every read-surface assertion below is an assertion about what this wrote.
+    Calling it explicitly is the point: a test that hits a route without calling
+    this first is testing the ungraded state, which is a different (and also
+    real) claim — see ``test_strategy_without_real_returns_is_pending``.
+    """
+    from archimedes.api._route_helpers import strategy_provider
+    from archimedes.db import get_session
+    from archimedes.services.curated_grading import grade_curated_library
+
+    with get_session() as session:
+        summary = grade_curated_library(session, provider=strategy_provider(), strategies=strategies)
+        session.commit()
+    return summary
+
+
+def _patch_code_loader(monkeypatch) -> None:
+    """Make the look-ahead audit deterministic for the grading job.
+
+    The gate's look-ahead leg reads the strategy's source; pinning it to clean
+    code keeps these tests independent of the real files on disk. Patched on the
+    grading module, which is the only place the curated gate now loads code.
+    """
+    monkeypatch.setattr(
+        "archimedes.services.curated_grading._load_strategy_code_safe",
+        lambda strategy: _CLEAN_CODE,
+    )
 
 
 def _passing_series(seed: int = 0, n: int = 500) -> list[float]:
@@ -76,7 +131,7 @@ def _failing_series(seed: int = 99, n: int = 500) -> list[float]:
 def _failing_result(strategy_id: str):
     """A REAL ``RigorGateResult`` that fails the gate.
 
-    A real result rather than a MagicMock so ``_verdict_from_result`` exercises
+    A real result rather than a MagicMock so ``verdict_from_result`` exercises
     the same ``RigorGateVerdict.from_result`` reduction the production path runs
     (``is_degenerate`` → ``passes_all`` → ladder fields), not a mock's
     auto-attributes.
@@ -187,162 +242,119 @@ class TestDefaultNumTrials:
         assert captured["num_trials"] == 3
 
 
-class TestSingleStrategyCohortContext:
-    """#902: the single-strategy fetch must grade with the library cohort, so the
-    detail view can never disagree with the (deflated) list badge."""
+class TestGradingCohortIsTheFullLibrary:
+    """#902 / #1173: a strategy's badge must not depend on how it was requested.
 
-    def test_live_verdict_for_one_uses_full_library_cohort(self, monkeypatch):
-        from archimedes.api import strategies_routes
-
-        lib = [MagicMock(id=f"s{i}") for i in range(3)]
-        target = lib[1]
-        provider = MagicMock()
-        provider.list_strategies.return_value = lib
-        monkeypatch.setattr(strategies_routes, "strategy_provider", lambda: provider)
-
-        captured = {}
-
-        # #1645: the delegate is now the SAME memoized batch the numeric fields
-        # read (`_live_rigor_results_for_strategies`), not a second uncached run
-        # through `verdicts_for_strategies`. The #902 invariant this test guards
-        # — the cohort is the full library — is unchanged.
-        def _fake_batch(strategies):
-            captured["cohort_ids"] = [s.id for s in strategies]
-            return {target.id: _failing_result("s1")}
-
-        monkeypatch.setattr(strategies_routes, "_live_rigor_results_for_strategies", _fake_batch)
-
-        v = strategies_routes._live_verdict_for_one(target)
-        assert captured["cohort_ids"] == ["s0", "s1", "s2"]
-        assert v.status == FAIL
-
-    def test_live_verdict_for_one_appends_unlisted_strategy(self, monkeypatch):
-        # A just-generated strategy missing from the provider list still grades.
-        from archimedes.api import strategies_routes
-
-        provider = MagicMock()
-        provider.list_strategies.return_value = [MagicMock(id="s0")]
-        monkeypatch.setattr(strategies_routes, "strategy_provider", lambda: provider)
-
-        captured = {}
-
-        def _fake_batch(strategies):
-            captured["cohort_ids"] = [s.id for s in strategies]
-            return {}
-
-        monkeypatch.setattr(strategies_routes, "_live_rigor_results_for_strategies", _fake_batch)
-
-        fresh = MagicMock(id="fresh")
-        v = strategies_routes._live_verdict_for_one(fresh)
-        assert "fresh" in captured["cohort_ids"]
-        # Batch returned nothing for it → fail-closed pending, never a fixture.
-        assert v.status == PENDING
-
-    def test_live_rigor_result_for_one_uses_full_library_cohort(self, monkeypatch):
-        from archimedes.api import strategies_routes
-
-        lib = [MagicMock(id="s0"), MagicMock(id="s1")]
-        provider = MagicMock()
-        provider.list_strategies.return_value = lib
-        monkeypatch.setattr(strategies_routes, "strategy_provider", lambda: provider)
-
-        sentinel = object()
-        captured = {}
-
-        def _fake_batch(strategies):
-            captured["cohort_ids"] = [s.id for s in strategies]
-            return {"s1": sentinel}
-
-        monkeypatch.setattr(strategies_routes, "_live_rigor_results_for_strategies", _fake_batch)
-
-        assert strategies_routes._live_rigor_result_for_one(lib[1]) is sentinel
-        assert captured["cohort_ids"] == ["s0", "s1"]
-
-    @pytest.mark.asyncio
-    async def test_list_route_grades_full_library_not_the_page(self, monkeypatch):
-        """REGRESSION (#1173): the LIST badge must be graded over the whole library,
-        never the paginated window.
-
-        The detail route grades via ``_library_cohort_including`` (the test above
-        pins that), so grading the list over ``strats[offset:offset+limit]`` made
-        the same strategy's badge depend on which page it landed on — a short window
-        can fall under ``MIN_LIBRARY_N_FOR_PBO_GATING`` (criterion 4 skipped) and the
-        cohort-scoped PBO/CSCV value itself shifts with membership. Verified against
-        production before the fix: strategy ``d90b357a…4bbd`` graded False in a
-        5-item window but True in the full-library view and True on its own
-        detail/passport route — the exact list-vs-detail contradiction dfa8fc1 was
-        written to prevent.
-        """
-        from archimedes.api import strategies_routes
-        from archimedes.main import app
-
-        lib = [MagicMock(id=f"s{i}", status=None) for i in range(30)]
-        provider = MagicMock()
-        provider.list_strategies.return_value = lib
-        monkeypatch.setattr(strategies_routes, "strategy_provider", lambda: provider)
-
-        captured = {}
-
-        def _fake_batch(strategies):
-            captured["cohort_ids"] = [s.id for s in strategies]
-            return {}
-
-        monkeypatch.setattr(strategies_routes, "_live_rigor_results_for_strategies", _fake_batch)
-
-        # The cohort is handed to the gate BEFORE any response serialization, so we
-        # assert on it regardless of whether serializing these MagicMock strategies
-        # succeeds. raise_app_exceptions=False keeps a serialization 500 from
-        # masking the assertion we actually care about.
-        transport = ASGITransport(app=app, raise_app_exceptions=False)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            await client.get("/api/strategies/?limit=5&offset=25")
-
-        assert captured.get("cohort_ids") == [s.id for s in lib], (
-            "list route must grade the FULL library cohort; got a "
-            f"{len(captured.get('cohort_ids', []))}-item cohort for a 5-item page"
-        )
-
-
-class TestSingleStrategyGateRunCount:
-    """REGRESSION (#1645): ``GET /api/strategies/{id}`` runs the cohort gate ONCE.
-
-    The detail route used to build its badge from ``verdicts_for_strategies`` and
-    its numeric fields from ``_live_rigor_results_for_strategies``. Both grade the
-    FULL library, so one request ran the whole cohort gate twice — and only the
-    second path is memoized in ``services.rigor_cache``, so a warm cache still
-    paid a full cohort recompute on every request forever.
-
-    The first test's two assertions are call-count spies on ``run_rigor_gate``,
-    the unit of work the page's latency is made of. They are deliberately stated
-    in units of ``len(library)`` rather than a literal, so the guard does not go
-    quiet if the curated library grows or shrinks. The other two tests pin the
-    shape (one batch, one result object) and the fail-closed contract, which a
-    count alone would not catch.
-
-    Revert-demo (transcript in the PR body): restoring the two-call form in
-    ``_to_strategy_response`` makes the cold assertion read ``68 != 34`` and the
-    warm assertion ``34 != 0``.
+    That used to be defended on the READ side — every route re-graded the whole
+    library so a paginated or status-filtered request could not grade a subset.
+    Since #1746 / PR-B the cohort belongs to the WRITER: the grading job grades
+    the full library once, stores each verdict, and the read surfaces serve the
+    stored row. The invariant is now structural; these tests pin it where it
+    lives.
     """
 
-    @staticmethod
-    def _install_counting_gate(monkeypatch, sink: list) -> None:
-        """Count every ``run_rigor_gate`` call, still running the real gate.
-
-        Patched on the ``rigor_evaluator`` MODULE, which is where both call sites
-        resolve it (each imports it inside the function body). The module-level
-        ``run_rigor_gate`` this test file imported stays the real one, so the
-        spy cannot recurse and helpers like ``_failing_result`` are not counted.
+    def test_the_job_grades_the_whole_provider_library(self, monkeypatch):
+        """MUTATION: pass a slice (``strategies[:2]``) to ``grade_cohort`` inside
+        ``grade_curated_library``. The captured cohort shrinks and this reddens.
         """
+        from archimedes.db import get_session
+        from archimedes.services import curated_grading
+
+        lib = [MagicMock(id=f"s{i}") for i in range(3)]
+        provider = MagicMock()
+        provider.list_strategies.return_value = lib
+        provider.get_backtest_result.return_value = None
+
+        captured = {}
+
+        def _fake_cohort(strategies):
+            captured["cohort_ids"] = [s.id for s in strategies]
+            return curated_grading.CohortGrade()
+
+        monkeypatch.setattr(curated_grading, "grade_cohort", _fake_cohort)
+        # The passport write is not what this test is about; a MagicMock
+        # strategy cannot be ingested, so count the attempts instead.
+        written: list = []
+        monkeypatch.setattr(
+            "archimedes.services.passport_loader.ingest_passport",
+            lambda *a, **kw: written.append(a[1].id),
+        )
+        monkeypatch.setattr(curated_grading, "with_display_metrics", lambda s, bt: s, raising=False)
+
+        with get_session() as session:
+            curated_grading.grade_curated_library(session, provider=provider)
+
+        assert captured["cohort_ids"] == ["s0", "s1", "s2"]
+
+    def test_a_strategy_the_cohort_could_not_grade_is_stored_pending(self, monkeypatch):
+        """A gate that produced no result for an id must store ``pending`` — not
+        skip the row, and never a ``fail``.
+
+        MUTATION: make ``verdict_from_result(None)`` return
+        ``RigorGateVerdict.failed()``. "We have not graded this" becomes "we
+        graded this and it lost", which is #1184 in one line.
+        """
+        from archimedes.services.curated_grading import verdict_from_result
+
+        assert verdict_from_result(None).status == PENDING
+        assert verdict_from_result(None).passes is False
+
+    @pytest.mark.asyncio
+    async def test_the_list_route_never_runs_the_gate(self, monkeypatch):
+        """REGRESSION (#1173, restated): the list route cannot grade a page,
+        because it cannot grade at all.
+
+        The original defect was that scoring over ``strats[offset:offset+limit]``
+        made a badge depend on which page a strategy landed on — a short window
+        can fall under ``MIN_LIBRARY_N_FOR_PBO_GATING`` and the cohort-scoped
+        PBO/CSCV value itself shifts with membership. Verified against production
+        before that fix: strategy ``d90b357a…4bbd`` graded False in a 5-item
+        window but True in the full-library view. A route that runs no gate has
+        no cohort to get wrong.
+
+        MUTATION: restore a ``rigor_results = grade_cohort(library)`` call in
+        ``_list_strategies_sync``. The spy fires and this reddens.
+        """
+        from archimedes.main import app
+
+        calls: list = []
         real = run_rigor_gate
 
         def _counting(*args, **kwargs):
-            sink.append(kwargs.get("strategy_id"))
+            calls.append(kwargs.get("strategy_id"))
             return real(*args, **kwargs)
 
         monkeypatch.setattr("archimedes.services.rigor_evaluator.run_rigor_gate", _counting)
+        monkeypatch.setattr(
+            "archimedes.services.backtest_repository.get_all_daily_returns",
+            lambda session, ids: {sid: _passing_series(i) for i, sid in enumerate(ids)},
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/strategies/?limit=5&offset=25")
+
+        assert resp.status_code == 200
+        assert calls == [], f"the list route ran the rigor gate {len(calls)} times; it must read a stored verdict"
+
+
+class TestReadSurfacesServeTheStoredVerdictWithoutRegrading:
+    """REGRESSION (#1645 → #1746): ``GET /api/strategies/{id}`` runs no gate.
+
+    #1645 got one cohort gate run per detail request down from two, and leaned on
+    ``services.rigor_cache`` to make even that affordable (measured on prod
+    2026-08-31, anonymous: ``X-Response-Time-Ms: 28144.0 / 25072.2 / 28554.9`` on
+    three consecutive calls). #1746 removes the remaining one: the verdict is
+    graded when a backtest runs and read here. A request that runs no gate cannot
+    disagree with the row, cannot drift between two reads, and cannot cost 28s.
+    """
 
     @pytest.mark.asyncio
-    async def test_detail_route_runs_the_cohort_gate_once_cold_and_zero_times_warm(self, monkeypatch):
+    async def test_detail_route_runs_the_gate_zero_times_cold_and_warm(self, monkeypatch):
+        """MUTATION: put ``_live_verdict_and_result_for_one`` back into
+        ``_to_strategy_response``. Both assertions redden — cold at
+        ``len(library)``, warm at ``len(library)`` too, since there is no cache
+        left to hide behind.
+        """
         from archimedes.api import strategies_routes as sr
         from archimedes.main import app
 
@@ -350,94 +362,58 @@ class TestSingleStrategyGateRunCount:
         assert len(library) >= 2, "need a real curated cohort"
         returns = {s.id: _passing_series(i) for i, s in enumerate(library)}
 
-        # Boundary mocks only: the persisted-returns read and the strategy-source
-        # read. The cohort maths and the gate itself run for real.
         monkeypatch.setattr(
             "archimedes.services.backtest_repository.get_all_daily_returns",
             lambda session, ids: {sid: returns.get(sid, []) for sid in ids},
         )
-        monkeypatch.setattr(
-            "archimedes.api.selection_bias_routes._load_strategy_code",
-            lambda path: _CLEAN_CODE,
-        )
+        _patch_code_loader(monkeypatch)
+        _grade_curated_now()
+
         calls: list = []
-        self._install_counting_gate(monkeypatch, calls)
+        real = run_rigor_gate
+
+        def _counting(*args, **kwargs):
+            calls.append(kwargs.get("strategy_id"))
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr("archimedes.services.rigor_evaluator.run_rigor_gate", _counting)
 
         target = library[0]
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             cold = await client.get(f"/api/strategies/{target.id}")
             assert cold.status_code == 200
-            cold_calls = len(calls)
-            assert cold_calls == len(library), (
-                f"one cold detail request must run the cohort gate exactly once "
-                f"({len(library)} run_rigor_gate calls); got {cold_calls} "
-                f"(= {cold_calls / len(library):.1f} cohort passes)"
-            )
-
-            # The cohort is unchanged, so the rigor_cache entry the cold request
-            # wrote must serve the whole warm request. Pre-fix this was
-            # len(library), because the badge half had no cache at any layer.
-            calls.clear()
+            assert calls == [], f"a detail request must run no gate at all; got {len(calls)} run_rigor_gate calls"
             warm = await client.get(f"/api/strategies/{target.id}")
             assert warm.status_code == 200
-        assert len(calls) == 0, (
-            f"a warm detail request must not recompute the cohort gate; got {len(calls)} "
-            "run_rigor_gate calls — some part of the detail path is bypassing rigor_cache"
-        )
+        assert calls == []
 
-        # Same computation, same answer: the badge and the numbers a cache hit
-        # serves must still agree with what the cold miss computed.
+        # Same row, same answer, both times — the drift the issue reported
+        # ("Sharpe drifted between reads 37s apart") is not expressible here.
         assert warm.json()["passes_rigor_gate"] == cold.json()["passes_rigor_gate"]
         assert warm.json()["dsr_p_value"] == cold.json()["dsr_p_value"]
+        assert warm.json()["sharpe_ratio"] == cold.json()["sharpe_ratio"]
 
-    def test_verdict_and_result_come_from_one_batch_computation(self, monkeypatch):
-        """The badge is reduced from the very result object that is served.
+    def test_an_ungraded_row_fail_closes_to_pending_with_no_numbers(self):
+        """A strategy with no stored passport row is ``pending`` and carries no
+        gate numbers — never a fixture value, never a fabricated pass.
 
-        Guards the shape, not just the count: a future edit that recomputes the
-        verdict separately would still pass a count assertion if it happened to
-        hit the cache, but would fail here.
+        MUTATION: serve ``stored.deflated_sharpe_ratio`` without the ``graded``
+        guard in ``_to_strategy_response``. A legacy curated row still carrying
+        the #1187 fixture DSR then serves it beside a ``pending`` badge.
         """
-        from archimedes.api import strategies_routes as sr
+        from archimedes.api.strategies_routes import _to_strategy_response
+        from archimedes.models.strategy import Strategy
 
-        sentinel = _failing_result("sentinel")
-        batches: list = []
-
-        def _fake_batch(strategies):
-            batches.append([s.id for s in strategies])
-            return {"t": sentinel}
-
-        provider = MagicMock()
-        provider.list_strategies.return_value = [MagicMock(id="t")]
-        monkeypatch.setattr(sr, "strategy_provider", lambda: provider)
-        monkeypatch.setattr(sr, "_live_rigor_results_for_strategies", _fake_batch)
-
-        verdict, result = sr._live_verdict_and_result_for_one(MagicMock(id="t"))
-        assert result is sentinel, "the served numbers must be the batch's own result object"
-        assert verdict.status == FAIL, "the badge must be reduced from that same result"
-        assert len(batches) == 1, f"exactly one cohort computation; got {len(batches)}"
-
-    def test_batch_failure_still_fail_closes_to_pending(self, monkeypatch):
-        """The old `_live_verdict_for_one` had its own try/except that degraded a
-        gate failure to `pending`. Collapsing it onto the memoized path must not
-        drop that: the badge is a claim, and a crash must never surface as a PASS
-        or propagate into a 500. This guards the fail-closed sentence the new
-        docstring asserts (CLAUDE.md: a prose claim the code does not enforce is
-        the same defect as an unenforced guard).
-        """
-        from archimedes.api import strategies_routes as sr
-
-        def _boom(_strategies):
-            raise RuntimeError("cohort compute exploded")
-
-        provider = MagicMock()
-        provider.list_strategies.return_value = [MagicMock(id="t")]
-        monkeypatch.setattr(sr, "strategy_provider", lambda: provider)
-        monkeypatch.setattr(sr, "_live_rigor_results_for_strategies", _boom)
-
-        verdict, result = sr._live_verdict_and_result_for_one(MagicMock(id="t"))
-        assert verdict.status == PENDING, "a gate failure must fail CLOSED, never to a pass/fail claim"
-        assert verdict.passes is False
-        assert result is None, "no numbers may be served when the gate could not run"
+        resp = _to_strategy_response(Strategy(id="never-graded"), None)
+        assert resp.rigor_gate_status == PENDING
+        assert resp.passes_rigor_gate is False
+        assert resp.deflated_sharpe_ratio is None
+        assert resp.dsr_p_value is None
+        assert resp.pbo_score is None
+        assert resp.out_of_sample_sharpe is None
+        assert resp.metrics_source == "unavailable"
+        assert resp.num_trials_in_selection is None
+        assert resp.num_trials_scope == "unspecified"
 
 
 class TestRigorGateVerdict:
@@ -462,20 +438,23 @@ class TestRigorGateVerdict:
 
 
 class TestVerdictFromResultDegenerate:
-    """#1184: the LIST/DETAIL route badge (``_verdict_from_result``) must report
-    a zero-variance persisted series as ``degenerate`` — the same category
+    """#1184: the STORED badge (``curated_grading.verdict_from_result``) must
+    record a zero-variance persisted series as ``degenerate`` — the same category
     ``live_rigor_gate.verdict_from_returns`` reports for the identical input —
-    not silently diverge into a plain ``fail`` just because this route reduces
-    an already-computed ``RigorGateResult`` instead of calling the gate itself.
+    not silently collapse into a plain ``fail`` just because the grading job
+    reduces an already-computed ``RigorGateResult`` instead of calling the gate
+    itself. The distinction has to survive the WRITE now: nothing on the read
+    path can re-derive it (that was the point), so if the writer loses it, it is
+    gone.
     """
 
     def test_degenerate_result_maps_to_degenerate_verdict(self):
-        from archimedes.api.strategies_routes import _verdict_from_result
+        from archimedes.services.curated_grading import verdict_from_result
 
         result = run_rigor_gate(strategy_id="lib-degenerate", daily_returns=[0.0] * 5659, num_trials=1)
         assert result.is_degenerate is True  # sanity: the input really is degenerate
 
-        v = _verdict_from_result(result)
+        v = verdict_from_result(result)
         assert v.status == DEGENERATE
         assert v.status != FAIL
         assert v.status != PENDING
@@ -484,9 +463,9 @@ class TestVerdictFromResultDegenerate:
     def test_none_result_still_maps_to_pending(self):
         """No live gate result at all (insufficient/no persisted returns) stays
         the pre-existing PENDING — the new category must not swallow this case."""
-        from archimedes.api.strategies_routes import _verdict_from_result
+        from archimedes.services.curated_grading import verdict_from_result
 
-        assert _verdict_from_result(None).status == PENDING
+        assert verdict_from_result(None).status == PENDING
 
     def test_non_degenerate_fail_result_still_maps_to_fail(self):
         rng = np.random.default_rng(9)
@@ -494,9 +473,9 @@ class TestVerdictFromResultDegenerate:
         result = run_rigor_gate(strategy_id="lib-real-loser", daily_returns=losing, num_trials=1)
         assert result.is_degenerate is False
 
-        from archimedes.api.strategies_routes import _verdict_from_result
+        from archimedes.services.curated_grading import verdict_from_result
 
-        v = _verdict_from_result(result)
+        v = verdict_from_result(result)
         assert v.status == FAIL
 
 
@@ -543,10 +522,7 @@ async def test_library_badge_equals_live_gate_verdict_on_persisted_returns(monke
         "archimedes.services.live_rigor_gate._load_strategy_code_safe",
         lambda strategy: _CLEAN_CODE,
     )
-    monkeypatch.setattr(
-        "archimedes.api.strategies_routes._load_strategy_code_safe_local",
-        lambda strategy: _CLEAN_CODE,
-    )
+    _patch_code_loader(monkeypatch)
 
     # Independently reproduce the route's cohort context. num_trials is
     # self-contained (1, decouple #2) — it does NOT come from this cohort;
@@ -555,6 +531,10 @@ async def test_library_badge_equals_live_gate_verdict_on_persisted_returns(monke
     pbo_scores = compute_pbo(valid) if len(valid) >= 2 else {}
     num_trials = 1
     avg_corr = compute_average_pairwise_correlation(valid) if len(valid) >= 2 else 0.0
+
+    # THE grading event — the real gate, over the real cohort, written to the
+    # passport rows the route below reads (#1746 / PR-B).
+    _grade_curated_now()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/api/strategies/?limit=100")
@@ -592,7 +572,7 @@ async def test_degenerate_persisted_series_serves_degenerate_badge_via_route(mon
 
     The unit tests in ``TestDegenerateSeriesCategory`` (test_rigor_evaluator.py)
     and ``TestVerdictFromResultDegenerate`` above already cover
-    ``run_rigor_gate`` / ``_verdict_from_result`` in isolation; this exercises
+    ``run_rigor_gate`` / ``verdict_from_result`` in isolation; this exercises
     the same category end-to-end through the ASGI transport, the way
     Acceptance #1 exercises the non-degenerate case above — otherwise the enum
     assertions elsewhere in this file (e.g.
@@ -624,10 +604,8 @@ async def test_degenerate_persisted_series_serves_degenerate_badge_via_route(mon
         "archimedes.services.live_rigor_gate._load_strategy_code_safe",
         lambda strategy: _CLEAN_CODE,
     )
-    monkeypatch.setattr(
-        "archimedes.api.strategies_routes._load_strategy_code_safe_local",
-        lambda strategy: _CLEAN_CODE,
-    )
+    _patch_code_loader(monkeypatch)
+    _grade_curated_now()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/api/strategies/?limit=100")
@@ -747,10 +725,8 @@ async def test_validated_promotion_fires_on_live_pass(monkeypatch):
         "archimedes.services.backtest_repository.get_all_daily_returns",
         lambda session, ids: dict(returns),
     )
-    monkeypatch.setattr(
-        "archimedes.services.live_rigor_gate._load_strategy_code_safe",
-        lambda strategy: _CLEAN_CODE,
-    )
+    _patch_code_loader(monkeypatch)
+    _grade_curated_now()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/api/strategies/?limit=100")
@@ -817,10 +793,7 @@ async def test_leaderboard_numeric_fields_equal_live_gate_on_persisted_returns(m
         "archimedes.services.live_rigor_gate._load_strategy_code_safe",
         lambda strategy: _CLEAN_CODE,
     )
-    monkeypatch.setattr(
-        "archimedes.api.strategies_routes._load_strategy_code_safe_local",
-        lambda strategy: _CLEAN_CODE,
-    )
+    _patch_code_loader(monkeypatch)
 
     # Independently reproduce the route's cohort context (same recipe as
     # test_library_badge_equals_live_gate_verdict_on_persisted_returns).
@@ -829,6 +802,10 @@ async def test_leaderboard_numeric_fields_equal_live_gate_on_persisted_returns(m
     pbo_scores = compute_pbo(valid) if len(valid) >= 2 else {}
     num_trials = 1
     avg_corr = compute_average_pairwise_correlation(valid) if len(valid) >= 2 else 0.0
+
+    # THE grading event — the real gate, over the real cohort, written to the
+    # passport rows the route below reads (#1746 / PR-B).
+    _grade_curated_now()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/api/strategies/?limit=100")
@@ -891,14 +868,17 @@ async def test_leaderboard_never_disagrees_with_selection_bias_gate_route(monkey
         "archimedes.services.live_rigor_gate._load_strategy_code_safe",
         lambda strategy: _CLEAN_CODE,
     )
-    monkeypatch.setattr(
-        "archimedes.api.strategies_routes._load_strategy_code_safe_local",
-        lambda strategy: _CLEAN_CODE,
-    )
+    _patch_code_loader(monkeypatch)
     monkeypatch.setattr(
         "archimedes.api.selection_bias_routes._load_strategy_code",
         lambda path: _CLEAN_CODE,
     )
+    # The library route serves the STORED grade; /api/selection-bias/gate still
+    # recomputes live (the deploy ladder — a deliberate, named seam in
+    # docs/adr/rigor-verdict-of-record.md). Grading here is what puts the two on
+    # the same gate vintage, which is exactly the condition under which they are
+    # required to agree.
+    _grade_curated_now()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         leaderboard_resp = await client.get("/api/strategies/?limit=100")
@@ -957,7 +937,6 @@ def test_to_strategy_response_serves_null_not_fixture_without_live_rigor_result(
     """
     from archimedes.api.strategies_routes import _to_strategy_response
     from archimedes.models.strategy import Strategy
-    from archimedes.services.live_rigor_gate import RigorGateVerdict
 
     # Values lifted from the real migrated fixture (faber_2007_sma200_timing in
     # backend/tests/fixtures/backtest_fixtures_snapshot.json) so this test fails
@@ -970,7 +949,7 @@ def test_to_strategy_response_serves_null_not_fixture_without_live_rigor_result(
         out_of_sample_sharpe=0.930283,
     )
 
-    resp = _to_strategy_response(s, verdict=RigorGateVerdict.pending(), rigor_result=None)
+    resp = _to_strategy_response(s, None)
 
     assert resp.rigor_gate_status == "pending"
     assert resp.deflated_sharpe_ratio is None, (
@@ -1001,7 +980,6 @@ def test_to_strategy_response_serves_null_not_bt_fixture_without_live_rigor_resu
     from archimedes.api.strategies_routes import _to_strategy_response, strategy_provider
     from archimedes.models.backtest import BacktestResult
     from archimedes.models.strategy import Strategy
-    from archimedes.services.live_rigor_gate import RigorGateVerdict
 
     s = Strategy(id="test-1187-bt-stub")  # s.<field> defaults None — bt half only
     bt = BacktestResult(
@@ -1024,7 +1002,7 @@ def test_to_strategy_response_serves_null_not_bt_fixture_without_live_rigor_resu
     )
     monkeypatch.setattr(strategy_provider(), "get_backtest_result", lambda strategy_id: bt)
 
-    resp = _to_strategy_response(s, verdict=RigorGateVerdict.pending(), rigor_result=None)
+    resp = _to_strategy_response(s, None)
 
     assert resp.rigor_gate_status == "pending"
     assert resp.deflated_sharpe_ratio is None, (
@@ -1055,7 +1033,6 @@ def test_to_strategy_response_surfaces_backtest_provenance(monkeypatch):
     from archimedes.api.strategies_routes import _to_strategy_response, strategy_provider
     from archimedes.models.backtest import BacktestResult
     from archimedes.models.strategy import Strategy
-    from archimedes.services.live_rigor_gate import RigorGateVerdict
 
     s = Strategy(id="test-provenance-bt-stub")
     bt = BacktestResult(
@@ -1076,7 +1053,7 @@ def test_to_strategy_response_surfaces_backtest_provenance(monkeypatch):
     )
     monkeypatch.setattr(strategy_provider(), "get_backtest_result", lambda strategy_id: bt)
 
-    resp = _to_strategy_response(s, verdict=RigorGateVerdict.pending(), rigor_result=None)
+    resp = _to_strategy_response(s, None)
 
     assert resp.backtest_engine == "backtrader"
     assert resp.cost_model_id == "cm1:d10:s5"
@@ -1087,11 +1064,10 @@ def test_to_strategy_response_backtest_provenance_is_none_without_persisted_back
     provenance fields — never a fabricated engine name or cost-model id."""
     from archimedes.api.strategies_routes import _to_strategy_response
     from archimedes.models.strategy import Strategy
-    from archimedes.services.live_rigor_gate import RigorGateVerdict
 
     s = Strategy(id="test-provenance-no-bt")
 
-    resp = _to_strategy_response(s, verdict=RigorGateVerdict.pending(), rigor_result=None)
+    resp = _to_strategy_response(s, None)
 
     assert resp.backtest_engine is None
     assert resp.cost_model_id is None
@@ -1119,7 +1095,6 @@ def test_to_strategy_response_provenance_from_real_persisted_backtest_row():
     from archimedes.models.backtest import BacktestResult
     from archimedes.models.strategy import Strategy
     from archimedes.services.backtest_repository import insert_backtest_if_missing
-    from archimedes.services.live_rigor_gate import RigorGateVerdict
 
     strategy_id = "test-provenance-real-db-row"
     result = BacktestResult(
@@ -1153,7 +1128,7 @@ def test_to_strategy_response_provenance_from_real_persisted_backtest_row():
     # populated) by an earlier test in this module.
     strategy_provider.cache_clear()
 
-    resp = _to_strategy_response(Strategy(id=strategy_id), verdict=RigorGateVerdict.pending(), rigor_result=None)
+    resp = _to_strategy_response(Strategy(id=strategy_id), None)
 
     assert resp.backtest_engine == "vectorbt"
     assert resp.cost_model_id == "cm2:d20:s7"
@@ -1221,10 +1196,10 @@ async def test_leaderboard_serves_null_not_fixture_without_real_returns(monkeypa
 
 @pytest.mark.asyncio
 async def test_single_strategy_endpoint_numeric_fields_equal_live_gate(monkeypatch):
-    """The single-strategy fetch path (GET /api/strategies/{id}) also serves
-    live-gate-sourced numeric fields, not just the batch list path — mirrors
-    _live_verdict_for_one's existing on-demand-computation precedent
-    (verdict is None → compute here), extended to _live_rigor_result_for_one."""
+    """The single-strategy fetch path (GET /api/strategies/{id}) serves the
+    numbers the real gate produced — the same ones the list path serves, from
+    the same stored grade. Before #1746 this route computed them per request,
+    which is how it came to disagree with the strategy's own passport."""
     from archimedes.api import strategies_routes as sr
     from archimedes.main import app
 
@@ -1253,7 +1228,10 @@ async def test_single_strategy_endpoint_numeric_fields_equal_live_gate(monkeypat
         "archimedes.api.selection_bias_routes._load_strategy_code",
         lambda path: _CLEAN_CODE,
     )
+    _grade_curated_now()
 
+    # One valid series in the cohort, so the grading job runs with no cohort PBO
+    # and zero average correlation — exactly the arguments reproduced here.
     expected = run_rigor_gate(
         strategy_id=target.id,
         daily_returns=series,
@@ -1291,62 +1269,89 @@ async def test_single_strategy_endpoint_numeric_fields_equal_live_gate(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_list_route_grades_full_library_regardless_of_status_filter(monkeypatch):
-    """The graded cohort is byte-identical with and without ?status=, and equals
-    the unfiltered library — the same cohort _library_cohort_including() builds."""
+async def test_the_served_verdict_is_identical_under_every_status_filter(monkeypatch):
+    """One strategy id, one verdict — whatever ``?status=`` the caller passed.
+
+    The original #1172 defect was that the route graded
+    ``list_strategies(status=…)``, a SUBSET, so ``?status=candidate`` and
+    ``?status=validated`` could disagree with each other and with the passport
+    for one strategy. The route grades nothing now, so the three requests are
+    three reads of one row — asserted on the SERVED payload rather than on a
+    spy over a cohort that no longer exists.
+
+    MUTATION: re-derive the badge in ``_to_strategy_response`` from a gate run
+    over ``strategy_provider().list_strategies(status=…)``. The filtered cohorts
+    differ, so the served verdicts diverge and this reddens.
+    """
     import archimedes.api.strategies_routes as sr
     from archimedes.main import app
 
-    seen_cohorts: list[list[str]] = []
-
-    def _spy(strategies):
-        seen_cohorts.append([s.id for s in strategies])
-        return {}
-
-    monkeypatch.setattr(sr, "_live_rigor_results_for_strategies", _spy)
+    library = sr.strategy_provider().list_strategies()
+    returns = {s.id: _passing_series(i) for i, s in enumerate(library)}
+    monkeypatch.setattr(
+        "archimedes.services.backtest_repository.get_all_daily_returns",
+        lambda session, ids: {sid: returns[sid] for sid in ids if sid in returns},
+    )
+    _patch_code_loader(monkeypatch)
+    _grade_curated_now()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        r_all = await client.get("/api/strategies/?limit=3")
-        r_candidate = await client.get("/api/strategies/?limit=3&status=candidate")
-        r_validated = await client.get("/api/strategies/?limit=3&status=validated")
+        r_all = await client.get("/api/strategies/?limit=100")
+        r_candidate = await client.get("/api/strategies/?limit=100&status=candidate")
+        r_validated = await client.get("/api/strategies/?limit=100&status=validated")
 
-    assert r_all.status_code == 200
-    assert r_candidate.status_code == 200
-    assert r_validated.status_code == 200
+    assert r_all.status_code == r_candidate.status_code == r_validated.status_code == 200
 
-    full_library = [s.id for s in sr.strategy_provider().list_strategies()]
-    assert len(seen_cohorts) == 3, "each request must grade exactly one cohort"
-    for cohort in seen_cohorts:
-        assert cohort == full_library
+    _VERDICT_KEYS = ("rigor_gate_status", "passes_rigor_gate", "dsr_p_value", "pbo_score", "sharpe_ratio")
+    unfiltered = {s["id"]: s for s in r_all.json()["strategies"]}
+    assert unfiltered, "expected curated strategies in the library"
+    for filtered in (r_candidate, r_validated):
+        for row in filtered.json()["strategies"]:
+            for key in _VERDICT_KEYS:
+                assert row[key] == unfiltered[row["id"]][key], (
+                    f"{row['id']} answered differently for {key} under a status filter: "
+                    f"{row[key]} vs {unfiltered[row['id']][key]}"
+                )
 
-    # And the filter still actually filters the RESPONSE — the fix must not have
+    # And the filter still actually filters the RESPONSE — this must not have
     # turned ?status= into a no-op.
     assert r_candidate.json()["total"] <= r_all.json()["total"]
 
 
 @pytest.mark.asyncio
-async def test_list_route_grades_full_library_regardless_of_pagination(monkeypatch):
-    """Companion to the above: the cohort is also independent of offset/limit,
-    which is the original #1173 defect. Pinned so neither can regress alone."""
+async def test_the_served_verdict_is_identical_under_every_page(monkeypatch):
+    """Companion to the above, for the original #1173 defect: a badge must not
+    depend on which page the strategy landed on.
+
+    Verified against production before that fix: strategy ``d90b357a…4bbd``
+    graded False in a 5-item window but True in the full-library view. Same
+    mutation reddens this: grade the window instead of reading the row.
+    """
     import archimedes.api.strategies_routes as sr
     from archimedes.main import app
 
-    seen_cohorts: list[list[str]] = []
+    library = sr.strategy_provider().list_strategies()
+    assert len(library) >= 6, "need a library big enough to page"
+    returns = {s.id: _passing_series(i) for i, s in enumerate(library)}
     monkeypatch.setattr(
-        sr,
-        "_live_rigor_results_for_strategies",
-        lambda strategies: (seen_cohorts.append([s.id for s in strategies]), {})[1],
+        "archimedes.services.backtest_repository.get_all_daily_returns",
+        lambda session, ids: {sid: returns[sid] for sid in ids if sid in returns},
     )
+    _patch_code_loader(monkeypatch)
+    _grade_curated_now()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        await client.get("/api/strategies/?limit=2&offset=0")
-        await client.get("/api/strategies/?limit=2&offset=4")
-        await client.get("/api/strategies/?limit=100&offset=0")
+        page_a = await client.get("/api/strategies/?limit=2&offset=4")
+        whole = await client.get("/api/strategies/?limit=100&offset=0")
 
-    full_library = [s.id for s in sr.strategy_provider().list_strategies()]
-    assert len(seen_cohorts) == 3
-    for cohort in seen_cohorts:
-        assert cohort == full_library
+    by_id = {s["id"]: s for s in whole.json()["strategies"]}
+    rows = page_a.json()["strategies"]
+    assert rows, "expected a non-empty page"
+    for row in rows:
+        for key in ("rigor_gate_status", "passes_rigor_gate", "dsr_p_value", "pbo_score", "sharpe_ratio"):
+            assert row[key] == by_id[row["id"]][key], (
+                f"{row['id']} answered differently for {key} on a 2-item page than in the full library"
+            )
 
 
 # ── GET /api/strategies/{id} must not 500 for a strategy with no linked
@@ -1713,16 +1718,25 @@ def test_strategy_spec_is_assigned_only_inside_the_detail_route():
     ``strategy_spec`` on the **list** response"), enforced structurally.
 
     Parses ``strategies_routes.py`` and asserts that EVERY assignment to a
-    ``.strategy_spec`` attribute in the module sits inside ``get_strategy`` —
-    the single-strategy detail route. AST, not grep, so a comment mentioning
-    the field or a read like ``row.strategy_spec`` cannot trip it and a real
-    assignment cannot hide behind formatting.
+    ``.strategy_spec`` attribute in the module sits inside the single-strategy
+    detail route's body. AST, not grep, so a comment mentioning the field or a
+    read like ``row.strategy_spec`` cannot trip it and a real assignment cannot
+    hide behind formatting.
 
     This is the guard a route-level list assertion could not honestly give.
     The two shared response builders below are each pinned individually, but
     "no list surface carries the spec" is a claim about the module as a whole:
     a third builder added next quarter would satisfy both of those tests and
     still leak. Here it fails.
+
+    **#1818 P4 renamed the site, and this test now checks TWO things instead of
+    one.** Every read route in this module is now a coroutine that hops to a
+    worker thread plus a module-level ``_…_sync`` twin holding the body, so the
+    detail route's two assignments live in ``_get_strategy_sync``. Allowing that
+    name on its own would be weaker than what this guard used to claim: "only
+    ``_get_strategy_sync`` assigns the spec" stops meaning "only the detail route
+    does" the moment anything else starts calling that twin. So the second
+    assertion pins the twin's callers to exactly the ``get_strategy`` route.
     """
     import ast
     import pathlib
@@ -1743,12 +1757,28 @@ def test_strategy_spec_is_assigned_only_inside_the_detail_route():
                     offenders.append((node.name, sub.lineno))
 
     assert offenders, "no `.strategy_spec = ` assignment found at all — the wiring is gone, not merely misplaced"
-    bad = [(fn, line) for fn, line in offenders if fn != "get_strategy"]
+
+    detail_body = "_get_strategy_sync"
+    bad = [(fn, line) for fn, line in offenders if fn != detail_body]
     assert not bad, (
         "`strategy_spec` may only be populated by the single-strategy detail route "
-        f"`get_strategy`; found assignments in {bad} (function, line). A shared "
-        "response builder that sets it puts an unbounded JSON blob on every row of "
-        "every list payload, and on the public leaderboard."
+        f"(`get_strategy` → `{detail_body}`); found assignments in {bad} (function, line). "
+        "A shared response builder that sets it puts an unbounded JSON blob on every row "
+        "of every list payload, and on the public leaderboard."
+    )
+
+    callers = sorted(
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        and node.name != detail_body
+        and any(isinstance(sub, ast.Name) and sub.id == detail_body for sub in ast.walk(node))
+    )
+    assert callers == ["get_strategy"], (
+        f"`{detail_body}` holds the only `strategy_spec` assignments, so it must stay reachable "
+        f"from the single-strategy detail route and nothing else; it is referenced by {callers}. "
+        "A list route calling it would put the spec on a list payload without any assignment "
+        "moving, which is the anti-goal with an extra hop in front of it."
     )
 
 
@@ -1803,7 +1833,7 @@ def test_to_strategy_response_never_sets_strategy_spec():
         asset_universe=["SPY"],
         strategy_spec=_SPEC_FIXTURE,
     )
-    resp = _to_strategy_response(s, verdict=RigorGateVerdict.pending(), rigor_result=None)
+    resp = _to_strategy_response(s, None)
 
     assert resp.strategy_spec is None
 

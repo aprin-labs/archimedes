@@ -170,14 +170,15 @@ conservative "no penalty relief" default.
 - `deflated_sharpe_ratio` — `(ŜR − SR_zero)·√252`, the *annualized* corrected
   Sharpe in Sharpe units (positive ⇒ clears the multiple-testing bar).
 - `dsr_p_value` — `Φ(z) ∈ [0, 1]`, the gate quantity. **Gate threshold at the strictest
-  level (1, Conservative — the badge bar): ≥ 0.90**, loosening down the strictness ladder
+  level (1, Conservative — the badge bar): ≥ 0.95**, loosening down the strictness ladder
   to `DSR_P_FLOOR` at level 5. The live values are the `dsr_p_min` fields of
   `_PROFILES` in [`rigor_profiles.py`](../../backend/archimedes/services/rigor_profiles.py);
-  `RigorGateResult.passes_all` reads the selected profile, never a literal.
-  **Corrected 2026-08-31:** this line read `≥ 0.95`, which has not been the bar since the
-  team-sanctioned 0.95 → 0.90 recalibration in PR #901. Say "deflated-Sharpe evidence at
-  the 0.90 level" — a one-sided ~10% test, real but materially weaker than a conventional
-  0.95 bar (the #902 caveat) — not "statistically proven".
+  `RigorGateResult.passes_all` reads the selected profile, never a literal, and the level-1
+  row *is* `DSR_P_BADGE_MIN` rather than a copy of its value.
+  **Corrected 2026-09-03 (#1794):** between PR #901 and #1794 this line quoted a lower bar
+  than the Generate pipeline and the public rigor pages did, so the product graded against
+  two bars at once. There is now one. Say "deflated-Sharpe evidence at the 95% one-sided
+  level" — real evidence on a short return history, not "statistically proven".
 
 A companion `compute_sharpe_ci(...)` returns the Lo (2002) confidence interval for
 an annualized Sharpe under i.i.d. daily returns — useful context for how wide the

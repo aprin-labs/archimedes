@@ -14,6 +14,16 @@ generated: { by: "claude-code", at: "2026-08-31T05:55:43.566Z" }
 
 # Reading a backtest adversarially
 
+> **STALE ON ONE NUMBER — regenerate.** This page was generated 2026-08-31 from the quant
+> slice as it then stood. On 2026-09-03, [#1794](https://github.com/aprin-labs/archimedes/issues/1794) retired
+> the lower DSR bar: the badge bar is **0.95**, defined once as `DSR_P_BADGE_MIN` in
+> `backend/archimedes/services/rigor_profiles.py`. Every `0.90` and every "90% one-sided
+> confidence" below is the retired bar — step 2 of the one-screen read included. The body
+> is otherwise left as generated rather than hand-patched, so the `generated:` provenance
+> above stays true; the one exception is the closing note, which asserted the *inverse* of
+> the truth (it called 0.95 "retired") and was corrected in place rather than left to
+> mislead. The next openwiki run supersedes this page.
+
 A backtest is **a claim about the future stated in the language of the past**. The
 operative skill is reading one adversarially — assuming it is overfit until it proves
 otherwise.
@@ -144,7 +154,8 @@ than more, is the point of the protocol.
 
 ---
 
-> **Before quoting a threshold from this page**, check
-> [`documented-conflicts`](documented-conflicts.md). The 0.90 DSR bar in step 2 is stated
-> two different ways across the slice, and one document's worked table still evaluates
-> against the retired 0.95 bar.
+> **Before quoting a threshold from this page**, check `rigor_profiles.DSR_P_BADGE_MIN` —
+> it is the one definition of the DSR bar. The 0.90 bar in step 2 is the RETIRED one; the
+> live bar is 0.95, and the disagreement across the slice that
+> [`documented-conflicts`](documented-conflicts.md) recorded was resolved by #1794 in favour
+> of 0.95.

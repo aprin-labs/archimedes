@@ -18,10 +18,12 @@ real (never fabricated) values.
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime
 
 import archimedes.db as db
 import pytest
 from archimedes.api.auth_siwe import _COOKIE_NAME, _sign_session
+from archimedes.services.rigor_gate_version import gate_version
 from httpx import ASGITransport, AsyncClient
 
 _W_OWNER = "0xAbC0000000000000000000000000000000000001"
@@ -118,7 +120,16 @@ def _mk_passport(
             dsr_p_value=dsr,
             pbo_score=pbo,
             out_of_sample_sharpe=oos,
+            # The verdict of record, seeded COUPLED — the only shape
+            # passport_loader can write (docs/adr/rigor-verdict-of-record.md).
+            # Seeding the boolean alone would leave rigor_gate_status at its
+            # "pending" default, which every read surface now (correctly) serves
+            # as "no gate has graded this" regardless of the boolean beside it.
             passes_rigor_gate=passes,
+            rigor_gate_status="pass" if passes else "fail",
+            graded_at=datetime(2026, 8, 1, tzinfo=UTC),
+            gate_version=gate_version(),
+            cohort_n=1,
         )
         record.paper_refs = [PassportPaperRef(passport_id=sid, arxiv_id="2401.00001", title=title)]
         session.add(record)

@@ -7,7 +7,8 @@ marks value, and the position cache has no other consumer.
 
   1. ``paper_marks`` — one 15-minute mark-to-market per active deployment.
      A DECORATION WITH A TTL, not the track record: ``paper_daily_returns``
-     stays append-only-by-law and stays the thing that carries to mainnet.
+     stays append-only-by-law and stays the recorded paper track record
+     (Arc testnet, no real funds).
      That is what makes the retention policy (7d raw → 90d hourly → deleted)
      safe to run, and the policy ships with the table rather than after the
      first bill — the lesson from ``backtest_results`` reaching 6.3 GB with no

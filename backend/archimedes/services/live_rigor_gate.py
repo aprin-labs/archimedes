@@ -262,7 +262,7 @@ def verdicts_for_strategies(strategies: list) -> dict[str, RigorGateVerdict]:
     strategy_ids = [s.id for s in strategies]
 
     try:
-        from archimedes.db import get_session, init_db
+        from archimedes.db import get_session
         from archimedes.services.backtest_repository import get_all_daily_returns
         from archimedes.services.rigor_evaluator import (
             assert_self_contained_cohort_correlation,
@@ -270,7 +270,6 @@ def verdicts_for_strategies(strategies: list) -> dict[str, RigorGateVerdict]:
             compute_pbo,
         )
 
-        init_db()
         with get_session() as session:
             returns_by_strategy = get_all_daily_returns(session, strategy_ids)
     except Exception as exc:
@@ -279,9 +278,10 @@ def verdicts_for_strategies(strategies: list) -> dict[str, RigorGateVerdict]:
 
     # Strategies WITHOUT real returns are pending; do NOT synthesize from stubs
     # (that is the circular validation the /gate route explicitly refuses).
-    # TODO(A7): cohort filter here diverges from strategies_routes's cohort
-    # (_live_rigor_results_for_strategies also excludes zero-variance series) —
-    # see docs/sprint/cluster-4-strategies-route.md
+    # TODO(A7): cohort filter here diverges from the curated grading job's cohort
+    # (curated_grading.grade_cohort also excludes zero-variance series) — see
+    # docs/sprint/cluster-4-strategies-route.md. This function now backs the vault
+    # deploy gate only; the library badge is the stored verdict (#1746 / PR-B).
     valid_returns = {k: v for k, v in returns_by_strategy.items() if len(v) >= _MIN_RETURNS_FOR_GATE}
 
     # num_trials = 1: each strategy is graded on ITS OWN Sharpe, NOT deflated by

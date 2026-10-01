@@ -149,7 +149,7 @@ Each step, expressed as the story the user is living:
 > (`ROADMAP_SURFACES_ENABLED`, off by default), and no user vault has been
 > deployed. Paper trading is the honest execute substitute when it is used.
 > Two books, neither is vault validation
-> ([PR #1704 comment](https://github.com/a-apin/archimedes/pull/1704#issuecomment-5493036672)):
+> ([PR #1704 comment](https://github.com/aprin-labs/archimedes/pull/1704#issuecomment-5493036672)):
 > `paper_daily_returns` is the graded track record the rigor gate sees;
 > `paper_agent_trades` is an executor ledger / signal-state index (not on
 > `main`). Do not round this up into “paper trading validates the vault.”
@@ -227,7 +227,7 @@ user moves.
 > *"As a first-time visitor, I want to understand in 30 seconds what this is and why
 > I might trust it, before I'm asked to connect anything."*
 
-**Surfaces:** product framing (Linus-for-q-fin tagline), the 5-step spine
+**Surfaces:** product framing, the 5-step spine
 visualization, the wedge (research-grounded + rigor-gated; generation is not
 anchored on-chain), the honest-framing statement (testnet posture, no-alpha-promise).
 Big CTA: **Generate a strategy** (no wallet required).

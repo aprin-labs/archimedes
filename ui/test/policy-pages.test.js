@@ -197,10 +197,10 @@ test("external links on the policy pages are safe and point at the real repo", (
 		}
 		// Guards the guard: a regex that stopped matching would pass vacuously.
 		assert.ok(external >= 1, `${name}: expected at least one external link to check`);
-		// a-apin/archimedes is the canonical repo (README.md, CLAUDE.md). The old
+		// aprin-labs/archimedes is the canonical repo (README.md, CLAUDE.md). The old
 		// pre-rename name still redirects, so a stale link would not 404 — which
 		// is exactly why it needs pinning rather than eyeballing.
-		assert.match(page, /https:\/\/github\.com\/a-apin\/archimedes\/issues/);
+		assert.match(page, /https:\/\/github\.com\/aprin-labs\/archimedes\/issues/);
 		assert.doesNotMatch(page, /archimedes-arcadia/);
 	}
 });
@@ -295,7 +295,7 @@ test("both pages route account and privacy requests to the private mailbox", () 
 		assert.match(page, /mailto:privacy@archimedes-arc\.com/, `${name} must offer the private mailbox`);
 		assert.match(
 			page,
-			/github\.com\/a-apin\/archimedes\/issues/,
+			/github\.com\/aprin-labs\/archimedes\/issues/,
 			`${name} must keep the tracker as an alternative, not drop it`,
 		);
 	}

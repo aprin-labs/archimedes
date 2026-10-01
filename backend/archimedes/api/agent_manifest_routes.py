@@ -54,6 +54,7 @@ import os
 
 from fastapi import APIRouter
 
+from archimedes.api.rigor_verify_routes import _MIN_RETURN_ROWS as _MIN_VERIFY_WINDOW_BARS
 from archimedes.api.wallet_routes import WALLET_PROVIDERS
 
 agent_manifest_router = APIRouter(prefix="/api/agent", tags=["agent"])
@@ -161,8 +162,8 @@ async def get_agent_manifest():
         ),
         "docs": {
             "llms_txt": "/llms.txt",
-            "agent_api": "https://github.com/a-apin/archimedes/blob/main/docs/agent-api.md",
-            "quickstart": "https://github.com/a-apin/archimedes/blob/main/docs/agent-quickstart.md",
+            "agent_api": "https://github.com/aprin-labs/archimedes/blob/main/docs/agent-api.md",
+            "quickstart": "https://github.com/aprin-labs/archimedes/blob/main/docs/agent-quickstart.md",
             "agent_card": "/.well-known/agent.json",
         },
         # On-chain identity leg — pending, and says so. See erc8004_identity().
@@ -258,6 +259,11 @@ async def get_agent_manifest():
             # look-ahead audit report `not_evaluable`, never a silent pass.
             # #1481: `passes` is a quorum over the two RUNNABLE legs, so an agent
             # reading the scalar alone cannot mistake it for the passport gate.
+            # #1803: the minimum evaluation window is stated here as well as in
+            # ui/public/.well-known/agent.json. An agent that discovers us through
+            # the served manifest builds its body from THIS note; leaving the window
+            # to the static file only would make the answer depend on which surface
+            # it happened to read, which is the #1448 drift all over again.
             "rigor": {
                 "status": "live",
                 "auth_required": True,
@@ -266,7 +272,10 @@ async def get_agent_manifest():
                     "and passed. PBO and look-ahead can never run on a bare returns series, so "
                     "the verdict is capped: it is NOT equivalent to the strategy passport gate. "
                     "The response carries legs_evaluated / legs_runnable / legs_total / "
-                    "verdict_capped so the scalar is qualifiable without re-deriving leg statuses."
+                    "verdict_capped so the scalar is qualifiable without re-deriving leg statuses. "
+                    f"Minimum evaluation window is {_MIN_VERIFY_WINDOW_BARS} daily bars (one "
+                    "trading year): under it the route answers 422 with reason window_too_short "
+                    "and bars_received/bars_required, never a verdict."
                 ),
                 "routes": {
                     "verify": "POST /api/rigor/verify",

@@ -116,7 +116,7 @@ never 401s, same contract as the conviction board
 
 Request: query `limit: int(1..200) = 50`.
 Response (`LivePaperLeaderboardResponse`): `{entries: [LivePaperEntry], total: int, performance_basis: "live_paper", scope: "own"|"anonymous", sort_by: "cumulative_return", order: "desc", as_of: str|null, withheld_no_ledger: int, methodology: str, disclaimer: str, degraded: bool=false, degraded_reason: str=""}`.
-`LivePaperEntry`: `{rank, deployment_id, strategy_id, name, performance_basis: "live_paper", cumulative_return: float, days_live: int(≥1), inception_date: str, as_of: str, last_updated: str|null, drift_detected: bool}`.
+`LivePaperEntry`: `{rank, deployment_id, strategy_id, name, performance_basis: "live_paper", cumulative_return: float, days_live: int(≥1), inception_date: str, as_of: str, last_updated: str|null, drift_detected: bool, rigor_gate_status: "pass"|"fail"|"pending"|"degenerate", graded_at: str|null, gate_version: str|null}`.
 Errors: none — a DB failure degrades to an empty board with
 `degraded_reason: "paper deployments unavailable"`, never a 5xx.
 
@@ -125,7 +125,7 @@ curl -s --cookie "better-auth.session_token=…" \
   "https://archimedes-arc.com/api/leaderboard/live-paper?limit=50"
 ```
 
-Four contract points that are load-bearing rather than incidental:
+Five contract points that are load-bearing rather than incidental:
 
 - **A deployment with an empty ledger is never an entry.** Not as a `0.0%`
   row, not as a placeholder holding a rank — it is dropped and counted into
@@ -145,6 +145,26 @@ Four contract points that are load-bearing rather than incidental:
   rather than rewriting the append-only ledger, and a drifted track record
   reads as drifted on the board too. See
   [`paper-trading.md`](paper-trading.md).
+- **Every row carries the verdict of record** (#1764):
+  `rigor_gate_status` — the four-state grade STORED on the strategy's passport
+  (`docs/adr/rigor-verdict-of-record.md`) — with `graded_at` and `gate_version`
+  as its provenance. Deploying to paper has no rigor precondition, so a
+  gate-REJECTED strategy can hold rank 1 here with a real forward return; shown
+  bare, that row reads as an endorsement. Three properties keep this from being
+  the blended board the split forbids:
+    - it is a **label with its date**, not a backtest metric. No DSR, PBO,
+      Sharpe or conviction score appears on a forward row, and `sort_by` stays
+      `cumulative_return` — the verdict never reorders the board.
+    - **`passes_rigor_gate` is deliberately absent** here, though
+      `GET /api/paper/deployments` carries it: a bare boolean beside a forward
+      return is the field a consumer would blend or sort on, while a dated
+      four-state reads as the statement about the BACKTEST that it is.
+    - it is a **read, never a recompute** — the same `passport_loader`
+      derivation the deployment payload uses, in one batched query per board,
+      so this board and the deployment card can never show two verdicts for one
+      strategy. A strategy with no passport row, or a passport read that fails,
+      reads `pending` with a null `graded_at`; the returns still serve, and no
+      row is ever degraded into a `pass`.
 
 ## Metrics (public, PII-free)
 

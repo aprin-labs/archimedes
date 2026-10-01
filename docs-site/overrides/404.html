@@ -1,0 +1,53 @@
+{#-
+  The site's 404 page. mkdocs-material's stock template renders a bare
+  "404 - Not found", which is the wrong answer here: the 2026-09-02 curation
+  took ~90 URLs off this site on purpose (internal runbooks, sprint cards,
+  handovers, audits, the archive), so most 404s now have a real explanation and
+  a real next step. CloudFront serves this file for both 403 and 404
+  (docs-site/infra/main.tf § custom_error_response), at any depth, which is why
+  every link below is absolute: a relative one would resolve against the URL the
+  reader missed, not against the site root.
+-#}
+{% extends "base.html" %}
+
+{% block htmltitle %}
+  <title>Page not found — {{ config.site_name }}</title>
+{% endblock %}
+
+{% block content %}
+  <h1>Page not found</h1>
+
+  <p>
+    There is no page at this address. If you followed a link from outside this
+    site, it may be one of the pages that stopped being published on
+    <strong>2026-09-02</strong>, when the documentation was curated down to what
+    a reader outside the team can use: internal runbooks, sprint cards, session
+    handovers, dated audits and the <code>archive/</code> tree came off the site.
+    Those files were not deleted — they are still in the repository.
+  </p>
+
+  <p>Three places to look:</p>
+
+  <ul>
+    <li>
+      <a href="{{ config.site_url }}">The front door</a> — what ships today, with
+      the endpoint printed beside every number.
+    </li>
+    <li>
+      <a href="{{ config.site_url }}doc-index/">The doc register</a> — every
+      document in <code>docs/</code>, published or not, with its owner and status.
+      A doc not listed there does not exist.
+    </li>
+    <li>
+      <a href="{{ config.repo_url }}/tree/main/docs">The <code>docs/</code> tree on
+      GitHub</a> — the source of this site, including the pages it does not
+      publish. Or use the search box above.
+    </li>
+  </ul>
+
+  <p>
+    If a link on this site brought you here, that is a bug in the docs, not in
+    your browser:
+    <a href="{{ config.repo_url }}/issues/new">open an issue</a>.
+  </p>
+{% endblock %}

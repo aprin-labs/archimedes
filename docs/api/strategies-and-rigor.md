@@ -8,9 +8,18 @@ gate that grades every strategy on DSR (Deflated Sharpe Ratio), PBO
 before it is allowed to be promoted from `candidate` to `validated` or bound
 into a vault's `strategy_ids`. The badge (`passes_rigor_gate` /
 `rigor_gate_status`) and the numeric rigor fields served by `GET
-/api/strategies/` and `GET /api/strategies/{id}` come from the **same live
-gate run** `GET /api/selection-bias/gate` uses — none of these surfaces can
-disagree with another for the same strategy at the same strictness level.
+/api/strategies/` and `GET /api/strategies/{id}` are the **stored verdict of
+record** — graded once at backtest time and persisted on the strategy's
+passport row with its provenance (`gate_version`, `graded_at`, `cohort_n`;
+see the ADR `rigor-verdict-of-record`). `GET /api/selection-bias/gate/{id}`
+is different: it **recomputes** the gate live on every call (it backs the
+Deploy ladder and the vault deploy gate). The two can therefore differ in
+vintage for the same strategy until the row is explicitly re-graded; when
+they do, the passport row is the verdict of record and the live route is a
+fresh opinion. This holds for **curated and generated strategies alike** — a
+curated strategy is graded by an operator-run job when its backtest runs
+(`docs/runbooks/curated-backtests.md`), and reads `pending`, honestly, until
+that job has run against it.
 
 **Auth model.** Reads are anonymous by default — the library, passports,
 stress testing, and every `/api/selection-bias/*` route are public.
@@ -23,12 +32,25 @@ is visible to *this* caller (private-until-published, 404-hides-existence) —
 absence of that proof is a normal anonymous request, never an error. Examples
 needing a session assume an authenticated cookie jar at `/tmp/session.jar`.
 
+**This is the API surface, not the web app.** #1753 gated the browser pages for
+the leaderboard and the strategy passport (`/app/leaderboard`,
+`/app/strategy/{id}`) — an anonymous browser request for either is answered with
+`302 /sign-in?next=…`. The endpoints below did **not** change: `GET
+/api/strategies/passports/{id}` and `GET /api/leaderboard` are still anonymous,
+because they are the contract the CLI (`archimedes generate`, which prints a
+passport URL) and the MCP server (`archimedes_passport`, `archimedes_leaderboard`)
+call, and because curated/published rows are public by the visibility matrix in
+`services/strategy_visibility.py` — none of that was ever justified by the
+anonymous *page*. The page gate and the route gate are separate decisions, and
+this doc describes only the second.
+
 ## Library & strategy endpoints
 
 ### GET /api/strategies/
 List strategies in the library, backed by `LocalStrategyProvider`; the badge
-and every numeric rigor field come from a single live-gate run over the FULL
-library, before pagination. | **Auth**: anonymous
+and every numeric rigor field are READ from each strategy's stored verdict of
+record — this route runs no gate, so a badge cannot depend on which page or
+`?status=` filter it was requested under. | **Auth**: anonymous
 
 Request: query `status: "candidate"|"validated"|"live"|"retired"|null, limit: int(1..100)=20, offset: int(>=0)=0`.
 Response (`StrategyListResponse`): `{strategies: [StrategyResponse], total: int, degraded: bool=false, degraded_reason: str=""}`. `degraded` is `true` when the strategy provider raised or the library came back empty for a reason other than a legitimate filter (e.g. `"strategy corpus not found in build"`) — a loud, specific unavailable state instead of the false claim "no strategies" (#1356). `StrategyResponse` carries `id, papers[], methodology_summary, asset_universe, universe_source, position_sizing, rebalance_frequency, status, sharpe_ratio, sortino_ratio, cagr, max_drawdown, win_rate, calmar_ratio, correlation_to_spy, deflated_sharpe_ratio, dsr_p_value, pbo_score, out_of_sample_sharpe, kelly_fraction, passes_rigor_gate: bool, rigor_gate_status: "pass"|"fail"|"pending"|"degenerate", is_backtest_placeholder: bool, sharpe_ci_lower/upper, backtest_start/end, regime_tag, return_source: "risk_premium"|"mispricing"|"productive_growth"|"noise", return_source_note, generation_cost, can_publish`.
@@ -44,7 +66,14 @@ private-until-published (visible when published, or owned by the caller). |
 **Auth**: account-session
 
 Request: query `limit: int(1..200)=50`.
-Response: `{strategies: [StrategyRecord.to_dict() + can_publish: bool + generation_cost], total: int, degraded: bool=false, degraded_reason: str=""}`.
+Response: `{strategies: [StrategyRecord.to_dict() + can_publish: bool + generation_cost + the rigor verdict of record], total: int, degraded: bool=false, degraded_reason: str=""}`.
+Each row carries the STORED verdict, overlaid from that strategy's `strategy_passports` row in one `IN` query per page:
+`passes_rigor_gate: bool|null`, `rigor_gate_status: "pass"|"fail"|"pending"|"degenerate"`, `graded_at: str|null`, and the
+four rigor numbers the same grading event produced (`deflated_sharpe_ratio`, `dsr_p_value`, `pbo_score`,
+`out_of_sample_sharpe`). A strategy with no passport row has never been graded: `passes_rigor_gate: null`,
+`rigor_gate_status: "pending"`, all four numbers `null` — never `false`, which would claim a gate ran and the strategy
+lost. `rigor_verdict` on the same row is the GENERATION-TIME fusion verdict (the debate record) and is **not** a rigor
+grade; likewise `status`, which is written from it. See [`docs/adr/rigor-verdict-of-record.md`](../adr/rigor-verdict-of-record.md).
 `degraded` is `true` when the strategy store raised (`degraded_reason: "strategy store unavailable"`) — the same
 honest-degradation contract `GET /api/strategies/` carries (#1356 review round 2): a swallowed DB failure used to
 render as a measured `total: 0`, indistinguishable on the wire from a genuinely-empty store.
@@ -98,6 +127,7 @@ private-until-published exactly as `/generated`. | **Auth**: anonymous
 
 Request: query `status: str|null, regime_tag: str|null, limit: int(1..200)=50`.
 Response: `{passports: [dict] (owner_wallet redacted unless caller owns it), total: int, source: "strategy_passports"}`.
+Each dict has the same shape as the single-passport read below, verdict and provenance included.
 Errors: none explicit.
 
 ```bash
@@ -110,7 +140,22 @@ unpublished non-example passports 404 for non-owners, never 403. | **Auth**:
 anonymous
 
 Request: path `strategy_id`.
-Response: dict — passport record's `to_dict()` with `owner_wallet` redacted unless caller owns it.
+Response: dict — passport record's `to_dict()` with `owner_wallet` redacted unless caller owns it. A **pure read** of the
+stored rigor verdict, never a recompute: `passes_rigor_gate: bool`, `rigor_gate_status: "pass"|"fail"|"pending"|"degenerate"`,
+plus its provenance — `graded_at: str|null` (ISO-8601; `null` ⟺ never graded), `gate_version: str|null` (which gate
+produced it; the literal `"legacy-derived"` marks a verdict INFERRED by the verdict-of-record migration from pre-existing
+columns rather than produced by a gate run), `cohort_n: int|null` (cohort size behind the grade's cohort-scoped inputs;
+`1` = graded self-contained). Also `served_status: str` — the card status the same stored verdict derives, which is
+exactly what `GET /api/strategies/{strategy_id}` serves in its `status` field; the `status` key here stays the PERSISTED
+lifecycle column, because that is what `?status=` filters on. Curated passports carry a real graded verdict once the
+grading job has run for them (`docs/runbooks/curated-backtests.md`); before that they read `"pending"`, which is true.
+Also `display_metrics_source: "strategy_record"|"persisted_backtest"|"stub_placeholder"|"unavailable"|null` — which link
+of the curated display chain supplied `sharpe_ratio`/`sortino_ratio`/`max_drawdown` on this row. It is stored beside
+those numbers by the same write, so this route and `GET /api/strategies/{strategy_id}` name the same link for the same
+number; `null` means the row predates the column (the next passport sync writes it) or the row is generated, where there
+is no chain to name. Read it before quoting a number: `"stub_placeholder"` is a constant hand-declared in the strategy
+file, not a measurement.
+See [`docs/adr/rigor-verdict-of-record.md`](../adr/rigor-verdict-of-record.md).
 Errors: 404 `Passport not found` (missing, or not visible to caller).
 
 ```bash
@@ -150,7 +195,8 @@ curl -s https://archimedes-arc.com/api/strategies/<strategy_id>/debate
 ### GET /api/strategies/{strategy_id}
 Get a single strategy by ID — tries the curated `LocalStrategyProvider` first,
 falls through to the `strategy_passports` table for fusion/architect-generated
-strategies. | **Auth**: anonymous
+strategies. Either way the rigor verdict and every number beside it are READ
+from the strategy's passport row; this route runs no gate. | **Auth**: anonymous
 
 Request: path `strategy_id`.
 Response: `StrategyResponse` (same shape as the list endpoint's items).
@@ -243,6 +289,191 @@ curl -s -X POST https://archimedes-arc.com/api/selection-bias/pbo \
   -H "Content-Type: application/json" \
   -d '{"returns_matrix": {"strat_a": [0.001, -0.002, 0.003]}, "s_partitions": 16}'
 ```
+
+### POST /api/rigor/verify
+Grade a returns series you already have — the backend for the CLI's
+`archimedes verify` and the MCP `archimedes_rigor_verify` tool (#1305). |
+**Auth**: Better Auth account session (or an `archim_` API key) |
+**Flags**: rate limit `5/minute`
+
+Request (`RigorVerifyRequest`): `{returns: [{date: "YYYY-MM-DD", daily_return: float}], trials: int=1}`.
+Response (`RigorVerifyResponse`): `{passes: bool, trials, self_attested: true, n_bars,
+legs_evaluated, legs_runnable, legs_total, legs_not_run: [str], verdict_capped: true,
+dsr: {status, reason, deflated_sharpe, dsr_p_value}, pbo: {status, reason},
+oos_consistency: {status, reason, oos_sharpe, in_sample_sharpe},
+look_ahead: {status, reason}, rf_convention}`. Each `status` is
+`pass` | `fail` | `not_evaluable`. No strategy is persisted and no code is
+uploaded or executed — this endpoint accepts only numbers, on purpose.
+
+**The input contract, and why the server repairs nothing (#1803).** The
+request is refused unless *all* of the following hold. Every one of them is a
+422, never a truncation, a coercion or a silent accept:
+
+| Rule | `detail.reason` |
+|---|---|
+| `date` is a strict `YYYY-MM-DD` calendar date (no epoch seconds, no `YYYYMMDD`, no ISO week dates) | `invalid_date` |
+| No two rows share a date | `duplicate_date` |
+| Dates are in **ascending** order | `unsorted_dates` |
+| Every `daily_return` is finite (JSON `NaN`/`Infinity` parse — and are refused) | `non_finite` |
+| `abs(daily_return) <= 1.0`, in simple-return units (+1.3% is `0.013`, not `1.3`) | `out_of_range` |
+| At least **250** rows — one trading year, the minimum evaluation window | `window_too_short` |
+| At most **2,600** rows (~10 years of daily bars) | `too_many_rows` |
+| `1 <= trials <= 10000` | `trials_out_of_range` |
+
+A refusal is a single object, not a validation list:
+`{"detail": {"error": "input_rejected", "reason": "unsorted_dates", "reasons":
+[...], "message": "...", "loc": ["body", "returns"]}}`. Branch on `reason`;
+`message` is the server's own sentence.
+
+**The minimum evaluation window is 250 daily bars — one trading year.** Under
+it there is no verdict: the endpoint answers with a typed refusal and nothing
+else. Not a verdict with a warning attached, either — `passes` is a field
+callers branch on (the CLI exits on it, CI gates on it), and a caveat in prose
+beside it is read by none of them. The refusal names both numbers as fields, so
+a client can decide "fetch more history" without parsing English (real
+response, 249 bars):
+
+```json
+{"detail": {"error": "input_rejected", "reason": "window_too_short",
+            "reasons": ["window_too_short"],
+            "message": "returns has 249 rows; the minimum evaluation window is 250 daily bars (one trading year). …",
+            "loc": ["body", "returns"],
+            "bars_received": 249, "bars_required": 250}}
+```
+
+250 is a **product** floor, deliberately above both arithmetic ones (the DSR is
+computable from 4 bars, the walk-forward split from ~70). What it buys: at 250
+bars both runnable legs actually run, so a series that is merely short can no
+longer come back as a DSR-only INCOMPLETE that a reader might round up to a
+pass. The CLI and the MCP tool mirror this floor and refuse locally, with the
+same `reason` code and no request spent.
+
+Ordering is the load-bearing one. The walk-forward split is **positional** —
+the first 70% of *rows* is the training set and the remainder is the holdout —
+so row order **is** the time order being graded. A caller who sorted their
+series by return could park their best 30% in the holdout and collect
+`oos_consistency: pass` on numbers that fail chronologically. The server
+therefore refuses an out-of-order series rather than sorting it: sorting would
+hand back a verdict on a series the caller never sent.
+
+What that closes is the **row-order** form of it — the accidental one, and the
+only one a server can see. It does not close relabelling: a caller who writes
+ascending dates onto return-sorted values sends a body indistinguishable from a
+real series and gets a 200. No input rule can detect that, which is why the
+response carries `self_attested: true` and `verdict_capped: true` — this route
+grades the numbers it was handed and attests nothing about where they came from
+or when they happened. `trials` is bounded for
+the same reason — it is self-attested and deflates the DSR, and an unbounded
+count (`10**18`) drove the deflation to `-inf`, which reports as
+`not_evaluable`: a caller-controlled way to erase a FAIL.
+
+**What a verdict here can and cannot claim.** Two of the gate's four legs can
+*never* run on a bare returns series: PBO is a property of a selection set and
+needs a trial matrix of candidate strategies (`POST /api/selection-bias/pbo`
+is the trial-matrix form), and the look-ahead audit is static analysis of
+strategy source, which is never uploaded. Both always report `not_evaluable`
+with the decisive reason, and `verdict_capped` is always `true`. `passes` is a
+**quorum over the two runnable legs** — true only when DSR *and* walk-forward
+OOS both ran *and* passed — so it is never a claim that the strategy cleared
+the passport gate, and it can never be earned by a series that was merely too
+short to fail. A leg can still fail to run on the NUMBERS — a zero-variance
+series has no Sharpe to compute — and that shows up as `legs_evaluated <
+legs_runnable`, which, **when no leg failed**, is an **incomplete evaluation**,
+not a pass and not a fail. (Shortness is no longer one of the ways to get
+there: the 250-bar window is above the ~70 the walk-forward split needs, so a
+too-short series is refused rather than partially graded.) A leg that did fail
+is still a fail; an unevaluable second leg does not launder it. `--trials` is
+unverifiable self-attestation, so the DSR is
+only as honest as the number the caller declared. "Archimedes Verified" is not
+obtainable here.
+
+Worked example — one trading year (252 bars) through the CLI. `RETURNS_CSV` is
+two columns, `date,daily_return`; a header row is skipped automatically:
+
+```console
+$ head -3 returns.csv
+date,daily_return
+2025-01-02,0.01078
+2025-01-03,-0.00055
+$ wc -l < returns.csv
+     253
+$ archimedes verify returns.csv --trials 12
+n_bars=252  trials=12 (self-attested)
+  [PASS] DSR — self-attested trials=12: DSR p-value 0.9719 >= floor 0.50 (Newey-West HAC standard error)
+  [N/A] PBO — PBO (probability of backtest overfitting, Bailey et al. 2014 CSCV) is a property of a SELECTION SET, not one series — ...
+  [PASS] OOS consistency — walk-forward OOS Sharpe 3.5280 > floor 0.00 (chronological 70/30 holdout)
+  [N/A] Look-ahead — The look-ahead audit is AST-based static analysis of strategy SOURCE CODE; a bare returns series carries no code to inspect — ...
+rf_convention=excess_tbill_series
+legs evaluated: 2/2 runnable here of 4 in the full gate
+PASSES (capped — PBO and look-ahead cannot be evaluated on a returns series)
+```
+
+(The two `[N/A]` reasons are printed in full; they are elided here. That series
+is synthetic — `numpy` normal draws, mean 0.0011, sd 0.0085, seed 1803 — which
+is exactly why its Sharpe is implausibly good: it is a rendering example, not
+a result.)
+
+Exit codes: `0` pass, `1` fail, `4` incomplete — **no leg failed** and not every
+runnable leg ran — so a CI job can never read "a leg could not run" as "strategy
+rejected". The two are checked in that order: a leg that actually failed is a
+real verdict and exits `1` even when another leg could not run, because a
+degenerate second leg (a zero-variance stretch with no Sharpe to compute) is not
+an excuse that erases a FAIL. "Too few bars" is not one of the inputs to that
+choice any more: a series under the window never reaches the gate at all — it
+exits `2` with `window_too_short`, like any other rejected body, and prints the
+`reason`. Exit `2` is never `1`, which means only "the gate ran and said no".
+
+Re-sending the same 252 bars sorted by return instead of by date, so the best
+30% falls in the holdout:
+
+```console
+$ archimedes verify shuffled.csv --trials 12 ; echo "exit=$?"
+the API rejected the input (unsorted_dates): returns must be in ascending date order; row 4 (2025-03-03) precedes row 3 (2025-11-18). The walk-forward out-of-sample split is positional, so row order IS the time order it grades — a shuffled series is refused rather than sorted, because sorting would return a verdict on a series you did not send.
+Sort the CSV by date, oldest first (`sort -t, -k1,1 returns.csv`). The out-of-sample split is positional, so row order IS the time order it grades; the server refuses to re-sort for you because that would grade a series you did not send.
+exit=2
+```
+
+The CLI holds the CSV to the same rules before it builds the request, so a
+series under the 250-bar window, a non-finite or out-of-range return, a date
+that is not `YYYY-MM-DD`, a duplicate or an out-of-order row is refused locally
+— same `reason` code, same exit `2`, no request spent, no session needed to be
+told (real run, 249 bars):
+
+```console
+$ archimedes verify short.csv --json ; echo "exit=$?"
+{"ok": false, "command": "verify", "error": "window_too_short_returns", "message": "'short.csv' has 249 data rows; the minimum evaluation window is 250 daily bars (one trading year). A shorter series is refused, not graded with a caveat", "reason": "window_too_short"}
+exit=2
+```
+
+(A `nan` in the file used to reach the JSON encoder instead and abort with a
+traceback and exit `1`, which reads as a failing verdict.) It is a mirror, not a
+second opinion: the server re-checks everything and its sentence is the one
+printed when the request does go out. The row **ceiling** is still left to the
+server entirely — it tracks the edge's payload budget rather than a published
+promise, so hard-coding it here could refuse a series a newer server accepts.
+
+The same series over HTTP. A year of bars is not a body you hand-write, so build
+it from the CSV — and note that a four-row body, the kind of illustrative
+snippet this section used to carry, is now refused with `window_too_short`:
+
+```bash
+python - <<'PY'
+import csv, json
+rows = []
+with open("returns.csv", newline="") as fh:
+    for date, value in csv.reader(fh):
+        try:
+            rows.append({"date": date, "daily_return": float(value)})
+        except ValueError:
+            continue  # the header row
+json.dump({"returns": rows, "trials": 12}, open("body.json", "w"))
+PY
+curl -s -X POST https://archimedes-arc.com/api/rigor/verify \
+  -b /tmp/session.jar -H "Content-Type: application/json" --data-binary @body.json
+```
+
+`archimedes verify returns.csv --trials 12` does exactly this, with the input
+contract checked before the request goes out.
 
 ## Rigor gate status semantics (honesty note)
 

@@ -78,7 +78,6 @@ def _papers(n: int = 3) -> list:
 def _propose_with(monkeypatch, backend: _StubBackend, brief=None) -> sf.FusionProposal:
     """Run the REAL propose() with corpus/backend/prompt seams stubbed."""
     fusion = sf.StrategyFusion()
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
     papers = _papers()
     monkeypatch.setattr(sf.StrategyFusion, "_resolve_corpus", lambda self: papers)
     monkeypatch.setattr(sf, "select_candidates", lambda brief, corpus: papers)

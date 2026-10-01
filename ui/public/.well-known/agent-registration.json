@@ -22,7 +22,7 @@
     },
     {
       "name": "quickstart",
-      "endpoint": "https://github.com/a-apin/archimedes/blob/main/docs/agent-quickstart.md"
+      "endpoint": "https://github.com/aprin-labs/archimedes/blob/main/docs/agent-quickstart.md"
     }
   ],
   "x402Support": true,

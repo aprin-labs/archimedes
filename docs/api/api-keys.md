@@ -13,7 +13,7 @@ was the `better-auth.session_token` cookie, and the only way to obtain or refres
 when the cookie expires. That makes the machine credential *the human's password*: it
 cannot be scoped, it cannot be revoked without locking the human out, and it goes over the
 wire on a weekly cycle. Owner decision **D3** on
-[#1653](https://github.com/a-apin/archimedes/pull/1653) closed that gap.
+[#1653](https://github.com/aprin-labs/archimedes/pull/1653) closed that gap.
 
 ## The credential
 

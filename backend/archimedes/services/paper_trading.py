@@ -61,28 +61,42 @@ logger = logging.getLogger(__name__)
 _DRIFT_EPS = 1e-9
 
 #: Values that read as "off" for :func:`advance_enabled`. Same spelling as
-#: ``backtest_scheduler.refresh_enabled``'s, so an operator who has learned one
-#: of this family's kill switches has learned both.
+#: every other kill switch in the tree (``sweep_enabled``,
+#: ``real_data_enabled``, ...), so an operator who has learned one of this
+#: family's switches has learned them all.
 _FALSY = {"0", "false", "no", "off"}
 
 
 def advance_enabled() -> bool:
-    """Is the paper-advance loop armed? Default OFF — unset must not tick.
+    """Is the paper-advance loop armed? Code default OFF — unset must not tick.
 
     The operator kill switch for the daily advance tick, added for #1632. It
-    exists because the advance tick is the one scheduled job that can take the
-    whole web tier down rather than just failing: the replay reaches
-    ``market_data_provider``'s OHLCV cache write, and in production that write
-    is aborting the interpreter at the C level, killing the container. A
-    ``try/except`` cannot catch that, so fail-soft does not help here — the
-    only lever that works is not running the tick.
+    exists because the advance tick is the one scheduled job that was ever
+    suspected of taking the whole web tier down rather than merely failing: a
+    C-level abort cannot be caught by a ``try/except``, so fail-soft does not
+    help and the only lever that works is not running the tick.
 
-    Default was ON in #1725 so shipping the flag would not change behaviour
-    where it was unset. That is exactly how task-def :211 died: ``deploy.yml``
-    cloned last-good, ``PAPER_ADVANCE_ENABLED`` was absent, the code default
-    started the tick, ``/health`` 502'd at ``PAPER_ADVANCE_STARTUP_DELAY_S``.
-    Unset is now OFF. Flip-back is an explicit ``"true"`` plus removing the
-    CI rewrite pin, after #1632 has a proven cause — do not re-enable here.
+    DEPLOYED VALUE as of 2026-09-01 (#1778): ``"true"`` — armed. The pin that
+    ships is ``PAPER_ADVANCE_VALUE`` in
+    ``.github/scripts/ecs_rewrite_task_def.py``, with the ``infra/ecs.tf`` line
+    as its documentation twin. What justifies arming it is NOT a proof that
+    this tick is clean. #1632's actual mechanism — two ``/health`` corpus-probe
+    threads racing in SQLAlchemy session teardown inside ``load_corpus`` — was
+    caught by faulthandler on prod rev 214 WITH THIS FLAG OFF and fixed by
+    #1740, so the replay's own OHLCV cache write, the frame the first
+    attribution named, was never the proven cause and was never cleared
+    either. The argument for arming is the process boundary from #1728:
+    :func:`arm_paper_advance_for_web_tier` runs the tick in a CHILD
+    interpreter, so a residual abort on that unproven frame kills the child
+    while ``/health``, in the parent, keeps answering. Blast radius, not
+    absolution.
+
+    The CODE default stays ``"false"`` and is deliberately NOT flipped with the
+    two deploy pins. Task-def :211 died of the opposite arrangement:
+    ``deploy.yml`` cloned last-good, ``PAPER_ADVANCE_ENABLED`` was absent, the
+    then-ON code default started the tick, and ``/health`` 502'd at
+    ``PAPER_ADVANCE_STARTUP_DELAY_S``. Unset must mean OFF so a task definition
+    that never heard of this name cannot tick by accident.
 
     Read once per tick rather than once at boot, so the value that decides is
     the one in force when the work would actually run.
@@ -594,7 +608,12 @@ def _publish_decision_traces(
         row.decision_date: row
         for row in session.query(PaperDecisionTrace).filter(PaperDecisionTrace.deployment_id == dep.id)
     }
-    paper_hashes = pt.resolve_paper_hashes(list(spec.source_arxiv_ids))
+    # The CYCLE's session, not a second one (#1818 P2). This lookup used to
+    # open its own connection while this transaction was still open, which is
+    # the shape that wedged the fleet on 2026-09-03: our AccessShareLock on
+    # `papers` in front, a sibling's ALTER TABLE queued behind it, and our
+    # second session queued behind the ALTER — a cycle PostgreSQL cannot see.
+    paper_hashes = pt.resolve_paper_hashes(session, list(spec.source_arxiv_ids))
 
     budget = pt.backfill_max()
     attempted = 0
@@ -1013,7 +1032,14 @@ def trace_coverage(session, dep: PaperDeployment) -> dict:
     }
 
 
-def deployment_summary(session, dep: PaperDeployment) -> dict:
+def deployment_summary(session, dep: PaperDeployment, *, verdict: dict | None = None) -> dict:
+    """One deployment's payload: the forward record and the verdict that qualifies it.
+
+    ``verdict`` lets a LIST-shaped caller hand in the rigor verdict it already
+    read for the whole page (``passport_loader.stored_rigor_verdicts`` — one
+    query for N rows instead of one per row). When it is ``None`` this reads the
+    single row itself, which is what the create and detail routes want.
+    """
     rows = (
         session.query(PaperDailyReturn)
         .filter(PaperDailyReturn.deployment_id == dep.id)
@@ -1043,6 +1069,7 @@ def deployment_summary(session, dep: PaperDeployment) -> dict:
     # deployment created between ticks, or one on SPY before the open), and
     # the UI must render it as an em-dash with a reason rather than +0.00%.
     from archimedes.services.paper_marks import latest_mark, mark_to_dict
+    from archimedes.services.passport_loader import stored_rigor_verdict
 
     newest = latest_mark(session, dep.id)
     return {
@@ -1052,6 +1079,33 @@ def deployment_summary(session, dep: PaperDeployment) -> dict:
         "status": dep.status,
         "days": len(rows),
         "total_return": equity - 1.0,
+        # THE VERDICT OF RECORD, BESIDE THE FORWARD RECORD (#1764). Deploy is
+        # at will — a strategy can be paper-traded whether its gate said pass,
+        # fail, pending or degenerate (paper_routes checks ownership and spec
+        # validity, and nothing else). That freedom is only honest if the
+        # verdict travels with the numbers: "Paper: +2.1% over 12 days" beside
+        # "Gate: failed (graded 2026-08-30)" is the whole point — the forward
+        # record is the evidence that TESTS the gate, and neither re-labels the
+        # other.
+        #
+        # A pure READ of strategy_passports (docs/adr/rigor-verdict-of-record.md),
+        # never a recompute: a strategy is graded once, at backtest time. If this
+        # re-ran the gate, a deployment card and its own passport could show two
+        # different verdicts for the same strategy — the #1746/#1747 split, on a
+        # new surface. `stored_rigor_verdict` fails closed to "pending", so a
+        # strategy with no passport row reads as ungraded and never as a pass.
+        #
+        # Deliberately NOT here: `outside_window`. Nothing in this product
+        # declares a deployment time window — not the DSL spec, not
+        # strategy_store, not strategy_passports, not paper_deployments. The only
+        # windows in the tree are the VAULT window (docs/specs/vault-semantics-spec.md,
+        # explicitly out of scope for the paper-only cut) and the BACKTEST window
+        # (`backtest_start`/`backtest_end`), which every forward paper deployment
+        # is outside of by construction — a flag that is always true is not a
+        # disclosure, it is decoration that trains a reader to ignore it. What
+        # actually carries the staleness is `graded_at` beside `deployed_at`,
+        # both of which are on this payload and both of which the card renders.
+        **(verdict if verdict is not None else stored_rigor_verdict(session, dep.strategy_id)),
         "drift_detected_at": dep.drift_detected_at.isoformat() if dep.drift_detected_at else None,
         # The engine-version half of the drift story (#1449). Separate keys from
         # `drift_detected_at` on purpose: a client must be able to render "we
@@ -1075,18 +1129,115 @@ def deployment_summary(session, dep: PaperDeployment) -> dict:
     }
 
 
+#: Fixed key for the fleet's paper-advance advisory lock. The digits are the
+#: two issues that made this loop what it is (#1632 → #1728), so a
+#: ``SELECT * FROM pg_locks`` on a confused prod box greps straight back here.
+PAPER_ADVANCE_LOCK_KEY = 16321728
+
+#: Logged by whichever task loses the fleet lock. A named constant because a
+#: test asserts the exact sentence: this line is the ONLY evidence that a
+#: second task ticked at all, and "it deliberately did nothing" must not look
+#: like "it never ran" in CloudWatch.
+LOCK_HELD_LOG = "another task holds the paper-advance lock; skipping this cycle"
+
+
+def try_take_paper_advance_lock(session) -> bool:
+    """Try to become this fleet's single paper ticker for one cycle.
+
+    Two ECS tasks boot within seconds of each other and both tick at
+    ``+PAPER_ADVANCE_STARTUP_DELAY_S``. ``PaperDailyReturn(deployment_id,
+    date)`` is unique and :func:`advance_all` commits the whole cycle in one
+    transaction, so the loser does not merely fail to duplicate a row — its
+    ``IntegrityError`` rolls back everything it had appended for every OTHER
+    deployment in that pass. "Idempotent appends" was true by
+    constraint-violation, which is not the same as true.
+
+    ``pg_try_advisory_xact_lock`` is non-blocking: the first caller gets
+    ``True``, everyone else gets ``False`` immediately and nobody queues.
+
+    TRANSACTION-scoped rather than session-scoped, on purpose. SQLAlchemy hands
+    connections back to a POOL rather than closing them, and a session-level
+    advisory lock survives that handoff — one missed unlock would make this
+    task the fleet's permanent ticker and freeze every other task's ledger
+    until the process died. An xact lock is released by the ROLLBACK the pool
+    issues on return, so the worst failure is releasing too eagerly (two
+    tickers, with the unique constraint still behind them) rather than a
+    fleet-wide deadlock nobody can see.
+
+    Fails OPEN. A lock check that cannot run must not become a silent way to
+    stop every ledger in the fleet — that is the same class of failure as an
+    unexplained kill switch, and this module exists to oppose it. Non-Postgres
+    (SQLite dev, the hermetic suites) has no fleet to contend with and wins
+    without asking.
+    """
+    from sqlalchemy import text
+
+    try:
+        bind = session.get_bind()
+    except Exception:
+        bind = None
+    dialect = getattr(getattr(bind, "dialect", None), "name", "") or ""
+    if dialect and dialect != "postgresql":
+        return True
+
+    try:
+        acquired = session.execute(
+            text("SELECT pg_try_advisory_xact_lock(:key)"),
+            {"key": PAPER_ADVANCE_LOCK_KEY},
+        ).scalar()
+    except Exception as exc:
+        logger.warning(
+            "paper advance: fleet lock check failed (%s: %s) — proceeding UNLOCKED; "
+            "a second ticker is possible this cycle",
+            type(exc).__name__,
+            exc,
+        )
+        return True
+    return bool(acquired)
+
+
 async def paper_advance_loop() -> None:
     """Long-lived task: advance every active ledger once per interval.
 
-    Same fail-soft contract as backtest_refresh_loop: a bad cycle logs and
-    retries next tick; it must never take the app down. Interval defaults to
-    daily — the ledger law makes extra runs harmless (idempotent appends).
+    Fail-soft by contract: a bad cycle logs and retries next tick; it must
+    never take the app down. Interval defaults to daily.
+
+    This clock is the point of the ledger: performance after publication is
+    the thing that is supposed to move with time. Backtests are the opposite
+    — they have no clock at all, by policy (#1760,
+    ``docs/adr/backtests-are-frozen-evidence.md``).
 
     Run this only in a dedicated interpreter (``python -m
     archimedes.services.paper_trading``). The web process must not schedule
     it as an in-process asyncio task: a C abort in psycopg2/web3 on the
-    OHLCV cache write (#1632) kills the interpreter, and ``/health`` lives
-    in that same interpreter. See :func:`arm_paper_advance_for_web_tier`.
+    replay (#1632) kills the interpreter, and ``/health`` lives in that same
+    interpreter. See :func:`arm_paper_advance_for_web_tier`.
+
+    ONE TICKER PER FLEET (#1778). The fleet runs more than one task and they
+    boot together, so both children reach this loop and tick within seconds of
+    each other. Each cycle therefore asks
+    :func:`try_take_paper_advance_lock` first and does nothing at all when it
+    loses — nothing, not "the ledger half": the lock is held across the agent
+    pass too, on its own session, for exactly as long as the cycle runs. A
+    second run is not harmless the way the docstring here used to claim: the
+    ledger's uniqueness constraint would abort the loser's whole transaction,
+    discarding rows it had already appended for unrelated deployments.
+
+    NO SCHEMA WORK IN THIS LOOP (#1818). This cycle must never run DDL. It
+    used to call ``init_db()`` on every tick, in both ECS tasks at once, and on
+    2026-09-03 that cost 94 minutes of production: a no-op ``ADD COLUMN IF NOT
+    EXISTS`` takes AccessExclusiveLock on ``papers`` for the rest of its
+    transaction, and a *waiting* exclusive-lock request queues every later
+    reader of that table behind it — including this loop's own trace session,
+    which is how two sibling children wedged each other outside PostgreSQL's
+    view. Schema is the migrate task's job (``alembic upgrade head``, see
+    ``migrations/README.md``) plus the web process's boot-time ``init_db()``
+    — and, today, eleven request handlers that still call it on the serving
+    path (#1818 P6, listed in the incident doc); a 24-hourly ticker has no
+    business adding itself to that list. If this loop ever needs a column
+    that does not exist, the answer is an Alembic revision, not a patch call
+    from here.
+    See ``docs/incidents/2026-09-03-paper-advance-ddl-wedge.md``.
 
     Two independent passes run per cycle, in this order and in separate
     try/excepts (#1410):
@@ -1094,67 +1245,96 @@ async def paper_advance_loop() -> None:
       1. ``advance_all`` — the ledger. The user's track record, replayed on the
          graded engine. This is the one that must not be missed.
       2. ``advance_agent_execution`` — the agent tick loop pointed at paper
-         deployments, writing to ``paper_agent_trades`` and nothing else. New
-         here, additive, and deliberately downstream: if it breaks, the ledger
-         has already advanced.
+         deployments, writing to ``paper_agent_trades`` and nothing else.
+         Additive and deliberately downstream: if it breaks, the ledger has
+         already advanced.
     """
     import asyncio
+    import contextlib
 
-    from archimedes.db import get_session, init_db
+    from archimedes.db import get_session
 
     delay = float(os.getenv("PAPER_ADVANCE_STARTUP_DELAY_S", "240"))
     interval_s = float(os.getenv("PAPER_ADVANCE_INTERVAL_HOURS", "24")) * 3600.0
     await asyncio.sleep(delay)
     while True:
-        try:
-            if not advance_enabled():
-                # Named, and a WARNING rather than an INFO, because the state
-                # this line describes is a product claim being suspended: no
-                # ledger advances while it prints. It also has to be greppable
-                # against the failure it mitigates — an operator reading these
-                # logs must be able to tell "the tick was switched off" from
-                # "the tick killed the container", which is exactly the
-                # ambiguity #1632's cold-fleet spiral created.
-                logger.warning(
-                    "paper advance: tick SKIPPED — PAPER_ADVANCE_ENABLED is off "
-                    "(temporary #1632 mitigation; ledgers do not advance until it is flipped back)"
-                )
-            else:
-                init_db()
+        # True only when this cycle ASKED for the fleet lock and lost it. It is
+        # deliberately not "we hold the lock": with the switch off we never ask,
+        # and the agent pass keeps whatever behaviour it had.
+        contended = False
+        # The lock session does nothing but hold the lock, on its own
+        # connection, for the whole cycle — including the agent pass below.
+        # Leaving the stack closes it, and the pool's ROLLBACK is what releases
+        # the xact lock. See try_take_paper_advance_lock.
+        with contextlib.ExitStack() as cycle:
+            try:
+                if not advance_enabled():
+                    # Named, and a WARNING rather than an INFO, because the
+                    # state this line describes is a product claim being
+                    # suspended: no ledger advances while it prints. It also
+                    # has to be greppable against the failure it mitigates — an
+                    # operator reading these logs must be able to tell "the
+                    # tick was switched off" from "the tick killed the
+                    # container", which is exactly the ambiguity #1632's
+                    # cold-fleet spiral created.
+                    logger.warning(
+                        "paper advance: tick SKIPPED — PAPER_ADVANCE_ENABLED is off "
+                        "(#1632 break-glass switch is pulled; ledgers do not advance until it is flipped back)"
+                    )
+                else:
+                    # No init_db() here, ever (#1818). See the docstring.
+                    contended = not try_take_paper_advance_lock(cycle.enter_context(get_session()))
+                    if contended:
+                        # INFO, not WARNING: a second task standing down is the
+                        # design working, unlike the switch being pulled above.
+                        logger.info(LOCK_HELD_LOG)
+                    else:
 
-                def _run() -> dict:
+                        def _run() -> dict:
+                            with get_session() as session:
+                                summary = advance_all(session)
+                                session.commit()
+                                return summary
+
+                        summary = await asyncio.to_thread(_run)
+                        logger.info("paper advance: %s", summary)
+            except Exception as exc:
+                logger.warning("paper advance: cycle failed (%s: %s) — will retry next tick", type(exc).__name__, exc)
+
+            # Agent-driven paper execution (#1410) — the vault's own tick loop
+            # pointed at paper deployments, on this cadence, in this process.
+            # Kept OUTSIDE the try above, and given its own, so the two cannot
+            # take each other down in either direction: the LEDGER is the
+            # user's track record and must advance even if the agent
+            # experiment is broken, and the agent's own bad cycle must not be
+            # reported as a ledger failure. It also stays out of
+            # `advance_all`, which is a pure, hermetically tested function that
+            # callers other than this loop rely on. It IS inside the fleet
+            # lock's scope whenever the lock was ASKED for: a cycle that lost
+            # it stands down whole, or the lock would only be buying half of
+            # what it claims. It is NOT locked when we never asked — with the
+            # kill switch off, or if get_session() raised before the ask (the
+            # only other statement left ahead of it since #1818 removed the
+            # per-cycle schema call), `contended` stays False and this pass
+            # runs unlocked in every task, exactly as it did before the lock
+            # existed. That is the pre-existing behaviour, kept deliberately:
+            # gating the agent tick on PAPER_ADVANCE_ENABLED too is a separate
+            # call, not made here.
+            if not contended:
+                try:
+                    from archimedes.services.paper_agent_execution import advance_agent_execution
+
                     with get_session() as session:
-                        summary = advance_all(session)
+                        agent_summary = await advance_agent_execution(session)
                         session.commit()
-                        return summary
-
-                summary = await asyncio.to_thread(_run)
-                logger.info("paper advance: %s", summary)
-        except Exception as exc:
-            logger.warning("paper advance: cycle failed (%s: %s) — will retry next tick", type(exc).__name__, exc)
-
-        # Agent-driven paper execution (#1410) — the vault's own tick loop
-        # pointed at paper deployments, on this cadence, in this process. Kept
-        # OUTSIDE the try above, and given its own, so the two cannot take each
-        # other down in either direction: the LEDGER is the user's track record
-        # and must advance even if the agent experiment is broken, and the
-        # agent's own bad cycle must not be reported as a ledger failure.
-        # It also stays out of `advance_all`, which is a pure, hermetically
-        # tested function that callers other than this loop rely on.
-        try:
-            from archimedes.services.paper_agent_execution import advance_agent_execution
-
-            with get_session() as session:
-                agent_summary = await advance_agent_execution(session)
-                session.commit()
-            logger.info("paper agent execution: %s", agent_summary)
-        except Exception as exc:
-            logger.warning(
-                "paper agent execution: cycle failed (%s: %s) — will retry next tick; "
-                "the ledger advance above is unaffected",
-                type(exc).__name__,
-                exc,
-            )
+                    logger.info("paper agent execution: %s", agent_summary)
+                except Exception as exc:
+                    logger.warning(
+                        "paper agent execution: cycle failed (%s: %s) — will retry next tick; "
+                        "the ledger advance above is unaffected",
+                        type(exc).__name__,
+                        exc,
+                    )
 
         await asyncio.sleep(interval_s)
 
@@ -1179,10 +1359,11 @@ async def paper_advance_supervisor(*, argv: list[str] | None = None, popen=subpr
     """Wait on the isolated child. Never run the loop in this process.
 
     A C abort (psycopg2 ``do_executemany``, web3 session teardown, SIGSEGV)
-    kills the child, not ``/health``. The child is not restarted: a crash
-    loop would still burn the one-vCPU web task, and the kill switch is
-    supposed to stay off until #1632 is actually fixed. Returns the child's
-    exit status so a test can see SIGSEGV (``-11`` / 139) without dying.
+    kills the child, not ``/health``. The child is not restarted: a crash loop
+    would still burn the one-vCPU web task, and a tick that aborts is evidence
+    to read rather than to paper over — the exit status is logged at ERROR and
+    the next boot re-arms. Returns that status so a test can see SIGSEGV
+    (``-11`` / 139) without dying.
     """
     import asyncio
 
@@ -1210,25 +1391,69 @@ async def arm_paper_advance_for_web_tier(*, argv: list[str] | None = None, popen
     """Web-tier entry. Refuses to run ``paper_advance_loop`` in this process.
 
     Even when ``PAPER_ADVANCE_ENABLED`` is true, the work happens only in a
-    child interpreter — that is the property that lets ``/health`` survive
-    the paper-advance window. When the flag is false we do not spawn a
-    child either: the tick is off, and a second Python on the 1-vCPU web
-    task is not free. The flag stays the operator lever; isolation is the
-    blast-radius cap if someone turns it back on before #1632 is fixed.
+    child interpreter — that is the property that lets ``/health`` survive the
+    paper-advance window. When the flag is false we do not spawn a child
+    either: the tick is off, and a second Python on the 1-vCPU web task is not
+    free. The flag stays the operator lever; isolation is the blast-radius cap
+    now that the tick is armed (#1778) on a frame #1632 never cleared.
+
+    Called UNCONDITIONALLY from the lifespan (``main.py``) — it reads its own
+    flag one frame in. It used to be armed inside ``if refresh_enabled():``, a
+    gate belonging to the retired in-app backtest-refresh loop (#1760), so the
+    deploy that pinned THAT flag off also silently disarmed this one: flipping
+    ``PAPER_ADVANCE_ENABLED`` would have produced no tick and no evidence in
+    either direction. #1766 hoisted the arming out; keep it out.
     """
     if not advance_enabled():
         logger.warning(
             "paper advance: not armed in the web process — PAPER_ADVANCE_ENABLED is off "
-            "(temporary #1632 mitigation; ledgers do not advance until it is flipped back). "
+            "(#1632 break-glass switch is pulled; ledgers do not advance until it is flipped back). "
             "The in-process loop is refused regardless: a C abort must not take /health."
         )
         return None
     logger.warning(
         "paper advance: PAPER_ADVANCE_ENABLED is on — spawning an isolated child; "
         "a C abort in the child must not take this process's /health. "
-        "The tick is still the unfixed #1632 path; do not treat isolation as a fix."
+        "The tick's own frame is still unproven — #1632's fixed mechanism (#1740) was elsewhere — "
+        "so treat this boundary as a blast-radius cap, not as a fix."
     )
     return await paper_advance_supervisor(argv=argv, popen=popen)
+
+
+async def stop_paper_advance_task(task) -> None:
+    """Cancel the web tier's arming task at shutdown — and wait for it.
+
+    The arming task owns a CHILD interpreter, and a child is not reaped by its
+    parent's SIGTERM. Without this, an ECS task draining out of a deploy leaves
+    a paper-advance child still ticking against the same rows as its
+    replacement's child — two writers, which is exactly what
+    :func:`try_take_paper_advance_lock` exists to prevent, arriving through the
+    one door the lock cannot see (the draining task already holds it).
+
+    AWAITING the cancellation matters as much as requesting it:
+    :func:`paper_advance_supervisor`'s ``except CancelledError`` arm is where
+    ``proc.terminate()`` happens, and a cancel that is never awaited may never
+    reach it.
+
+    Tolerates ``None`` (arming failed, or was never reached) and an
+    already-finished task, because shutdown must not raise.
+    """
+    import asyncio
+
+    if task is None or task.done():
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception as exc:
+        logger.warning(
+            "paper advance: arming task raised while shutting down (%s: %s)",
+            type(exc).__name__,
+            exc,
+        )
+    logger.info("paper advance: arming task cancelled at shutdown (the isolated child goes with it)")
 
 
 def _module_main() -> None:
@@ -1237,9 +1462,34 @@ def _module_main() -> None:
     Invoked as ``python -m archimedes.services.paper_trading``. Must not
     call :func:`arm_paper_advance_for_web_tier` — that would spawn another
     child and recurse.
+
+    Configures logging here because NOTHING ELSE in this interpreter does. The
+    web process inherits handlers from uvicorn; this child inherits none, so
+    the root logger falls back to ``lastResort``, which drops everything below
+    WARNING. That silently ate ``paper advance: {...}`` — the one line that
+    says a tick ran and what it appended — and a tick nobody can observe is
+    indistinguishable from a tick that never happened, which is the whole
+    point of arming it (#1778).
+
+    stdout rather than stderr: the parent inherits both and awslogs treats them
+    alike, but an INFO summary is not an error. ``force=True`` because an
+    import along the way may already have installed a handler on the root
+    logger, and ``basicConfig`` is otherwise a no-op when one exists. A typo in
+    ``LOG_LEVEL`` falls back to INFO instead of raising — a malformed env var
+    must not be a way to kill the child at startup.
     """
     import asyncio
 
+    level_name = os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO"
+    level = getattr(logging, level_name, None)
+    if not isinstance(level, int):
+        level = logging.INFO
+    logging.basicConfig(
+        level=level,
+        stream=sys.stdout,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        force=True,
+    )
     asyncio.run(paper_advance_loop())
 
 

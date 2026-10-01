@@ -12,6 +12,12 @@
     - generate, library, quant, reasoning — each renders only a generic
       sign-in/"Connect your wallet" prompt for a cold/anonymous visitor. No
       unique indexable content exists at these URLs without a session.
+    - leaderboard — gated since #1753 (the owner's call). nginx no
+      longer carves /app/leaderboard out of the auth_request boundary, so an
+      anonymous request is answered with a 302 to /sign-in before any HTML
+      is served; a crawler would index the sign-in page, not a board. It was
+      listed here while the page was anonymous and its <loc> was removed by
+      the same change.
     - strategy, vault-detail, market-strategy — dynamic routes that require
       an id/address in the path; there is no single canonical URL to list.
 
@@ -41,11 +47,6 @@
   <url>
     <loc>https://archimedes-arc.com/explore</loc>
     <priority>0.9</priority>
-    <changefreq>daily</changefreq>
-  </url>
-  <url>
-    <loc>https://archimedes-arc.com/leaderboard</loc>
-    <priority>0.7</priority>
     <changefreq>daily</changefreq>
   </url>
   <url>

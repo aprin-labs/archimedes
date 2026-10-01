@@ -42,6 +42,26 @@ OOS_ABS_FLOOR = 0.0
 # majority of held-out paths regardless of strictness.
 CPCV_MIN_POSITIVE_FRACTION = 0.5
 
+# ── The badge DSR bar — ONE definition, imported everywhere (#1794) ────────
+# The Deflated-Sharpe p-value a strategy must reach to earn "Archimedes
+# Verified": the conventional 95% one-sided bar. This is the ONLY place the
+# number is written down. ``_PROFILES[STRICTEST_LEVEL].dsr_p_min`` IS this
+# constant, the Generate pipeline imports it, and every other reader reaches it
+# through a ``RigorProfile``. A second literal anywhere in the rigor modules is
+# exactly the bug this constant exists to prevent —
+# ``backend/tests/test_single_dsr_bar.py`` fails the build on one.
+#
+# History (#1794): PR #901 lowered the badge bar, but two hardcoded comparisons
+# in ``generation_pipeline`` (``_rigor_verdict_for`` and
+# ``_patch_dsr_with_pool_correlation``) and every public rigor page still said
+# 95%. Neither literal reaches a candidate on today's debate-only pipeline —
+# the shipped inconsistency was gate-vs-docs, not gate-vs-generator — but they
+# were a split waiting to happen the moment a buy-and-hold path returned.
+# Owner call, 2026-09-03: one bar, the 95% one; the lower bar and its #902
+# rationale are retired. Market it as "deflated-Sharpe evidence at the 95%
+# one-sided level", never "statistically proven".
+DSR_P_BADGE_MIN = 0.95
+
 
 @dataclass(frozen=True)
 class RigorProfile:
@@ -64,24 +84,16 @@ class RigorProfile:
 # The ladder. Level 1 (Conservative) is the badge bar; level 5 (Speculative) is
 # the riskiest rung. ``dsr_p_min`` at level 5 equals ``DSR_P_FLOOR`` by design.
 #
-# Level-1 dsr_p_min = 0.90 is INTENTIONAL (recalibrated 0.95 → 0.90 in PR #901,
-# team-sanctioned), with an explicit risk caveat (#902): 0.90 is a one-sided
-# ~10% test — real but not overwhelming evidence, and materially weaker than a
-# conventional 0.95 bar. This threshold VALUE is unchanged by decouple #2 (a
-# rigor floor, never loosened here) — but its original rationale ("achievable
-# at the library-size deflation, num_trials = library N") is now stale: a
-# strategy's num_trials is self-contained (decouple #2, Dan's principle — 1
-# for curated/single-candidate strategies, its own N for a real generation
-# pool), so the badge is often LESS deflated than when this bar was picked.
-# Anyone marketing the badge should say "deflated-Sharpe evidence at the 0.90
-# level", not "statistically proven". Revisit toward 0.95 as return histories
-# grow — needs Önder's re-derivation now that the deflation denominator has
-# changed.
+# Level 1's ``dsr_p_min`` is ``DSR_P_BADGE_MIN`` — the constant above, never a
+# literal here, so the badge bar cannot drift away from what the Generate path
+# and the public docs quote. Levels 2–5 are a *personal deployment* risk knob:
+# a user may accept statistically weaker strategies into their OWN vaults, but
+# no level rewrites the badge, which is always graded at ``STRICTEST_LEVEL``.
 _PROFILES: dict[int, RigorProfile] = {
     1: RigorProfile(
         1,
         "Conservative",
-        0.90,
+        DSR_P_BADGE_MIN,
         0.50,
         0.50,
         "Archimedes Verified bar. Only strategies with a statistically strong, overfit-resistant, non-degrading edge.",

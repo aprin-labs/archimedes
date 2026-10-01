@@ -172,3 +172,63 @@ def test_the_contract_names_both_credential_lanes():
     assert "Authorization: Bearer" in sources
     assert "session.json" in sources
     assert "X-Internal-Agent-Key" not in sources
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# The verdict this contract describes is the STORED one (#1746 PR-B)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# `strategies_routes`' published OpenAPI descriptions are guarded by
+# `test_curated_verdict_parity.py::test_the_published_description_says_the_
+# verdict_is_read_not_computed`. This is the same guard for the OTHER
+# agent-facing description of the same routes. It exists because the first fix
+# round of #1746 PR-B updated `archimedes_passport` here and left
+# `archimedes_strategy` and `archimedes_generate_status` saying that
+# `GET /api/strategies/{id}` answers a LIVE gate that "wins" over the stored
+# verdict — a direct contradiction of the tool right beside it, on the exact
+# question the issue was about.
+
+#: Words for a gate run made DURING a read. No route this contract exposes does
+#: that any more: the verdict is graded once, stored, and served
+#: (docs/adr/rigor-verdict-of-record.md). `POST /api/rigor/verify` DOES compute
+#: on request, but over a returns series the CALLER supplies — it grades no
+#: stored strategy, and it describes itself without these words.
+_RETIRED_LIVE_GATE_PHRASES = ("live gate", "live verdict", "live rigor gate")
+
+
+def test_no_tool_promises_a_live_gate():
+    """MUTATION: restore "the live gate wins" to ``archimedes_generate_status``."""
+    offenders = [
+        f"{tool['name']} says {phrase!r}"
+        for tool in CONTRACT.TOOLS
+        for phrase in _RETIRED_LIVE_GATE_PHRASES
+        if phrase in tool["description"].lower()
+    ]
+    assert not offenders, (
+        f"these MCP tool descriptions still promise a gate run made during the read: {offenders}. "
+        "Every route this contract exposes serves the STORED verdict of record — "
+        "docs/adr/rigor-verdict-of-record.md."
+    )
+
+
+def test_every_tool_that_documents_the_four_state_says_it_is_stored():
+    """A tool explaining ``rigor_gate_status`` must say where the answer comes from.
+
+    Anti-vacuity: at least two tools must document the four-state at all, so
+    deleting the explanation cannot turn this guard green.
+
+    MUTATION: drop "STORED verdict of record" from ``archimedes_strategy``.
+    """
+    documenting = [t for t in CONTRACT.TOOLS if "rigor_gate_status" in t["description"]]
+    assert len(documenting) >= 2, f"only {len(documenting)} tools document rigor_gate_status"
+    for tool in documenting:
+        assert "stored" in tool["description"].lower(), (
+            f"{tool['name']} documents rigor_gate_status without saying the verdict is STORED — "
+            "the one thing an agent comparing two endpoints needs to know."
+        )
+        assert "no real returns yet" not in tool["description"].lower(), (
+            f"{tool['name']} defines 'pending' as 'no real returns yet'. It also means "
+            "'the grading job has not run over the returns that ARE there', which is the "
+            "state every curated strategy is in until docs/runbooks/curated-backtests.md "
+            "§ 'Grading on its own' has been run — #1184's conflation, published to agents."
+        )

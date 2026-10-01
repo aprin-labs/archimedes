@@ -3,7 +3,6 @@ AWS_SSM_PATH_PREFIX=/archimedes/prod/
 APP_ENV=production
 LLM_PROVIDER=bedrock_converse
 LLM_BEDROCK_MODEL=amazon.nova-micro-v1:0
-ARCHIMEDES_FUSION_ENABLED=true
 ARCHIMEDES_STRATEGIES_DIR=/app/analytics-engine/strategies
 ARCHIMEDES_CORPUS_MANIFEST=/app/data/corpus/manifest.jsonl
 KB_ARTIFACT_DIR=/app/data/corpus-artifact

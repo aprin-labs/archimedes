@@ -8,7 +8,7 @@
 > inventory — is deliberately *not* here: a stale copy is worse than none, because agents
 > act on `CLAUDE.md` without verifying.
 >
-> **Where things live:** [`docs/README.md`](docs/README.md) — the doc index (a doc not
+> **Where things live:** [`docs/doc-index.md`](docs/doc-index.md) — the doc register (a doc not
 > listed there does not exist) · [`docs/user-stories.md`](docs/user-stories.md) — canonical
 > product spine · [`docs/architecture.md`](docs/architecture.md) — architecture map ·
 > [`docs/adr/`](docs/adr/README.md) — the decision records. Current status comes from
@@ -17,8 +17,14 @@
 
 ## Project
 
-**Archimedes** — "Linus for quantitative finance": a single-user agent that turns q-fin
-research literature into investable, rigor-gated strategies. **Executing and monitoring
+**Archimedes** — an agentic strategy generation and validation system ("portfolio
+strategy, under scrutiny"): a single-user agent that turns q-fin research literature into
+rigor-gated strategies behind an honest validation layer, then runs the survivors as
+paper deployments. **No product analogies on public surfaces** — "X-for-quant-finance"
+comparison branding (the retired Linus analogy and anything shaped like it) is banned
+(Dan, 2026-09-01) in the README, docs, UI, manifests, and the published CLI/MCP package
+pages; competitive comps live in the private docs repo only. Guarded by
+[`backend/tests/test_public_branding_guard.py`](backend/tests/test_public_branding_guard.py). **Executing and monitoring
 them in non-custodial vaults on Arc with USDC settlement is roadmap, not shipped product —
 write it in the future tense.** The `Vault`/`VaultFactory` contracts are real and deployed
 ([ADR](docs/adr/non-custodial-vault-owner-agent.md)), but the deploy-a-vault journey is
@@ -27,7 +33,7 @@ gated off every public surface behind `ROADMAP_SURFACES_ENABLED`
 `ui/test/roadmap-copy.test.js`), and #1469 is open to scrub the remaining present-tense
 copy. Spine (generate → rigor-gate → execute → monitor → explore) locked in
 [`docs/user-stories.md`](docs/user-stories.md).
-Repo [`a-apin/archimedes`](https://github.com/a-apin/archimedes) · Discord **Archimedes
+Repo [`aprin-labs/archimedes`](https://github.com/aprin-labs/archimedes) · Discord **Archimedes
 Arcadia** · live at [`archimedes-arc.com`](https://archimedes-arc.com/) (Arc testnet, chain
 `5042002` / `0x4cef52`; `.com` is the sole domain — the `.app` split caused the Circle
 passkey rpId bug and was decommissioned) · [Unlicense](docs/adr/unlicense-public-domain.md).
@@ -42,7 +48,7 @@ doc here — that has happened twice.)
 ***Claims must be true.*** Every guarantee the UI, the pitch, or a grant application makes
 — rigor, non-custodial, on-chain provenance — must be backed by the live path, not a
 fixture, not a cached boolean, not a hard-coded `true`. This is the #1 rule and the thing
-Bogdan's full-tree audit ([PR #710](https://github.com/a-apin/archimedes/pull/710)) showed
+Bogdan's full-tree audit ([PR #710](https://github.com/aprin-labs/archimedes/pull/710)) showed
 we were violating. Building flashy work on a fake-strict rigor badge is building on sand.
 
 Two corollaries an agent gets wrong by default:
@@ -514,7 +520,7 @@ Full rules: [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md). Before you write a doc
   point-in-time artifacts. **Front matter:** `status` / `owner` / `updated` /
   `superseded-by`. ADRs add `Supersedes` / `Superseded-by` — set both ends of the chain in
   one commit; never delete or silently rewrite an ADR.
-- **Add a row to [`docs/README.md`](docs/README.md) in the same commit** — a doc not in the
+- **Add a row to [`docs/doc-index.md`](docs/doc-index.md) in the same commit** — a doc not in the
   index does not exist.
 - **60-day rule:** a `current` doc older than 60 days is presumed stale — re-verify, demote,
   or archive. Anything that decays faster belongs in the live source, not a doc.

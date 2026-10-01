@@ -78,6 +78,49 @@ def _message(detail: Any, fallback: str) -> str:
     return fallback
 
 
+# One line of "what to change" per input-refusal code from
+# `POST /api/rigor/verify` (#1803). The server's own sentence always leads and
+# is never replaced by these; it says what was rejected, this says what to do.
+_INPUT_REJECTED_REMEDY = {
+    "invalid_date": "Write every date as strict YYYY-MM-DD. Epoch seconds and YYYYMMDD are refused, not guessed at.",
+    "duplicate_date": "One row per trading day. Duplicates are refused, not merged — decide which bar is real.",
+    "unsorted_dates": (
+        "Sort the rows by date, oldest first, and resend. The walk-forward split is POSITIONAL, so row "
+        "order is the time order it grades; the server will not re-sort for you because that would "
+        "return a verdict on a series you did not send."
+    ),
+    "non_finite": "Drop the NaN/Infinity bars. A non-finite return cannot be graded, only refused.",
+    "out_of_range": (
+        "Returns are simple decimals, not percentages: +1.3% is 0.013, not 1.3. |r| > 1.0 in a single "
+        "day is refused because it silently inflates the Sharpe the verdict rests on."
+    ),
+    "window_too_short": (
+        "Send at least 250 daily bars — one trading year, the minimum evaluation window. Under it the "
+        "endpoint returns a refusal instead of a verdict: a short series is not graded and flagged, it "
+        "is not graded at all, because a `passes` field with a caveat beside it gets reported as a pass."
+    ),
+    # The pre-window spelling, kept because ARCHIMEDES_API_URL can point at an
+    # older host: its `too_short` should still render a remedy, not the fallback.
+    "too_short": "Send a longer series — this host's floor predates the 250-bar evaluation window.",
+    "too_many_rows": "Split the series or aggregate to a coarser frequency; the cap is ~10 years of daily bars.",
+    "trials_out_of_range": "trials is 1..10000 — the number of variants you actually tried.",
+}
+
+_UNKNOWN_INPUT_REJECTION_REMEDY = (
+    "Fix the field named in `detail.loc` and retry. The server refuses a malformed series rather than repairing it."
+)
+
+
+def input_rejected_remedy(reason: str) -> str:
+    """What to change, per input-rejection code (#1803).
+
+    Shared with :mod:`tools`, which refuses some of these locally: one code must
+    come back with one remedy whether the row was caught before the request or by
+    the server. An unrecognised code — a newer server's — still gets an answer.
+    """
+    return _INPUT_REJECTED_REMEDY.get(reason, _UNKNOWN_INPUT_REJECTION_REMEDY)
+
+
 def from_response(response: httpx.Response, *, credential_kind: str | None) -> dict[str, Any]:
     """Map a non-2xx API response onto a structured, actionable failure result."""
     status = response.status_code
@@ -187,6 +230,18 @@ def from_response(response: httpx.Response, *, credential_kind: str | None) -> d
         )
 
     if status == 422:
+        # `POST /api/rigor/verify` attaches a stable reason code to an input
+        # refusal (#1803). It is promoted to `error` so an agent branches on the
+        # specific cause rather than on the generic "the body was bad", and the
+        # server's own sentence is the message.
+        if isinstance(detail, dict) and detail.get("error") == "input_rejected" and isinstance(reason, str):
+            return failure(
+                reason,
+                _message(detail, "The API rejected the input."),
+                input_rejected_remedy(reason),
+                http_status=422,
+                detail=detail,
+            )
         return failure(
             "invalid_request",
             _message(detail, "The API rejected the request body."),

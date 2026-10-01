@@ -35,7 +35,7 @@ from archimedes_cli.exits import (
     STILL_RUNNING,
     USAGE,
 )
-from archimedes_cli.session import SESSION_COOKIE_NAME, save_session
+from archimedes_cli.session import SESSION_COOKIE_NAME, SESSION_FILE_ENV, save_session
 from click.testing import CliRunner
 
 API = "https://archimedes-arc.com"
@@ -61,6 +61,9 @@ def runner(tmp_path, monkeypatch):
     """CliRunner in a tmp dir with an isolated $HOME and no ambient credentials."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    # ARCHIMEDES_SESSION_FILE overrides HOME outright (#1752) — clear it for the same
+    # reason HOME is redirected at all.
+    monkeypatch.delenv(SESSION_FILE_ENV, raising=False)
     monkeypatch.delenv("ARCHIMEDES_API_URL", raising=False)
     monkeypatch.delenv("ARCHIMEDES_API_KEY", raising=False)
     # Polling must never actually sleep: the fallback tests would otherwise take

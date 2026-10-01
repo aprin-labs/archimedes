@@ -97,9 +97,16 @@ test('the skeleton comes down without waiting for the deployability gate', () =>
     false,
     `the gate call must not be awaited before the rows paint; awaited: ${members.trim()}`,
   )
-  // The gate still runs, still lands, and still reports its own errors — this
-  // is a reordering, not a removal.
-  assert.match(strategies, /apiGet\('\/api\/selection-bias\/gate'\)/)
+  // The gate still runs — under VITE_ROADMAP_SURFACES=true — still lands, and
+  // still reports its own errors: this is a reordering, not a removal. The
+  // flag prefix is part of the pattern on purpose: the call now sits inside a
+  // `ROADMAP_SURFACES_ENABLED ? ... : Promise.resolve(...)` ternary, so a bare
+  // substring match is satisfied by a default build that never makes the
+  // request (0 hits for `selection-bias/gate` in the built chunk).
+  assert.match(
+    strategies,
+    /ROADMAP_SURFACES_ENABLED \? apiGet\('\/api\/selection-bias\/gate'\)/,
+  )
   assert.match(strategies, /setGateError\(/)
   // Its in-flight flag is cleared on BOTH outcomes: a rejected gate must reach
   // the error banner, never leave every chip on a permanent "checking…". The

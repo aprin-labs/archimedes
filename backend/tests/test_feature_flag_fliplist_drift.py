@@ -380,7 +380,7 @@ def vanished_flags(root: Path, doc: Path) -> dict[str, str]:
 def test_fliplist_exists() -> None:
     assert FLIPLIST.is_file(), (
         f"{FLIPLIST.relative_to(REPO_ROOT)} is missing. It is the go-live checklist "
-        "referenced by issue #834 and indexed in docs/README.md — restore it rather "
+        "referenced by issue #834 and indexed in docs/doc-index.md — restore it rather "
         "than deleting this guard."
     )
 

@@ -32,30 +32,38 @@ from sqlalchemy.orm import sessionmaker
 
 
 class TestProviderSelection:
+    """Selection on the ``intraday`` seam — ``MARKET_DATA_PROVIDER``, the
+    variable that existed before #1798 split the seams. The ``daily`` seam's
+    own variable and the routing between the two are covered in
+    ``test_market_data_seams.py``."""
+
     def test_default_is_yfinance(self, monkeypatch):
         monkeypatch.delenv("MARKET_DATA_PROVIDER", raising=False)
-        assert provider_name() == "yfinance"
+        assert provider_name("intraday") == "yfinance"
 
     def test_explicit_yfinance(self, monkeypatch):
         monkeypatch.setenv("MARKET_DATA_PROVIDER", "yfinance")
-        assert provider_name() == "yfinance"
+        assert provider_name("intraday") == "yfinance"
 
     def test_unknown_value_falls_back_to_yfinance(self, monkeypatch, caplog):
         import logging
 
         monkeypatch.setenv("MARKET_DATA_PROVIDER", "some_unreleased_vendor")
         with caplog.at_level(logging.WARNING):
-            assert provider_name() == "yfinance"
+            assert provider_name("intraday") == "yfinance"
         assert any("some_unreleased_vendor" in rec.message for rec in caplog.records)
 
     def test_case_and_whitespace_insensitive(self, monkeypatch):
         monkeypatch.setenv("MARKET_DATA_PROVIDER", "  YFinance  ")
-        assert provider_name() == "yfinance"
+        assert provider_name("intraday") == "yfinance"
 
     def test_get_provider_wraps_vendor_in_caching_provider(self):
-        assert isinstance(get_provider(), CachingMarketDataProvider)
+        # Nesting since #1798: SeamRoutedProvider → CachingMarketDataProvider
+        # → vendor. The cache layer is still there, one level in.
+        provider = get_provider(seam="intraday")
+        assert isinstance(provider._inner, CachingMarketDataProvider)
         # The inner vendor is the default (yfinance) implementation.
-        assert isinstance(get_provider()._inner, YFinanceProvider)
+        assert isinstance(provider._inner._inner, YFinanceProvider)
 
 
 # ─── Cache read-through / miss ──────────────────────────────────────────
@@ -441,6 +449,81 @@ class TestDailyOhlcvCache:
         finally:
             session.close()
 
+    def test_cross_vendor_close_write_clears_the_old_vendors_ohlv(self, session_factory):
+        """A close-only write by a DIFFERENT vendor must not leave the previous
+        vendor's open/high/low/volume in place under the new vendor's
+        ``source`` label (#1798).
+
+        ``asset_daily_bars`` is unique on ``(symbol, trade_date)``, so the
+        close-only writer lands ON the warm row rather than beside it. Assigning
+        just ``close`` + ``source`` there produces a bar whose Close is one
+        vendor's and whose OHLV is another's — and ``_read_cached_ohlcv``'s
+        ``source`` filter cannot catch it, because the row now claims to BE the
+        vendor being asked for. Clearing OHLV makes it the partial bar it
+        actually is, which the existing partial-bar guard treats as a miss."""
+        from archimedes.models.asset_daily_bars import AssetDailyBar
+        from archimedes.services.market_data_provider import _write_cached_ohlcv, _write_cached_series
+
+        frame = _ohlcv_frame(30)
+        session = session_factory()
+        try:
+            _write_cached_ohlcv(session, "SPY", frame, "yfinance")
+            session.commit()
+        finally:
+            session.close()
+
+        other_closes = pd.Series(frame["Close"].to_numpy() + 500.0, index=frame.index, name="SPY")
+        session = session_factory()
+        try:
+            _write_cached_series(session, "SPY", other_closes, "tiingo")
+            session.commit()
+        finally:
+            session.close()
+
+        session = session_factory()
+        try:
+            rows = session.query(AssetDailyBar).filter(AssetDailyBar.symbol == "SPY").all()
+        finally:
+            session.close()
+
+        assert len(rows) == 30  # updated in place, not duplicated (unique constraint)
+        for row in rows:
+            assert row.source == "tiingo"
+            assert row.close in set(other_closes.to_numpy())
+            assert (row.open, row.high, row.low, row.volume) == (None, None, None, None)
+
+        # And the consequence that matters: the OHLCV read is now a MISS, so
+        # the new vendor is asked for the full bars instead of the blend.
+        tiingo_frame = _ohlcv_frame(30, start_price=600.0)
+        vendor = _FakeOhlcvVendor({"SPY": tiingo_frame})
+        provider = CachingMarketDataProvider(vendor, source_name="tiingo", session_factory=session_factory)
+        start = frame.index[0].date().isoformat()
+        end = frame.index[-1].date().isoformat()
+
+        result = provider.get_daily_ohlcv("SPY", start, end)
+
+        assert vendor.ohlcv_calls == [("SPY", start, end)]
+        assert result["Open"].tolist() == tiingo_frame["Open"].tolist()
+
+    def test_same_vendor_close_write_leaves_the_bar_intact(self, session_factory):
+        """Anti-vacuity for the guard above: the clearing is scoped to a vendor
+        CHANGE. The routine same-vendor close refresh must NOT evict OHLV, or
+        every universe sweep would cold-start the OHLCV cache."""
+        from archimedes.models.asset_daily_bars import AssetDailyBar
+        from archimedes.services.market_data_provider import _write_cached_ohlcv, _write_cached_series
+
+        frame = _ohlcv_frame(30)
+        session = session_factory()
+        try:
+            _write_cached_ohlcv(session, "SPY", frame, "yfinance")
+            _write_cached_series(session, "SPY", frame["Close"], "yfinance")
+            session.commit()
+            rows = session.query(AssetDailyBar).filter(AssetDailyBar.symbol == "SPY").all()
+            assert len(rows) == 30
+            assert all(r.open is not None and r.volume is not None for r in rows)
+        finally:
+            session.close()
+
     def test_vendor_error_propagates_uncaught(self, session_factory):
         """get_daily_ohlcv's contract is to RAISE on a genuinely unfetchable
         symbol (matching fetch_ohlcv's contract) — the caching wrapper must
@@ -706,7 +789,7 @@ class TestIntradayDelayedDeclaration:
         real-time for a feed nobody verified is the dishonest direction."""
         from archimedes.services import market_data_provider as mdp
 
-        monkeypatch.setattr(mdp, "provider_name", lambda: "some-unlisted-vendor")
+        monkeypatch.setattr(mdp, "provider_name", lambda _seam: "some-unlisted-vendor")
         assert mdp.intraday_is_delayed() is True
 
 

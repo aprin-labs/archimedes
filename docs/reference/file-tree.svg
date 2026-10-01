@@ -17,7 +17,7 @@
 <rect x="1071" y="40" width="9" height="9" rx="2" fill="#A78BFA"/>
 <text x="1085" y="48" fill="#A1A1AA" font-size="9.5">infra / CI</text>
 <text x="64" y="150" class="mono" font-size="12" fill="#3F3F46"><tspan fill="#D4A853" font-weight="600">archimedes/</tspan></text>
-<text x="480" y="150" font-size="10.5" fill="#A1A1AA">the public repo — github.com/a-apin/archimedes</text>
+<text x="480" y="150" font-size="10.5" fill="#A1A1AA">the public repo — github.com/aprin-labs/archimedes</text>
 <text x="64" y="174" class="mono" font-size="12" fill="#3F3F46">├─ <tspan fill="#D4A853" font-weight="600">backend/archimedes/</tspan></text>
 <text x="480" y="174" font-size="10.5" fill="#A1A1AA">the Python monolith: API + agents + services + chain + marketplace</text>
 <text x="64" y="198" class="mono" font-size="12" fill="#3F3F46">│  ├─ <tspan fill="#FAFAFA">main.py</tspan></text>
@@ -113,6 +113,6 @@
 <rect x="46" y="906" width="3" height="136" rx="1.5" fill="#10B981" opacity="0.55"/>
 <rect x="46" y="1050" width="3" height="40" rx="1.5" fill="#F59E0B" opacity="0.55"/>
 <rect x="46" y="1098" width="3" height="112" rx="1.5" fill="#A78BFA" opacity="0.55"/>
-<text x="48" y="1286" fill="#71717A" font-size="9.5">Submodules (reference only): context-arc (Circle/Arc docs) · KnowledgeBase (KB-pipeline reference) · Linus. Full map: ARCHITECTURE-MAP.md.</text>
+<text x="48" y="1286" fill="#71717A" font-size="9.5">submodules/ (reference only, not product code): context-arc (Circle/Arc docs) · KnowledgeBase (KB-pipeline reference) · Linus (orchestration priors). Full map: docs/architecture.md.</text>
 <text x="1112" y="1286" text-anchor="end" fill="#52525B" font-size="9.5">verified against main · 2026-07-14</text>
 </svg>

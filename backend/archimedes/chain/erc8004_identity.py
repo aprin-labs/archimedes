@@ -316,8 +316,11 @@ async def find_agent_id(owner: str, client=None, from_block: int | str = 0) -> t
     candidate is then re-checked with ``ownerOf``, because a mint log proves the token was
     once minted to this wallet, not that it is still held.
 
-    ``(None, detail)`` means "no identity found"; a raised exception means "could not
-    look" and the caller must not read it as either.
+    ``(None, detail)`` means "no identity found", and it is returned for exactly ONE fact:
+    ``balanceOf == 0``. A raised exception means "could not look" — the RPC refused the
+    range, or the wallet holds something this window could not name — and the caller must
+    not read it as either. Those two must never share a return value: the caller's next
+    move on "no identity found" is to MINT, and a second identity cannot be un-minted.
     """
     from archimedes.chain.client import chain_client
 
@@ -342,8 +345,14 @@ async def find_agent_id(owner: str, client=None, from_block: int | str = 0) -> t
             return candidate, f"balanceOf == {balance}; mint log + ownerOf({candidate}) both name {owner}"
 
     # balanceOf says it holds something the mint logs cannot name — a transferred-in token,
-    # or a log scan that started after the mint. Refusing beats guessing.
-    return None, (
+    # or, far more likely, a bounded scan that started AFTER the mint. This is not "no
+    # identity"; it is "this window could not see the identity that balanceOf just proved
+    # exists". Returning ``None`` here would hand the register path the one answer that
+    # makes it mint (``_resolve_existing`` → ``_pending`` → fall through to ``register()``),
+    # for a wallet already holding a token — a double mint, from a fail-safe. It is a
+    # raise, so the caller's existing "could not read the registry → refused" arm catches
+    # it. See the returns contract above.
+    raise RuntimeError(
         f"balanceOf({owner}) == {balance} but no mint log in range names a token this wallet still owns "
         f"(scanned from block {from_block}); pass the agentId explicitly"
     )

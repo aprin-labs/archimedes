@@ -2,7 +2,7 @@
 
 **Status:** SHIPPED 2026-07 — the debate society is the sole generation pipeline. This document is retained as design rationale, not as a build instruction. · **Owner:** Dan Browne · **Track:** Lepton Tier-1 vertical (Agentic Sophistication, 30%)
 **Slot-in:** `pipeline_name="debate"` runner in `backend/archimedes/agents/generation_pipeline.py` (`run_generation` dispatch)
-**Last verified against source:** 2026-06-28 (branch `dbrowneup/t1.1-debate-spec`)
+**Last verified against source:** 2026-06-28 (branch `dbrowneup/t1.1-debate-spec`); §2's prompt section re-verified and corrected 2026-09-01 against `9cb868eb` — see [`prompt-inventory.md`](prompt-inventory.md) (#1800 / #1801)
 
 This is a complete, self-contained, build-ready design. It is the **v2 replacement-scope rewrite** that resolves PR #766. The earlier draft framed the debate as a *fourth, flag-gated peer* alongside fusion/architect/agent with a byte-identical live path. **Dan's call is the opposite: the debate society becomes the only generation pipeline, fusion folds in as an internal capability, and the architect + single-agent paths are deleted.** The flag exists for the *cutover window* (default OFF until the replacement is verified on the live path), and the end state has no legacy generation path to guard — **but the deletions are deferred to a separate cutover PR (Phase 3); Phase 1 is strictly additive** (see §5a and the delete-vs-byte-identical resolution below).
 
@@ -76,7 +76,7 @@ This is wired as the **`pipeline_name="debate"` runner** that **replaces** fusio
 
 ## 2. Agent roster + roles
 
-Logical roles below. **Only the proposers + bull/bear + synthesizer are LLM calls**; the four critics and all backtests are deterministic Python (the budget trick). Every LLM role constructs through `make_llm_backend(model=...)` and parses with `strategy_architect.extract_json` — they are *prompt modes over the shared seam*, not new backends. Every cited claim runs through the fusion `valid_ids` anti-hallucination filter (in `StrategyFusion.propose`) so no fabricated paper enters the debate record.
+Logical roles below. **As shipped, only the proposers + bull/bear are LLM calls** — three prompts, four turns; the four critics, all backtests AND the synthesizer are deterministic Python (the budget trick). The v2 draft planned an LLM synthesizer; the built one is `_score` / `_survives_null` in `debate_engine.py` and makes no completion call at all. Every LLM role constructs through `make_llm_backend(model=...)` and parses with `strategy_architect.extract_json` — they are *prompt modes over the shared seam*, not new backends. Every cited claim runs through the fusion `valid_ids` anti-hallucination filter (in `StrategyFusion.propose`) so no fabricated paper enters the debate record.
 
 | # | Role | LLM? | Reuses | Behavior |
 |---|------|------|--------|----------|
@@ -87,19 +87,42 @@ Logical roles below. **Only the proposers + bull/bear + synthesizer are LLM call
 | **C-rigor** | **Rigor-backtest critic** | **no** | `evaluate_fusion_spec(spec)`, each call wrapped in try/except that drops-with-honest-emit | Runs **each top-10 survivor's** spec → real DSL backtest → `FusionEvalResult{backtest, rigor}` (DSR/PBO/OOS). Deterministic; cannot be argued with. This is the spine — all 10 backtests are cheap Python. A per-candidate `evaluate_fusion_spec` that raises (despite the A5 pre-guard) is caught and drops that one entry with an honest emit, never aborts the cohort. |
 | **C-regime** | **GMM-regime risk critic** | **no** | `GmmRegimeDetector.get_current_regime()`; `regime_robustness_score` / `regime_conditional_sharpe`; `gmm_regime_health()` | Reads the live exogenous regime; penalizes candidates whose edge collapses in the *current* regime, rewards regime-robust ones (`robust = min_regime_sharpe > 0`). Discounts its weight when `gmm_regime_health().status == "degraded"` (the expected steady state). **The non-votable Hierarchy-of-Truth gate** — crisis/degraded biases the panel toward decline regardless of consensus. |
 | **C-null** | **Passive-null critic ("StockBench skeptic")** | **no** | V_check `min_cost_benefit_bps ≥ 5`; buy-and-hold baseline | The standing "do nothing" debater. A candidate survives only if it beats buy-and-hold net of cost by ≥5 bps. If none clears it → ABSTAIN (first-class). |
-| **S** | **Synthesizer / Fund manager** | yes (1 call, or **0** — §8) | `extract_json`; `_CandidateResult` builder | Reads the top-10 leaderboard + each critic's scorecard + the bull/bear transcript; selects/ranks for the user OR abstains; writes the "why this leads" rationale that populates Considered Alternatives. **Collapses to 0 LLM calls when the deterministic floor forces the outcome** (crisis/degraded, or no candidate clears C-null). |
+| **S** | **Synthesizer / Fund manager** | **no — 0 calls as shipped** (the draft budgeted 1) | `_score` (passing, DSR, OOS Sharpe); `_survives_null`; `_CandidateResult` builder | Ranks the survivors on the deterministic key `(passing, DSR, OOS Sharpe)` and returns the leaderboard; ABSTAIN when no candidate clears C-null. **Built with zero LLM calls, not one** — the "collapses to 0 when the floor forces the outcome" hedge in the draft became the unconditional behaviour, so there is no Synthesizer prompt in [`docs/specs/prompt-inventory.md`](prompt-inventory.md) and none to write. |
 
-### Prompt sketches (discipline borrowed from `strategy_architect._SYSTEM_PROMPT` + `strategy_fusion._SYSTEM_PROMPT`)
+### Prompts (as shipped — two of the sketches below were never built)
 
-**Proposer (P):**
-> *System:* "You are a quant strategy proposer. You may ONLY fuse the papers in the provided candidate set `[arxiv_ids…]`. Invent no papers, no Sharpe ratios. You are arguing the **{regime}/{mechanism}** case — favor {momentum/trend/carry/breakout | vol-managed/defensive/hedge/tail-risk/min-variance} mechanisms grounded in these papers. Emit a single Archimedes-DSL `strategy_spec` JSON. Use ONLY the indicator aliases `sma_N`, `ema_N`, `rsi_N`, `momentum_N` and include a `parameter_variants` grid on your entry indicator. If <2 papers support a coherent thesis, return `{status:'insufficient'}` — do not guess."
+**The prompts are generated, not narrated. The inventory is
+[`docs/specs/prompt-inventory.md`](prompt-inventory.md)** — every live template, with its
+id, version, placeholders and full text, rendered from `backend/archimedes/agents/prompts.py`
+under a CI drift test (#1800). Quote it; do not paraphrase it. The version of this section
+that paraphrased documented two prompts that do not exist, and nothing failed (#1801).
 
-(DSL contract the proposer MUST obey is pinned in §11; the conformance guard that enforces it before backtest is in §5b / fix A5.)
+**Proposer (P) — there is no proposer prompt.** The v2 draft sketched a proposer system
+prompt built around a `{regime}`/`{mechanism}` slot. Nothing in the tree renders it.
+`debate_engine._propose_pool` fans `StrategyFusion(model=…, candidates=evidence[R]).propose(fb)`
+across the steer grid, so **the proposer prompt IS the fusion prompt** —
+`fusion.proposer.system`, whose only placeholders are `${fuse_target_min}` and
+`${min_papers}`. The steer reaches the model two other ways: `regime_bias` reorders the
+evidence *before* the call, inside `select_candidates`; and the mechanism arrives as prose in
+the **user** JSON payload, `strategic_direction = f"{brief.intent} — favor {mechanism}
+mechanisms"`. It never touches the system prompt. That is not pedantry — a reader looking for
+"where does the regime steer live" would hunt for a template that was never written, and miss
+that the steer is user-controlled text concatenated into a prompt (the seam #1801 screens).
 
-**Bull (R1) / Bear (R2):** as v1 — see roster. Round 2 rebuttal: each sees the other's prior `key_claims`/`fatal_flaws`.
+**Synthesizer (S) — there is no Synthesizer prompt, and no Synthesizer call.** The draft
+sketched an "impartial fund manager" system prompt. Synthesis as built is
+`debate_engine._score` — the deterministic key `(passing, DSR, OOS Sharpe)` — plus
+`_survives_null` for the ABSTAIN branch. Zero tokens, zero prompts. The *behaviour* the sketch
+described (rank for the user, ABSTAIN is first-class) is real; the LLM that was going to
+produce it is not.
 
-**Synthesizer (S):**
-> *System:* "You are an impartial fund manager. Below is a top-10 leaderboard, each candidate with a deterministic scorecard (real backtest DSR/PBO/OOS, regime-risk, passive-null, provenance) and the bull/bear transcript. Rank them for the user and name the leader — OR ABSTAIN. **ABSTAIN ('hold current weights') is first-class and often correct**; if no candidate beats the passive null by ≥5 bps net, OR the regime critic flags crisis/degraded, you MUST output `{decision:'abstain'}`. On-chain vault state and curated-over-uncurated evidence OVERRIDE any consensus. Cite only the critics' numbers; invent nothing. Output `{leaderboard:[…ranked candidate_ids…], leader_id | 'ABSTAIN', rationale, per_candidate_note{}}`."
+**Bull (R1) / Bear (R2) — this one shipped**, as `debate.turn.system` with `${role}`,
+`${rnd}`, `${stance}` and `${rebuttal}`. Round 2's `${rebuttal}` is filled by
+`debate.rebuttal_preamble`, carrying the opponent's round-1 claims; the user message is the
+per-candidate evidence cards from `_candidate_cards` (#1636), not a template.
+
+(The DSL contract the proposer must obey is pinned in §11, and is `fusion.spec_contract` in
+the inventory; the conformance guard that enforces it before backtest is in §5b / fix A5.)
 
 ---
 

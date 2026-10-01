@@ -8,7 +8,7 @@ Nothing enforced that until #1493, and it had drifted on 18 of 34 shared package
 every one with the local floor *below* the deployed one, so a conda env could
 resolve pandas 2.x while production ran 3.x.
 
-Issue #1522 removed most of that duplication rather than policing it: the 32
+Issue #1522 removed most of that duplication rather than policing it: the
 shared floors moved to `backend/requirements-base.txt`, which both files now pull
 in with `-r`. The parsers below **resolve those includes**, so the guard still
 compares the same 34 shared floors it compared before the split. Two things can
@@ -197,9 +197,9 @@ def test_the_shared_base_is_reached_through_the_include() -> None:
 
     The floors themselves are asserted elsewhere; this pins the *mechanism*. If
     `backend/requirements.txt` stopped including the base, the Docker image would
-    ship with 32 packages missing and every other test here would still pass —
-    `torch` and `sentence-transformers` would be the whole shared set, and they
-    do agree.
+    ship missing every package the base file owns, and every other test here
+    would still pass — `torch` and `sentence-transformers` would be the whole
+    shared set, and they do agree.
     """
     assert REQUIREMENTS_BASE_TXT.exists(), f"{REQUIREMENTS_BASE_TXT} is missing; both files include it"
 
@@ -323,4 +323,76 @@ def test_no_environment_floor_is_below_the_deployed_floor() -> None:
     below = {name: (env[name], req[name]) for name in _shared() if as_tuple(env[name]) < as_tuple(req[name])}
     assert not below, "environment.yml floor is lower than the deployed floor for: " + ", ".join(
         f"{n} ({e} < {r})" for n, (e, r) in sorted(below.items())
+    )
+
+
+# --- The count the prose states must be the count the file has -----------------
+#
+# Three files tell a reader how many packages `requirements-base.txt` owns:
+# its own header, `backend/requirements.txt`'s header, and the comment above
+# `environment.yml`'s `-r` include. All three said 32 while the file declared
+# 33 (PR #1815 added `pydantic-core`), because nothing connected the sentence
+# to the list — the same "nothing enforced that" this module exists for, one
+# level up. A stated count is a claim; this makes it a checked one.
+
+# "the 32 non-torch package floors", "The 33 shared floors", "owns the 33 floors".
+_STATED_COUNT_RE = re.compile(r"(?i)\bthe\s+(\d+)\s+(?:[A-Za-z][A-Za-z-]*\s+){0,3}floors\b")
+
+_COUNT_CLAIMANTS = ("requirements-base.txt", "requirements.txt", "environment.yml")
+
+
+def _declared_package_count() -> int:
+    """Every package `requirements-base.txt` declares — floors AND the git pin.
+
+    Deliberately not `len(_own_floors(...))`: that parser drops a line carrying no
+    `>=` comparison, which is correct for a floor-alignment check and wrong here.
+    `circle-titanoboa-sdk[x402,wallets] @ git+...` is a package the file owns and a
+    package the prose counts, so it counts here.
+    """
+    count = 0
+    for line in REQUIREMENTS_BASE_TXT.read_text(encoding="utf-8").splitlines():
+        body = _strip_comment(line)
+        if body and not body.startswith("-"):
+            count += 1
+    return count
+
+
+def _prose(path: Path) -> str:
+    """A file's text as one line, comment markers removed.
+
+    `environment.yml` wraps its claim across two `#` continuation lines, so a
+    per-line reader would miss "owns the 33 / floors that local dev ... need".
+    """
+    return " ".join(line.lstrip().lstrip("#").strip() for line in path.read_text(encoding="utf-8").splitlines())
+
+
+def _stated_counts() -> dict[str, list[int]]:
+    return {
+        path.name: [int(n) for n in _STATED_COUNT_RE.findall(_prose(path))]
+        for path in (REQUIREMENTS_BASE_TXT, REQUIREMENTS_TXT, ENVIRONMENT_YML)
+    }
+
+
+def test_the_reader_finds_the_count_each_file_states() -> None:
+    """Guard on the guard: a regex that matched nothing would pass the check below
+    on any file, forever. Each of the three files carries exactly this claim today."""
+    stated = _stated_counts()
+    silent = sorted(name for name in _COUNT_CLAIMANTS if not stated.get(name))
+    assert not silent, (
+        f"no package count parsed out of {silent}. Either the sentence was reworded to "
+        "carry no number — in which case delete that file from _COUNT_CLAIMANTS, or delete "
+        "this module's count guard entirely — or the reader is broken and the check below "
+        "is passing vacuously."
+    )
+
+
+def test_no_file_states_a_package_count_the_base_file_does_not_have() -> None:
+    """The claim, checked. Adding a package to `requirements-base.txt` without
+    touching the three headers is what made all three say 32 over a 33-package file."""
+    actual = _declared_package_count()
+    wrong = {name: counts for name, counts in _stated_counts().items() if any(n != actual for n in counts)}
+    assert not wrong, (
+        f"backend/requirements-base.txt declares {actual} packages, but "
+        + "; ".join(f"{name} says {counts}" for name, counts in sorted(wrong.items()))
+        + ". Update the sentence with the package, or reword it to carry no count."
     )

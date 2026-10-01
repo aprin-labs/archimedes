@@ -215,18 +215,27 @@ def get_account_metrics() -> dict[str, Any]:
         from sqlalchemy import func
 
         from archimedes.db import get_session
-        from archimedes.models.account import AuthUser
+        from archimedes.models.account import PLATFORM_LEGACY_USER_ID, AuthUser
+
+        # The #1283 legacy-adoption account owns adopted rows; it is not a
+        # user and must not appear in any account count the product publishes.
+        real_accounts = AuthUser.id != PLATFORM_LEGACY_USER_ID
 
         now = _now()
         window_7d_start = (now - timedelta(days=_TREND_DAYS - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
         session = get_session()
         try:
-            total = int(session.query(func.count(AuthUser.id)).scalar() or 0)
+            total = int(session.query(func.count(AuthUser.id)).filter(real_accounts).scalar() or 0)
             new_7d = int(
-                session.query(func.count(AuthUser.id)).filter(AuthUser.created_at >= window_7d_start).scalar() or 0
+                session.query(func.count(AuthUser.id))
+                .filter(real_accounts, AuthUser.created_at >= window_7d_start)
+                .scalar()
+                or 0
             )
             new_30d = int(
-                session.query(func.count(AuthUser.id)).filter(AuthUser.created_at >= now - timedelta(days=30)).scalar()
+                session.query(func.count(AuthUser.id))
+                .filter(real_accounts, AuthUser.created_at >= now - timedelta(days=30))
+                .scalar()
                 or 0
             )
         finally:
@@ -542,6 +551,17 @@ def get_repeat_generation_metrics() -> dict[str, Any]:
     that account's distinct-generation-day count here even though the exact
     same row is excluded from "Strategies generated," leaving the two
     adjacent tiles reading different populations.
+
+    **Excludes ``PLATFORM_LEGACY_USER_ID`` (#1283)** for that same reason,
+    and it is not hypothetical here: the adoption migration stamps ~60
+    ``strategy_store`` rows with the platform account in one shot. Those rows
+    are NOT ``is_example`` (they carry a real ``owner_wallet``; house content
+    does not), so the filter above does not reach them. Their original
+    ``created_at`` values span many calendar days, so without this filter a
+    bookkeeping account with no human behind it would be counted as a
+    generating user AND as a *repeat* one — moving ``repeat_users`` on a
+    published tile while ``get_account_metrics`` beside it, correctly
+    filtered, keeps saying the account does not exist.
     """
     try:
         from archimedes.db import get_session
@@ -550,9 +570,12 @@ def get_repeat_generation_metrics() -> dict[str, Any]:
         days_by_user: dict[str, set[date]] = {}
         session = get_session()
         try:
+            from archimedes.models.account import PLATFORM_LEGACY_USER_ID
+
             query = (
                 session.query(StrategyRecord.owner_user_id, StrategyRecord.created_at)
                 .filter(StrategyRecord.owner_user_id.isnot(None))
+                .filter(StrategyRecord.owner_user_id != PLATFORM_LEGACY_USER_ID)
                 .filter(StrategyRecord.is_example.is_(False))
                 .yield_per(500)
             )
@@ -570,8 +593,9 @@ def get_repeat_generation_metrics() -> dict[str, Any]:
             "note": (
                 "Accounts owning content-hash-distinct strategy rows whose creation dates span "
                 "more than one calendar day. Scoped to strategy_store rows with a linked account "
-                "(owner_user_id); pre-account wallet-only generations are excluded from both "
-                "counts. Content-identical regenerations dedupe to the original row and are not "
+                "(owner_user_id); pre-account wallet-only generations, and rows held by the "
+                "platform legacy-adoption account, are excluded from both counts. "
+                "Content-identical regenerations dedupe to the original row and are not "
                 "counted as a second day, and a legacy row backfilled with an owner keeps its "
                 "original creation date — this is a proxy for multi-day usage, not an exact count."
             ),

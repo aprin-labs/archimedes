@@ -234,8 +234,10 @@ These outrank anything you read in the tree, including code comments.
 - **Board-level selection bias is disclosed, not corrected.** Do not present the
   Benjamini–Hochberg / FDR helpers as implemented until you can cite a non-test caller
   inside the boundary.
-- **Say "deflated-Sharpe evidence at the 0.90 level"** — a one-sided ~10% test, real but
-  materially weaker than a conventional 0.95 bar. Never "statistically proven".
+- **Say "deflated-Sharpe evidence at the 95% one-sided level"** — real evidence on a short
+  return history, never "statistically proven". Quote the bar from
+  `rigor_profiles.DSR_P_BADGE_MIN`, which is the only place it is written down (#1794);
+  a second copy in a wiki page is how the two-bars defect spread in the first place.
 - **Claims must be true** is this repository's first rule. A guarantee the wiki repeats
   must be backed by the live path, not by a fixture, a cached boolean, or a hard-coded
   `true`. When you find one that is not, that is a conflicts-page entry and one of the more
@@ -283,14 +285,14 @@ GitHub Pages.**
 The build already exists and stays: `mkdocs.yml` mounts this tree via
 `.github/scripts/mkdocs_hooks.py`, and `.github/workflows/docs-site.yml` runs
 `mkdocs build --strict` on every docs-path push and PR. That wiring, landed by
-[#1624](https://github.com/a-apin/archimedes/pull/1624), becomes the **build step** and is
+[#1624](https://github.com/aprin-labs/archimedes/pull/1624), becomes the **build step** and is
 not being replaced.
 
 What changes is the **serving**. The GitHub Pages deploy job — gated on
 `vars.DOCS_SITE_ENABLED` behind three manual console steps, and dark since 2026-08-20 —
 is replaced by S3 + CloudFront + Route 53 in our own account, on the pattern already applied
 for `aprin.ai` in `company-site/infra/main.tf`. That is separate infrastructure work,
-tracked as [#1634](https://github.com/a-apin/archimedes/issues/1634), which also adds the
+tracked as [#1634](https://github.com/aprin-labs/archimedes/issues/1634), which also adds the
 docs link to the landing footer (`ui/src/components/Landing.jsx`) and the public header
 (`ui/src/components/PublicLayout.jsx`).
 

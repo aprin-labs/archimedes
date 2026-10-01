@@ -86,9 +86,9 @@ exist and are deployed, but the deploy-a-vault journey is gated off every public
 behind a feature flag. Executing and monitoring strategies in non-custodial vaults is
 **roadmap, not shipped product**.
 
-A fourth, softer rule from the slice: say *"deflated-Sharpe evidence at the 0.90 level"* — a
-one-sided ~10% test, real but materially weaker than a conventional 0.95 bar — never
-"statistically proven".
+A fourth, softer rule from the slice: say *"deflated-Sharpe evidence at the 95% one-sided
+level"* — real evidence on a short return history — never "statistically proven". Quote the
+bar from `rigor_profiles.DSR_P_BADGE_MIN`, the only place it is written down (#1794).
 
 ---
 

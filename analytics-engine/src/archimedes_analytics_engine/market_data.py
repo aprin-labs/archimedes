@@ -5,20 +5,31 @@ strategies x symbols x re-run cadence, and named ``data.fetch_ohlcv`` as (one
 of) the seam(s) to substitute a vendor at. This module IS that seam:
 ``data.fetch_ohlcv`` becomes a thin façade over ``get_provider().fetch_ohlcv``
 — identical signature, identical default behavior (yfinance), vendor-swappable
-via the ``MARKET_DATA_PROVIDER`` env var.
+via the ``MARKET_DATA_PROVIDER`` env var (this package's only market-data
+variable — see the #1798 note below).
 
 analytics-engine is a standalone, DB-less package (no sqlalchemy/psycopg
 dependency — see ``pyproject.toml``) that runs independently of ``backend``'s
 Postgres, so this provider has no cache layer, unlike
 ``backend.archimedes.services.market_data_provider``'s
-``asset_daily_bars``-backed one. Both modules read the SAME
-``MARKET_DATA_PROVIDER`` env var and default to the same vendor name
-(``"yfinance"``), so a single env value picks the vendor across both seams —
-but a vendor implementation is registered separately in each (there is no
-shared package to put one implementation in; ``backend`` already depends on
-THIS package for ``fetch_ohlcv``, which is what makes this half of the seam
-"free" for backend's ``fusion_market_data`` / ``portfolio_backtester`` call
-sites — they import ``fetch_ohlcv`` from here and get the swap for free).
+``asset_daily_bars``-backed one. Both modules default to the same vendor name
+(``"yfinance"``), and a vendor implementation is registered separately in each
+(there is no shared package to put one implementation in; ``backend`` already
+depends on THIS package for ``fetch_ohlcv``, which is how backend's
+``YFinanceProvider.get_daily_ohlcv`` reuses this fetch/retry/normalize path).
+
+**This seam still reads ``MARKET_DATA_PROVIDER`` only, and registers no Tiingo
+adapter (#1798).** Backend's daily-bar seam now resolves
+``MARKET_DATA_DAILY_PROVIDER`` first, so flipping THAT variable does not reach
+this module — and it must not, because ``_PROVIDERS`` here has one entry: a
+"tiingo" value would log the unknown-vendor warning and serve yfinance, which
+is exactly the "ran on licensed data" lie the ADR's no-silent-fallback rule
+exists to prevent. What flipping backend's daily flag actually does is stop
+routing daily OHLCV through here at all (backend selects ``TiingoProvider``
+instead of ``YFinanceProvider``, and only the latter delegates to this
+module), so the two never disagree about which vendor served a bar. The
+standalone CLI path (``cli.py`` → ``data.fetch_ohlcv``) stays on yfinance
+until a Tiingo adapter is registered here too.
 """
 
 from __future__ import annotations

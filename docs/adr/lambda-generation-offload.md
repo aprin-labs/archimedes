@@ -1,7 +1,7 @@
 # ADR: Offloading generation to Lambda — measured, and deferred
 
 > **Audience:** Archimedes team
-> **Status:** Proposed — verdict **DEFER** (spike for [#1411](https://github.com/a-apin/archimedes/issues/1411); feeds [#1217](https://github.com/a-apin/archimedes/issues/1217))
+> **Status:** Proposed — verdict **DEFER** (spike for [#1411](https://github.com/aprin-labs/archimedes/issues/1411); feeds [#1217](https://github.com/aprin-labs/archimedes/issues/1217))
 > **Date:** 2026-08-30
 > **Owner:** Dan Browne
 > **Supersedes:** —
@@ -401,6 +401,21 @@ Why:
   `services/generation_cost_rollup.py`, which aggregates its estimates for the admin-only
   `GET /api/metrics/private/cost` dashboard. That is a report, not a charge: the quote seam
   is untouched and the customer price is still flat.
+  **Correction (2026-09-03, [#1793](https://github.com/aprin-labs/archimedes/issues/1793)):**
+  "neither is on a payment path" was wrong in the direction that costs a payer money.
+  `run_generation_job.py` still has no importer in the serving path, but the *generation it
+  runs* has already spent an entitlement at enqueue time — a paid generation credit, or a
+  free-tier slot ([#1785](https://github.com/aprin-labs/archimedes/issues/1785)) — and the
+  `finally` that hands it back when the run delivers nothing lived inside
+  `generate_routes._run_with_cleanup`, which this entrypoint never enters. Any lane built on
+  it (Lambda, `RunTask`, a worker process) would have kept a payer charged, and a free-tier
+  account one generation poorer, for every thin-corpus, crashed, cancelled or timed-out run.
+  Both refunds now live in one seam, `generate_routes.release_entitlements_if_undelivered`,
+  which is the only thing either run path's `finally` calls. Three tests hold that shape: one
+  discovers every release helper on the module and fails if the seam does not reach it, and
+  one per run path pins that path's cleanup to the seam rather than to a helper. The discovery
+  half matches a naming convention — `_(release|void|refund|restore)_<thing>_(if|when)_undelivered`
+  — which the seam's own docstring states as its limit. The offload verdict is unchanged.
 - The entrypoint is lane-agnostic on purpose. Whichever lane wins — Lambda, `RunTask`, or
   a worker process — it is a deployment decision on top of the same function, not a fork
   of the pipeline.

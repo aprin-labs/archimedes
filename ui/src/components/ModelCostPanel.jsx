@@ -15,6 +15,16 @@ import pricing from '../data/modelPricing.json'
 //
 // `selectedModel` / `onSelectModel` lift the choice into the Generate flow. The
 // data is a snapshot (ui/src/data/modelPricing.json); the active row is live.
+//
+// COLLAPSED HEADER copy: it leads with what the engine IS (a debate society
+// over the research corpus — agents/debate_engine.py, the sole generation
+// pipeline) and only then quotes the per-token rate, labelled as the
+// provider's list price. The old header led with "Running <model> · $x in /
+// $y out per 1M tokens", which is true but reads as a bill on a page whose
+// first job is to tell you what you are about to run. The served model is
+// never a literal in this file — it comes from /health's `llm_model` and is
+// matched against the snapshot, so the card cannot name a model the backend
+// is not running. Guarded by ui/test/model-cost-line.test.js.
 
 const blended = (m) => m.input * 0.75 + m.output * 0.25
 const fmt = (x) => (x == null ? '—' : `$${x.toFixed(x < 1 ? 3 : 2)}`)
@@ -39,6 +49,11 @@ export default function ModelCostPanel({ selectedModel = null, onSelectModel }) 
   const active = rows.find((m) => m.model_id && m.model_id === activeModel)
   // The chosen model row (for the collapsed-header summary), if any.
   const chosen = rows.find((m) => m.model_id && m.model_id === selectedModel)
+  // The row whose published rate the collapsed header quotes: the user's pick
+  // if they made one, else the model /health reports as being served. Null
+  // when neither is known (or the served id is not in the snapshot) — the
+  // header then quotes no price at all rather than guessing one.
+  const priced = chosen || active
 
   // Free-tier-only selection. Premium rows are never selectable here.
   const selectable = (m) => Boolean(m.works_now && m.model_id && onSelectModel)
@@ -61,18 +76,28 @@ export default function ModelCostPanel({ selectedModel = null, onSelectModel }) 
         }}
       >
         <div>
-          <div className="label" style={{ marginBottom: 2 }}>Model &amp; cost</div>
+          <div className="label" style={{ marginBottom: 2 }}>Strategy engine</div>
+          {/* Lead line — WHAT you are running. The served model is read from
+              /health (activeModel) or the user's own pick; it is never a
+              literal here, so this line cannot name a model we are not
+              running. */}
           <div className="caption" style={{ color: 'var(--text-3)' }}>
+            Debate society over the research corpus
             {chosen ? (
-              <>Will run <strong style={{ color: 'var(--text-1)' }}>{chosen.provider} {chosen.name}</strong>
-                {' · '}{fmt(chosen.input)} in / {fmt(chosen.output)} out per 1M tokens</>
+              <>, next run served by <strong style={{ color: 'var(--text-1)' }}>{chosen.provider} {chosen.name}</strong></>
             ) : active ? (
-              <>Running <strong style={{ color: 'var(--text-1)' }}>{active.provider} {active.name}</strong>
-                {' · '}{fmt(active.input)} in / {fmt(active.output)} out per 1M tokens</>
+              <>, served by <strong style={{ color: 'var(--text-1)' }}>{active.provider} {active.name}</strong></>
             ) : activeModel ? (
-              <>Running <strong style={{ color: 'var(--text-1)' }}>{activeModel}</strong></>
+              <>, served by <strong style={{ color: 'var(--text-1)' }}>{activeModel}</strong></>
+            ) : null}
+          </div>
+          {/* Secondary line — the rate, explicitly labelled as the provider's
+              published list price so it does not read as your bill. */}
+          <div className="caption" style={{ color: 'var(--text-3)', marginTop: 2 }}>
+            {priced ? (
+              <>Provider list price{' · '}{fmt(priced.input)} in / {fmt(priced.output)} out per 1M tokens</>
             ) : (
-              <>Compare model costs across {rows.length} options on Bedrock</>
+              <>Compare provider list prices across {rows.length} models on Bedrock</>
             )}
           </div>
         </div>

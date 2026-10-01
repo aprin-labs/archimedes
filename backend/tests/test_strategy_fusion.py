@@ -33,7 +33,6 @@ from archimedes.agents.strategy_fusion import (
     StrategyFusion,
     _gap_fill_tickers,
     derive_asset_universe,
-    fusion_enabled,
     load_corpus,
     select_candidates,
     select_candidates_scored,
@@ -126,9 +125,8 @@ def corpus(manifest):
 
 
 @pytest.fixture(autouse=True)
-def _flag_off_by_default(monkeypatch):
-    """Every test starts with the flag explicitly cleared (default OFF)."""
-    monkeypatch.delenv("ARCHIMEDES_FUSION_ENABLED", raising=False)
+def _clean_env(monkeypatch):
+    """Every test starts without an ambient manifest override."""
     monkeypatch.delenv("ARCHIMEDES_CORPUS_MANIFEST", raising=False)
 
 
@@ -169,48 +167,6 @@ class _MockBackend:
                 "risk_notes": "Pre-backtest; selection-bias gate still applies.",
             }
         )
-
-
-# ── Feature-flag gating ─────────────────────────────────────────
-
-
-def test_flag_default_off():
-    assert fusion_enabled() is False
-
-
-@pytest.mark.parametrize("val", ["1", "true", "TRUE", "Yes", "on"])
-def test_flag_truthy_values(monkeypatch, val):
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", val)
-    assert fusion_enabled() is True
-
-
-@pytest.mark.parametrize("val", ["", "0", "false", "no", "off", "maybe"])
-def test_flag_falsy_values(monkeypatch, val):
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", val)
-    assert fusion_enabled() is False
-
-
-def test_flag_off_is_inert_no_backend_no_corpus():
-    """Flag OFF: sentinel out, backend never resolved, corpus never read."""
-
-    class _Boom:
-        model_id = "x"
-        served_model = "x"
-
-        def complete(self, system, user):
-            raise AssertionError("backend must not be called when flag is OFF")
-
-    def _boom_corpus():
-        raise AssertionError("corpus must not be read when flag is OFF")
-
-    svc = StrategyFusion(backend=_Boom(), corpus=None)
-    svc._resolve_corpus = _boom_corpus  # would raise if touched
-    proposal = svc.propose(FusionBrief(asset_classes=["equities"]))
-
-    assert proposal.status == "disabled"
-    assert proposal.source_arxiv_ids == []
-    assert "ARCHIMEDES_FUSION_ENABLED" in proposal.thesis
-    assert proposal.is_actionable is False
 
 
 # ── Defensive manifest loader ───────────────────────────────────
@@ -280,7 +236,6 @@ def test_selection_is_deterministic(corpus):
 
 
 def test_propose_fuses_and_records_provenance(monkeypatch, corpus):
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
     backend = _MockBackend()
     svc = StrategyFusion(backend=backend, corpus=corpus)
     brief = FusionBrief(
@@ -314,7 +269,6 @@ def test_propose_survives_array_wrapped_object(monkeypatch, corpus):
     """Regression for #911: a model that wraps its object in a JSON array
     (``[{...}]``) must not crash the ``parsed.get(...)`` calls in propose.
     extract_json recovers the embedded object instead of returning a list."""
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
 
     class _ArrayWrappingBackend(_MockBackend):
         def complete(self, system: str, user: str) -> str:
@@ -341,7 +295,6 @@ def test_prompt_demands_at_least_two_papers(monkeypatch, corpus):
     is why two was what came back. It now names BOTH numbers: the target we
     ask for (FUSE_TARGET_MIN) and the floor that actually rejects
     (MIN_PAPERS). The floor half of the old assertion is what survives."""
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
     backend = _MockBackend()
     svc = StrategyFusion(backend=backend, corpus=corpus)
     svc.propose(FusionBrief(asset_classes=["equities", "rates", "vol"]))
@@ -354,7 +307,6 @@ def test_prompt_demands_at_least_two_papers(monkeypatch, corpus):
 
 
 def test_insufficient_corpus_declines(monkeypatch, corpus):
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
     backend = _MockBackend()
     # Asset class that matches at most one fixture paper → < MIN_PAPERS.
     svc = StrategyFusion(backend=backend, corpus=corpus)
@@ -365,7 +317,6 @@ def test_insufficient_corpus_declines(monkeypatch, corpus):
 
 
 def test_empty_corpus_declines_without_llm(monkeypatch):
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
     backend = _MockBackend()
     svc = StrategyFusion(backend=backend, corpus=[])
     proposal = svc.propose(FusionBrief(asset_classes=["equities"]))
@@ -374,7 +325,6 @@ def test_empty_corpus_declines_without_llm(monkeypatch):
 
 
 def test_model_fusing_under_two_valid_papers_declines(monkeypatch, corpus):
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
 
     class _SinglePaperBackend:
         model_id = "claude-sonnet-4-20250514"
@@ -403,7 +353,6 @@ def test_model_fusing_under_two_valid_papers_declines(monkeypatch, corpus):
 
 
 def test_canned_fallback_is_labelled_not_model_reasoning(monkeypatch, corpus):
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
     svc = StrategyFusion(backend=FusionCannedBackend(), corpus=corpus)
     proposal = svc.propose(FusionBrief(asset_classes=["equities", "rates"], max_papers=3))
     assert proposal.status == "ok"
@@ -415,7 +364,6 @@ def test_canned_fallback_is_labelled_not_model_reasoning(monkeypatch, corpus):
 
 
 def test_unparseable_model_output_declines(monkeypatch, corpus):
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
 
     class _Garbage:
         model_id = "claude-sonnet-4-20250514"
@@ -478,7 +426,6 @@ def test_universe_derived_from_user_selected_assets(monkeypatch, corpus):
     Realistic steer: a broad class ("equities") drives paper retrieval, while the
     specific instruments the user picked drive the concrete universe.
     """
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
     svc = StrategyFusion(backend=_SpecBackend(), corpus=corpus)
     proposal = svc.propose(FusionBrief(asset_classes=["equities", "QQQ", "IWM"]))
     assert proposal.status == "ok"
@@ -490,7 +437,6 @@ def test_universe_derived_from_user_selected_assets(monkeypatch, corpus):
 
 def test_universe_falls_back_to_ssot_when_no_instrument_steer(monkeypatch, corpus):
     """No concrete instrument in the steer → the full SSOT universe, never ["SPY"]."""
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
     svc = StrategyFusion(backend=_SpecBackend(), corpus=corpus)
     # Broad-class steer ("equities") drives the paper filter but resolves to no
     # single instrument, so the universe falls back to the SSOT.
@@ -572,7 +518,6 @@ class _MultiAssetModelUniverseBackend:
 def test_universe_source_is_user_when_steer_given(monkeypatch, corpus):
     """A user asset-instrument steer wins over the model's spec universe;
     universe_source records "user" (#857)."""
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
     svc = StrategyFusion(backend=_SpecBackend(), corpus=corpus)
     proposal = svc.propose(FusionBrief(asset_classes=["equities", "QQQ", "IWM"]))
     assert proposal.status == "ok"
@@ -582,7 +527,6 @@ def test_universe_source_is_user_when_steer_given(monkeypatch, corpus):
 
 def test_universe_source_is_model_when_spec_emits_valid_universe(monkeypatch, corpus):
     """No user steer + a genuine multi-instrument model spec → "model" (#857)."""
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
     svc = StrategyFusion(backend=_MultiAssetModelUniverseBackend(), corpus=corpus)
     proposal = svc.propose(FusionBrief(asset_classes=["equities", "rates"]))
     assert proposal.status == "ok"
@@ -593,7 +537,6 @@ def test_universe_source_is_model_when_spec_emits_valid_universe(monkeypatch, co
 def test_universe_source_is_full_on_fallback(monkeypatch, corpus):
     """No user steer + the model's spec collapses to the parrot default →
     the full SSOT universe with universe_source == "full" (#857)."""
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
     svc = StrategyFusion(backend=_SpecBackend(), corpus=corpus)
     proposal = svc.propose(FusionBrief(asset_classes=["equities", "rates"]))
     assert proposal.status == "ok"
@@ -683,7 +626,6 @@ def test_defensive_leg_is_gap_filled_not_silently_dropped(monkeypatch, crypto_tr
     universe (real registered tickers, e.g. IEF/SHY/TLT), not silently lost —
     and universe_gaps must be empty since both classified legs end up
     represented (crypto directly by the model, treasuries via gap-fill)."""
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
     svc = StrategyFusion(backend=_CryptoOnlyUniverseBackend(), corpus=crypto_treasury_corpus)
     proposal = svc.propose(FusionBrief(asset_classes=["crypto", "treasuries"]))
 
@@ -701,7 +643,6 @@ def test_genuinely_unavailable_asset_class_is_surfaced_not_fabricated(monkeypatc
     """Option (b) of the issue: a classified class with NO real data source at
     all must be surfaced honestly (universe_gaps + risk_notes), never silently
     dropped AND never covered by a fabricated data feed."""
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
     svc = StrategyFusion(backend=_CryptoOnlyUniverseBackend(), corpus=crypto_treasury_corpus)
     # "lunar_futures" has no proxy map entry and no SSOT asset_class tag match —
     # there is genuinely no data source for it. "treasuries" is included purely
@@ -728,7 +669,6 @@ def test_gap_fill_never_overrides_explicit_user_ticker_picks(monkeypatch, crypto
     reported as a gap — the assertion below is about QQQ/treasuries, which
     are NOT gaps.
     """
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
     svc = StrategyFusion(backend=_SpecBackend(), corpus=crypto_treasury_corpus)  # model parrots ["SPY"], ignored
     proposal = svc.propose(FusionBrief(asset_classes=["QQQ", "treasuries", "crypto"]))
 
@@ -762,7 +702,6 @@ def test_broad_paper_filter_classes_still_report_as_gaps_on_full_fallback(monkey
     (equities/bonds ARE abundantly present in the full universe), so this must
     NOT be a false-positive gap.
     """
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
     svc = StrategyFusion(backend=_SpecBackend(), corpus=corpus)
     proposal = svc.propose(FusionBrief(asset_classes=["equities", "rates"]))
     assert proposal.status == "ok"
@@ -848,7 +787,6 @@ def test_prompt_states_the_fuse_target_and_the_hard_floor(keyword_only_retrieval
     """The prompt must carry THREE distinct numbers — the floor that rejects,
     the target we ask for, and the width of the set — plus the shortfall
     justification rule. Anchoring on one number is what produced two papers."""
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
     backend = _MockBackend()
     StrategyFusion(backend=backend, corpus=wide_corpus).propose(FusionBrief(asset_classes=[], max_papers=30))
 
@@ -866,7 +804,6 @@ def test_two_paper_fusion_still_accepted_but_flagged(keyword_only_retrieval, mon
     MIN_PAPERS stays the only hard reject — but the shortfall is recorded, so
     "cited 2" is distinguishable from "cited 2 of 30" without re-reading the
     prompt. Delete the shortfall log line and this fails."""
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
     caplog.set_level(logging.WARNING, logger="archimedes.agents.strategy_fusion")
 
     # _MockBackend cites exactly the first 2 candidates (+ one hallucinated id
@@ -927,7 +864,6 @@ def test_preselected_candidates_are_used_verbatim(keyword_only_retrieval, monkey
     """The wasted double-rerank: the debate proposer selects WITH a regime_bias
     and then propose() re-ran select_candidates over that set WITHOUT it,
     discarding the ordering the steer had just paid for."""
-    monkeypatch.setenv("ARCHIMEDES_FUSION_ENABLED", "1")
 
     def _must_not_run(*a, **k):
         raise AssertionError("propose() must not re-select over a pre-selected candidate set")

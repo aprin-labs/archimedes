@@ -86,7 +86,10 @@ _TEXT_REL = "data/corpus/text"
 
 # Polite to the arXiv API: their guidance is a single request every ~3s.
 _API_DELAY_SECONDS = 3.0
-_PDF_DOWNLOAD_DELAY = 3.0  # same polite delay between PDF downloads
+# Same polite delay between PDF downloads. This is the *production default*
+# for ``build_corpus(delay_seconds=...)`` — the seam exists so offline callers
+# (tests) can pay 0 without ever changing what a real harvest sends to arXiv.
+_PDF_DOWNLOAD_DELAY = 3.0
 _API_PAGE_SIZE = 100
 _PDF_TIMEOUT_SECONDS = 30
 _PDF_MAX_RETRIES = 3
@@ -376,6 +379,7 @@ def build_corpus(
     search: Callable[[Iterable[str], int], Iterable[CorpusPaper]] | None = None,
     pdf_downloader: Callable[[str], bytes] | None = None,
     fetch_pdfs: bool = True,
+    delay_seconds: float = _PDF_DOWNLOAD_DELAY,
 ) -> list[dict]:
     """Build the manifest and (best-effort) the PDF + text caches.
 
@@ -383,6 +387,10 @@ def build_corpus(
     even rows whose PDF/text failed (``pdf_sha256`` then ``null``). ``search``
     and ``pdf_downloader`` are injectable so the parse → schema → cache →
     dedupe → recency path is fully testable offline.
+
+    ``delay_seconds`` is the polite pause between cached PDFs and defaults to
+    arXiv's guidance (``_PDF_DOWNLOAD_DELAY`` = 3.0s) — a live harvest is
+    unchanged. Offline callers pass 0 to skip the sleep entirely.
     """
     search = search or _default_search
     pdf_downloader = pdf_downloader or _default_pdf_downloader
@@ -414,10 +422,13 @@ def build_corpus(
                 pdf_ok += 1
                 if _extract_text(paper, pdf_dir, text_dir):
                     text_ok += 1
-                # Polite delay between PDF downloads — respect arXiv rate limits
-                import time
+                # Polite delay between PDF downloads — respect arXiv rate
+                # limits. Injected (default 3.0s), so offline callers can
+                # pass 0 and skip the sleep entirely.
+                if delay_seconds > 0:
+                    import time
 
-                time.sleep(_PDF_DOWNLOAD_DELAY)
+                    time.sleep(delay_seconds)
         rows.append(paper.manifest_row(pdf_sha256=sha, fetched_at=fetched_at))
         if idx % 25 == 0:
             logger.info("processed %d/%d papers", idx, len(papers))

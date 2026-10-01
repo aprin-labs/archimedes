@@ -41,6 +41,7 @@ from archimedes.agents.generation_json import (
     default_backend,
     extract_json,
 )
+from archimedes.agents.prompts import PROMPTS
 from archimedes.services.llm_backend import LLMBackend
 
 logger = logging.getLogger(__name__)
@@ -129,31 +130,9 @@ def extract_text(pdf_bytes: bytes, *, cache_dir: Path) -> str:
 # ── 3. Synthesize (reuses the architect's LLM seam) ─────────────
 
 
-_SYNTH_SYSTEM = """You extract a structured trading-strategy passport from a \
-quantitative-finance paper. You are precise and honest.
-
-Hard rules:
-- Report PAPER_CLAIMED_SHARPE / PAPER_CLAIMED_CAGR / PAPER_CLAIMED_MAX_DD ONLY \
-if the paper explicitly states that number. If it does not, use null. Never \
-estimate or infer a performance number.
-- METHODOLOGY_TEXT must be faithful to the paper's actual method, not a \
-generic description.
-- POSITION_SIZING must be one of: equal_weight, risk_parity, kelly, inverse_vol.
-- REBALANCE_FREQUENCY must be one of: daily, weekly, monthly.
-- RISK_PROFILES is a subset of: conservative, moderate, aggressive, hyper_risky.
-
-Output STRICT JSON ONLY, exactly this schema:
-{
-  "methodology_summary": "<2-3 sentence plain-English summary>",
-  "methodology_text": "<faithful, detailed description of the method>",
-  "asset_universe": ["<ticker-or-asset-class>", ...],
-  "position_sizing": "<one allowed value>",
-  "rebalance_frequency": "<one allowed value>",
-  "risk_profiles": ["<allowed value>", ...],
-  "paper_claimed_sharpe": <number or null>,
-  "paper_claimed_cagr": <number or null>,
-  "paper_claimed_max_dd": <number or null>
-}"""
+# The template itself lives in the prompt registry (`agents/prompts.py`), which
+# is rendered into `docs/specs/prompt-inventory.md` under a drift test (#1800).
+_SYNTH_SYSTEM = PROMPTS["paper_passport.synth.system"].text
 
 
 def synthesize_passport(meta: PaperMeta, body_text: str, backend: LLMBackend) -> dict:

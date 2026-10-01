@@ -264,3 +264,65 @@ def test_the_prose_description_does_not_name_a_different_chain():
     assert not wrong, (
         f"the description names chain(s) {wrong} while the backend enforces {agent_manifest_routes._CHAIN_ID}"
     )
+
+
+# --- The minimum evaluation window, on both surfaces (#1803) --------------------
+#
+# The window landed on the static document only. The served manifest kept a
+# ``verdict_note`` that described the quorum and said nothing about the 250-bar
+# floor, so an agent that discovered the API through ``GET /api/agent/manifest``
+# — the surface the product actually serves — would build a 60-bar body, get a
+# 422, and have been told nothing that predicted it. Same class as the #1448
+# status drift these tests exist for: one surface corrected, the other not.
+#
+# Bound to the enforced constant rather than to the literal 250 on purpose: the
+# floor is an owner decision that can move, and when it does, a guard that only
+# pins a number would go green on a manifest that still advertises the old one.
+
+
+def _enforced_window() -> int:
+    from archimedes.api import rigor_verify_routes
+
+    return rigor_verify_routes._MIN_RETURN_ROWS
+
+
+def _static_rigor_note() -> str:
+    return json.loads(STATIC_MANIFEST.read_text(encoding="utf-8"))["endpoints"]["rigor"]["note"]
+
+
+async def _served_rigor_note() -> str:
+    return (await _manifest())["endpoints"]["rigor"]["verdict_note"]
+
+
+@pytest.mark.parametrize("surface", ["static", "served"])
+async def test_both_discovery_surfaces_state_the_minimum_evaluation_window(surface: str):
+    """The number AND the reason code, on whichever surface an agent happens to read."""
+    note = _static_rigor_note() if surface == "static" else await _served_rigor_note()
+    window = _enforced_window()
+    assert str(window) in note, (
+        f"the {surface} discovery surface does not state the {window}-bar minimum evaluation "
+        f"window: {note!r}. An agent builds its body from this note, not from the docs tree."
+    )
+    assert "window_too_short" in note, (
+        f"the {surface} discovery surface does not name the `window_too_short` reason code: "
+        f"{note!r}. Branching on detail.reason is what the note exists to make possible."
+    )
+
+
+async def test_neither_surface_advertises_a_window_the_route_does_not_enforce():
+    """A stale number is worse than no number: it is a body an agent will build and lose.
+
+    Catches the reverse drift of the test above — the floor moves in
+    ``rigor_verify_routes`` and the notes keep quoting the old one.
+    """
+    import re
+
+    window = _enforced_window()
+    for surface, note in (("static", _static_rigor_note()), ("served", await _served_rigor_note())):
+        quoted = [int(m) for m in re.findall(r"(\d+) daily bars", note)]
+        assert quoted, f"the {surface} surface no longer states a bar count — update or remove this guard"
+        wrong = sorted({n for n in quoted if n != window})
+        assert not wrong, (
+            f"the {surface} discovery surface advertises a {wrong}-bar window while "
+            f"POST /api/rigor/verify enforces {window}."
+        )

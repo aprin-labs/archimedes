@@ -9,6 +9,11 @@ exercised.
 
 Hermetic: the aiohttp HTTP boundary is mocked; the RSA encrypt helper is mocked
 where a real key would otherwise be needed. No network, no Circle, no Arc RPC.
+
+See also backend/tests/test_circle_signer.py (#1527): the submit-status contract is
+{200, 201}, not 201 alone — 200 is Circle replaying our deterministic idempotency key —
+and ``STUCK`` raises immediately instead of burning the poll budget. Both are proven
+there, against a fake with real RSA rather than a mocked encrypt.
 """
 
 from __future__ import annotations
@@ -278,7 +283,13 @@ class TestExecuteContract:
         ):
             await configured.execute_contract("0xVault", "setAgent(address)", ["0xabc"])
 
-    async def test_non_201_submit_raises(self, configured):
+    async def test_a_rejected_submit_raises(self, configured):
+        """A NON-2xx submit raises. 200 does not — it is Circle replaying our idempotency key.
+
+        Renamed from ``test_non_201_submit_raises``: the old name asserted a rule the code
+        no longer follows. {200, 201} are both accepted (``_SUBMIT_ACCEPTED``); the 200 path
+        is proven in ``backend/tests/test_circle_signer.py``, alongside ``STUCK``.
+        """
         session = _mock_session()
         session.get = MagicMock(return_value=session._cm(_resp(200, {"data": {"publicKey": "PEM"}})))
         session.post = MagicMock(return_value=session._cm(_resp(400, {"error": "bad"})))

@@ -13,7 +13,7 @@ import { MIN_LEVEL, MAX_LEVEL, BADGE_LEVEL } from '../hooks/useRigorStrictness'
 
 const FALLBACK_LADDER = {
   levels: [
-    { level: 1, label: 'Conservative', dsr_p_min: 0.9, pbo_max: 0.5, oos_is_ratio_min: 0.5 },
+    { level: 1, label: 'Conservative', dsr_p_min: 0.95, pbo_max: 0.5, oos_is_ratio_min: 0.5 },
     { level: 2, label: 'Balanced', dsr_p_min: 0.8, pbo_max: 0.55, oos_is_ratio_min: 0.45 },
     { level: 3, label: 'Moderate', dsr_p_min: 0.7, pbo_max: 0.6, oos_is_ratio_min: 0.4 },
     { level: 4, label: 'Aggressive', dsr_p_min: 0.6, pbo_max: 0.65, oos_is_ratio_min: 0.35 },

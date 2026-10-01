@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
+import GenerationUnavailable from './GenerationUnavailable'
 import RejectedCandidates from './RejectedCandidates'
+import DebatePaperVerdicts, { DebateTurn } from './DebatePaperVerdicts'
 import { apiPost } from '../api'
+import {
+  EVENT_LABELS,
+  REGIME_BADGED_EVENTS,
+  eventDetail,
+  eventHeadline,
+} from '../generation-copy'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? ''
 
@@ -8,23 +16,13 @@ const API_BASE = import.meta.env.VITE_API_BASE ?? ''
 // on network blips; Last-Event-ID is honoured server-side so we resume from
 // where we left off.
 
-const EVENT_LABELS = {
-  job_queued: 'Job queued',
-  brief_validated: 'Brief validated',
-  pipeline_selected: 'Pipeline selected',
-  candidates_selected: 'Candidates selected',
-  agent_iteration: 'Agent iteration',
-  tool_called: 'Tool called',
-  tool_result: 'Tool result',
-  candidate_drafted: 'Candidate drafted',
-  candidate_failed: 'No candidate',
-  candidate_evaluated: 'Candidate evaluated',
-  best_selected: 'Best selected',
-  trace_hashed: 'Trace hashed',
-  persisted: 'Persisted',
-  done: 'Done',
-  error: 'Error',
-}
+// The event copy lives in ../generation-copy.js — the label map (which is also
+// the EventSource subscription list) and the human/machine split for every
+// event name. It is a plain module so ui/test/generation-reasoning.test.js can
+// run it: the previous inline `EVENT_LABELS` + `summarizeEvent` pair could
+// drift apart silently, which is exactly how `backtest_running` /
+// `backtest_done` / `backtest_failed` came to be emitted by the backend and
+// never received by this client.
 
 // Small regime marker: trending-up (green) for bull, trending-down (red) for
 // bear. `fallbackBear` renders the bear icon for any non-bull regime — matches
@@ -39,83 +37,26 @@ function RegimeIcon({ regime, fallbackBear = false }) {
   return null
 }
 
-function summarizeEvent(name, data) {
-  switch (name) {
-    case 'job_queued':
-      return data?.brief?.intent
-        ? `"${data.brief.intent.slice(0, 90)}${data.brief.intent.length > 90 ? '…' : ''}"`
-        : ''
-    case 'brief_validated':
-      return `Risk: ${data?.risk_appetite || '—'}`
-    case 'pipeline_selected':
-      return `${data?.pipeline || '?'} — ${data?.reason || ''}`
-    case 'candidates_selected':
-      // No papers count here — paper retrieval happens inside each candidate's
-      // debate run, so no honest count exists yet. The real citations arrive
-      // per candidate on candidate_drafted below.
-      return `Considering ${data?.candidate_count || '?'} candidates`
-    case 'agent_iteration':
-      return `Iteration ${data?.iteration_n}/${data?.max_iterations} (${data?.candidate_id || ''})`
-    case 'tool_called':
-      return `${data?.tool_name}(${data?.args_summary || ''})`
-    case 'tool_result':
-      return `${data?.tool_name} → ${data?.result_summary || 'ok'}`
-    case 'candidate_drafted': {
-      // Papers count comes from the candidate's ACTUAL, provenance-checked
-      // citations (source_arxiv_ids on the event) — omitted when absent,
-      // never invented.
-      const nPapers = data?.source_arxiv_ids?.length || 0
-      return (
-        <>
-          <RegimeIcon regime={data?.regime} /> {data?.strategy_name || '?'} ({data?.candidate_id})
-          {nPapers > 0 ? ` — grounded in ${nPapers} paper${nPapers === 1 ? '' : 's'}` : ''}
-        </>
-      )
-    }
-    case 'candidate_evaluated': {
-      const v = data?.rigor_verdict || {}
-      const bits = []
-      if (v.dsr != null) bits.push(`DSR ${v.dsr}`)
-      if (v.pbo != null) bits.push(`PBO ${v.pbo}`)
-      if (v.oos_sharpe != null) bits.push(`OOS ${v.oos_sharpe}`)
-      return `${data?.candidate_id}${bits.length ? ' — ' + bits.join(' · ') : ''}`
-    }
-    case 'best_selected':
-      return `Picked ${data?.best_candidate_id} from ${data?.considered_count}`
-    case 'trace_hashed':
-      return `${(data?.trace_hash || '').slice(0, 14)}…`
-    case 'candidate_failed':
-      return (
-        <>
-          <RegimeIcon regime={data?.regime} fallbackBear /> {data?.message || 'No candidate'}
-        </>
-      )
-    case 'persisted':
-      return (
-        <>
-          <RegimeIcon regime={data?.regime} /> {data?.redirect_url || ''}
-        </>
-      )
-    case 'done':
-      return `→ ${data?.strategy_id || ''}`
-    case 'error':
-      return data?.message || 'Unknown error'
-    default:
-      return ''
-  }
-}
-
-export default function GenerationStream({ jobId, onDone, onReset, onPipelineSelected, onNavigate, hideReset = false }) {
+export default function GenerationStream({ jobId, onDone, onReset, onPipelineSelected, onNavigate, onBroaden, onSurprise, hideReset = false }) {
   const [events, setEvents] = useState([])
   const [terminal, setTerminal] = useState(null)  // 'done' | 'error' | null
   const [strategyId, setStrategyId] = useState(null)
   const [servedModel, setServedModel] = useState(null)  // provenance: model that actually ran
   const [errorMsg, setErrorMsg] = useState('')
+  // Full `error` payload, kept so the terminal card can render the honest
+  // outcome (steer, measured candidate count, corpus-derived ways forward)
+  // instead of only the one-line message.
+  const [errorData, setErrorData] = useState(null)
   const [showRejected, setShowRejected] = useState(false)
   const [draftedCandidates, setDraftedCandidates] = useState([])  // {candidate_id, strategy_name, regime, strategy_id}
   const [failedRegimes, setFailedRegimes] = useState([])  // {regime, message}
   const [cancelling, setCancelling] = useState(false)
   const [cancelError, setCancelError] = useState('')
+  // The developer strings (`args_summary`, `result_summary`, candidate ids,
+  // redirect urls) are still here — collapsed, not deleted. Off by default so
+  // the log reads as an account of the run; one toggle, not one per row,
+  // because this screen is watched on a phone.
+  const [showDetails, setShowDetails] = useState(false)
   const esRef = useRef(null)
   const scrollRef = useRef(null)
   // Mirror of `terminal` so the EventSource `onerror` handler reads the current
@@ -132,6 +73,7 @@ export default function GenerationStream({ jobId, onDone, onReset, onPipelineSel
     setStrategyId(null)
     setServedModel(null)
     setErrorMsg('')
+    setErrorData(null)
     setCancelling(false)
     setCancelError('')
 
@@ -183,6 +125,7 @@ export default function GenerationStream({ jobId, onDone, onReset, onPipelineSel
         setTerminal('error')
         terminalRef.current = 'error'
         setErrorMsg(data?.message || 'Generation failed')
+        setErrorData(data || null)
         es.close()
       }
     }
@@ -278,6 +221,20 @@ export default function GenerationStream({ jobId, onDone, onReset, onPipelineSel
               Streaming live · {events.length} event{events.length === 1 ? '' : 's'}
             </div>
           )}
+          {/* The run ends by pointing at the Library, so the full transcript —
+              which lives on the strategy passport, under "Strategy engine —
+              generation debate" — was three navigations away from the screen
+              that just streamed it. This is the direct link. */}
+          {terminal === 'done' && strategyId && onNavigate && (
+            <button
+              type="button"
+              className="btn btn-outline btn-sm"
+              style={{ marginTop: 8 }}
+              onClick={() => onNavigate('strategy', { strategyId })}
+            >
+              See the full reasoning →
+            </button>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           {consideredCount > 1 && (
@@ -314,6 +271,26 @@ export default function GenerationStream({ jobId, onDone, onReset, onPipelineSel
         </div>
       )}
 
+      {/* A run that stopped before synthesis is a RESULT, not a dead end: the
+          card names the steer, the count lexical retrieval actually returned,
+          and the two ways forward. Renders only when the server sent the
+          structured payload; any other error keeps the one-line treatment
+          above. */}
+      {terminal === 'error' && errorData?.reason_code && (
+        <GenerationUnavailable data={errorData} onBroaden={onBroaden} onSurprise={onSurprise} />
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+        <label className="caption" style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', color: 'var(--text-3)' }}>
+          <input
+            type="checkbox"
+            checked={showDetails}
+            onChange={(e) => setShowDetails(e.target.checked)}
+          />
+          Show machine details
+        </label>
+      </div>
+
       {/* role="log" is the right role for an append-only feed: it keeps
           announcements to newly added entries instead of re-reading the whole
           scroller on every event. */}
@@ -324,7 +301,10 @@ export default function GenerationStream({ jobId, onDone, onReset, onPipelineSel
         aria-relevant="additions text"
         aria-label="Generation events"
         style={{
-          maxHeight: 320,
+          // Raised from 320: the log now carries the debate turns and the
+          // per-paper table as cards, not one-liners, and a 320px window turned
+          // the thing this change exists to surface back into a scroll hunt.
+          maxHeight: 460,
           overflowY: 'auto',
           background: 'var(--glass)',
           border: '1px solid var(--glass-border)',
@@ -337,14 +317,40 @@ export default function GenerationStream({ jobId, onDone, onReset, onPipelineSel
         {events.length === 0 && (
           <div className="caption">Waiting for first event…</div>
         )}
-        {events.map(ev => (
-          <div key={ev.id} style={{ marginBottom: 4, lineHeight: 1.4 }}>
-            <span style={{ color: 'var(--text-4)', marginRight: 8 }}>#{ev.id}</span>
-            <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{EVENT_LABELS[ev.name] || ev.name}</span>
-            {' — '}
-            <span>{summarizeEvent(ev.name, ev.data)}</span>
-          </div>
-        ))}
+        {events.map(ev => {
+          const detail = eventDetail(ev.name, ev.data)
+          const isTurn = ev.name === 'debate_turn'
+          const isAttribution = ev.name === 'debate_attribution'
+          return (
+            <div key={ev.id} style={{ marginBottom: isTurn || isAttribution ? 10 : 4, lineHeight: 1.4 }}>
+              <span style={{ color: 'var(--text-4)', marginRight: 8 }}>#{ev.id}</span>
+              <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{EVENT_LABELS[ev.name] || ev.name}</span>
+              {' — '}
+              <span>
+                {REGIME_BADGED_EVENTS.has(ev.name) && (
+                  <RegimeIcon regime={ev.data?.regime} fallbackBear={ev.name === 'candidate_failed'} />
+                )}
+                {REGIME_BADGED_EVENTS.has(ev.name) ? ' ' : ''}
+                {eventHeadline(ev.name, ev.data)}
+              </span>
+              {showDetails && detail && (
+                <div style={{ color: 'var(--text-4)', paddingLeft: 28, wordBreak: 'break-word' }}>{detail}</div>
+              )}
+              {/* The debate itself, inline where it happened. The payloads are
+                  the sanitized turns the backend also persists, so this card and
+                  the passport's Reasoning section are the same rows. Rendered in
+                  the sans face — the surrounding log is monospace, and prose is
+                  not a wire dump. */}
+              {(isTurn || isAttribution) && (
+                <div style={{ marginTop: 6, fontFamily: 'var(--sans)', fontSize: '0.85rem' }}>
+                  {isTurn
+                    ? <DebateTurn turn={ev.data} />
+                    : <DebatePaperVerdicts entry={ev.data} compact showSummary={false} />}
+                </div>
+              )}
+            </div>
+          )
+        })}
       </div>
 
       {/* ── Dual regime result cards (Issue #163) ── */}

@@ -92,10 +92,28 @@ def main() -> int:
     if main_chain:
         heads = [r for r in main_chain if r not in main_chain.values()]
         if len(heads) != 1:
+            # main is already forked (two PRs merged whose CI each saw a single
+            # head — 2026-09-04, #1844 + #1845). The one PR that must still be
+            # able to merge is the repair: it re-points an existing migration
+            # so the chain has one head again, and adds nothing. Anything else
+            # (a third head, a repair that also grafts a new migration, a
+            # "repair" that drops a revision) keeps failing — the guard cannot
+            # tell which head a NEW migration should extend until main is fixed.
+            pr_chain = _chain_at(repo, "HEAD")
+            pr_heads = [r for r in pr_chain if r not in pr_chain.values()]
+            adds_nothing = set(pr_chain) == set(main_chain)
+            if len(pr_heads) == 1 and adds_nothing:
+                print(
+                    f"migration_chain_guard: OK — {args.base_ref} has {len(heads)} heads "
+                    f"({heads}); this PR re-serialises them into one chain (head {pr_heads[0]}) "
+                    "and adds no new migration. Repair accepted."
+                )
+                return 0
             print(
                 f"FAIL: {args.base_ref}'s migration chain doesn't have exactly one head "
                 f"(found {heads}) — this guard can't tell which one your migration should "
-                "extend. Fix main's chain before this guard can validate new migrations."
+                "extend. Fix main's chain before this guard can validate new migrations "
+                "(a repair PR that only re-points existing migrations onto one head passes)."
             )
             return 1
         main_head = heads[0]

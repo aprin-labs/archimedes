@@ -32,7 +32,7 @@
 # REQUIREMENTS: gh (authenticated, with admin scope for --apply), python3 (for pretty JSON).
 set -euo pipefail
 
-REPO="${REPO:-a-apin/archimedes}"
+REPO="${REPO:-aprin-labs/archimedes}"
 BRANCH="${BRANCH:-main}"
 
 # enforce_admins=false → admins (incl. the t2o2 build-on-deploy user) bypass the gate.

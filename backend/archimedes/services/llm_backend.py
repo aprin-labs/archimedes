@@ -13,9 +13,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
+from datetime import UTC, datetime
 from typing import Protocol
 
 from archimedes.services.cost_meter import record_llm_call
+from archimedes.services.llm_trace import record_llm_raw
 
 logger = logging.getLogger(__name__)
 
@@ -135,19 +138,38 @@ class AnthropicBackend:
 
     def complete(self, system: str, user: str) -> str:
         assert self._client is not None
+        started_at = datetime.now(UTC)
+        t0 = time.monotonic()
         resp = self._client.messages.create(
             model=self._model,
             max_tokens=MAX_TOKENS,
             system=system,
             messages=[{"role": "user", "content": user}],
         )
+        latency_ms = (time.monotonic() - t0) * 1000.0
         served = getattr(resp, "model", None)
         if served:
             self._served = str(served)
         # Cost instrumentation (#1217): the provider's own usage block, banked
         # against whatever job meter is bound to this context. No-op when none is.
         record_llm_call(model=self._served, response=resp)
-        return _first_text_block(resp.content)
+        text = _first_text_block(resp.content)
+        # Raw-trace capture (#1800): `resp`, NOT `text`. `_first_text_block` keeps
+        # the first text block and strips it; everything after it — a second text
+        # block, a thinking block — is gone by the time this function returns, so
+        # only the pre-extraction object is the completion "as returned". Never
+        # raises; a no-op when no recorder is bound to this context.
+        record_llm_raw(
+            system=system,
+            user=user,
+            model_requested=self._model,
+            model_served=self._served,
+            provider_response=resp,
+            completion_text=text,
+            started_at=started_at,
+            latency_ms=latency_ms,
+        )
+        return text
 
 
 # ── Anthropic-compatible (auth_token + base_url, e.g. GLM via z.ai) ──
@@ -189,19 +211,38 @@ class AnthropicCompatibleBackend:
 
     def complete(self, system: str, user: str) -> str:
         assert self._client is not None
+        started_at = datetime.now(UTC)
+        t0 = time.monotonic()
         resp = self._client.messages.create(
             model=self._model,
             max_tokens=MAX_TOKENS,
             system=system,
             messages=[{"role": "user", "content": user}],
         )
+        latency_ms = (time.monotonic() - t0) * 1000.0
         served = getattr(resp, "model", None)
         if served:
             self._served = str(served)
         # Cost instrumentation (#1217): the provider's own usage block, banked
         # against whatever job meter is bound to this context. No-op when none is.
         record_llm_call(model=self._served, response=resp)
-        return _first_text_block(resp.content)
+        text = _first_text_block(resp.content)
+        # Raw-trace capture (#1800): `resp`, NOT `text`. `_first_text_block` keeps
+        # the first text block and strips it; everything after it — a second text
+        # block, a thinking block — is gone by the time this function returns, so
+        # only the pre-extraction object is the completion "as returned". Never
+        # raises; a no-op when no recorder is bound to this context.
+        record_llm_raw(
+            system=system,
+            user=user,
+            model_requested=self._model,
+            model_served=self._served,
+            provider_response=resp,
+            completion_text=text,
+            started_at=started_at,
+            latency_ms=latency_ms,
+        )
+        return text
 
 
 # ── AWS Bedrock (IAM auth, no API key) ───────────────────────────────
@@ -258,19 +299,38 @@ class BedrockBackend:
 
     def complete(self, system: str, user: str) -> str:
         assert self._client is not None
+        started_at = datetime.now(UTC)
+        t0 = time.monotonic()
         resp = self._client.messages.create(
             model=self._model,
             max_tokens=MAX_TOKENS,
             system=system,
             messages=[{"role": "user", "content": user}],
         )
+        latency_ms = (time.monotonic() - t0) * 1000.0
         served = getattr(resp, "model", None)
         if served:
             self._served = str(served)
         # Cost instrumentation (#1217): the provider's own usage block, banked
         # against whatever job meter is bound to this context. No-op when none is.
         record_llm_call(model=self._served, response=resp)
-        return _first_text_block(resp.content)
+        text = _first_text_block(resp.content)
+        # Raw-trace capture (#1800): `resp`, NOT `text`. `_first_text_block` keeps
+        # the first text block and strips it; everything after it — a second text
+        # block, a thinking block — is gone by the time this function returns, so
+        # only the pre-extraction object is the completion "as returned". Never
+        # raises; a no-op when no recorder is bound to this context.
+        record_llm_raw(
+            system=system,
+            user=user,
+            model_requested=self._model,
+            model_served=self._served,
+            provider_response=resp,
+            completion_text=text,
+            started_at=started_at,
+            latency_ms=latency_ms,
+        )
+        return text
 
 
 # ── AWS Bedrock via the Converse API (uniform across ALL providers, IAM auth) ──
@@ -329,6 +389,8 @@ class BedrockConverseBackend:
         }
         if system and system.strip():
             kwargs["system"] = [{"text": system}]
+        started_at = datetime.now(UTC)
+        t0 = time.monotonic()
         try:
             resp = self._client.converse(**kwargs)
         except Exception as exc:
@@ -338,16 +400,32 @@ class BedrockConverseBackend:
                 resp = self._client.converse(**kwargs)
             else:
                 raise
+        latency_ms = (time.monotonic() - t0) * 1000.0
         # Cost instrumentation (#1217). Converse reports usage as
         # {"usage": {"inputTokens": n, "outputTokens": n, "totalTokens": n}}.
         record_llm_call(model=self._served, response=resp)
         blocks = resp.get("output", {}).get("message", {}).get("content", []) or []
         # Reasoning models may emit a reasoningContent block before the text — return
         # the first block that actually carries text.
+        text = ""
         for b in blocks:
             if isinstance(b, dict) and b.get("text"):
-                return b["text"].strip()
-        return ""
+                text = b["text"].strip()
+                break
+        # Raw-trace capture (#1800): `resp`, NOT `text`. This is the seam where the
+        # loss is worst — the reasoningContent block the loop above skips is a
+        # reasoning model's entire chain of thought, and no caller ever sees it.
+        record_llm_raw(
+            system=system,
+            user=user,
+            model_requested=self._model,
+            model_served=self._served,
+            provider_response=resp,
+            completion_text=text,
+            started_at=started_at,
+            latency_ms=latency_ms,
+        )
+        return text
 
 
 # ── OpenAI-compatible (httpx, no SDK) ────────────────────────────────
@@ -377,6 +455,8 @@ class OpenAIBackend:
     def complete(self, system: str, user: str) -> str:
         import httpx
 
+        started_at = datetime.now(UTC)
+        t0 = time.monotonic()
         resp = httpx.post(
             f"{self._base_url}/chat/completions",
             headers={"Authorization": f"Bearer {self._api_key}"},
@@ -390,6 +470,7 @@ class OpenAIBackend:
             },
             timeout=60.0,
         )
+        latency_ms = (time.monotonic() - t0) * 1000.0
         resp.raise_for_status()
         data = resp.json()
         self._served = data.get("model", self._model)
@@ -400,7 +481,21 @@ class OpenAIBackend:
         # `.get()`-chain pattern so we never IndexError mid-request.
         choices = data.get("choices") or []
         first = choices[0] if choices else {}
-        return (first.get("message") or {}).get("content", "").strip()
+        text = (first.get("message") or {}).get("content", "").strip()
+        # Raw-trace capture (#1800): the parsed body, NOT `text`. Everything past
+        # `choices[0]` — further choices, a `reasoning_content` field — is dropped
+        # by the line above and survives only here.
+        record_llm_raw(
+            system=system,
+            user=user,
+            model_requested=self._model,
+            model_served=self._served,
+            provider_response=data,
+            completion_text=text,
+            started_at=started_at,
+            latency_ms=latency_ms,
+        )
+        return text
 
 
 # ── Ollama (local, no key) ───────────────────────────────────────────
@@ -490,6 +585,8 @@ class OllamaBackend:
     def complete(self, system: str, user: str) -> str:
         import httpx
 
+        started_at = datetime.now(UTC)
+        t0 = time.monotonic()
         resp = httpx.post(
             f"{self._base_url}/api/chat",
             json={
@@ -502,13 +599,28 @@ class OllamaBackend:
             },
             timeout=120.0,
         )
+        latency_ms = (time.monotonic() - t0) * 1000.0
         resp.raise_for_status()
         data = resp.json()
         self._served = data.get("model", self._model)
         # Cost instrumentation (#1217): Ollama reports counts at the top level
         # as prompt_eval_count / eval_count, with no usage block.
         record_llm_call(model=self._served, response=data)
-        return data.get("message", {}).get("content", "").strip()
+        text = data.get("message", {}).get("content", "").strip()
+        # Raw-trace capture (#1800): the parsed body, NOT `text`. A local reasoning
+        # model puts its chain of thought in `message.thinking`, which the line
+        # above drops on the floor.
+        record_llm_raw(
+            system=system,
+            user=user,
+            model_requested=self._model,
+            model_served=self._served,
+            provider_response=data,
+            completion_text=text,
+            started_at=started_at,
+            latency_ms=latency_ms,
+        )
+        return text
 
 
 # ── Canned fallback ──────────────────────────────────────────────────

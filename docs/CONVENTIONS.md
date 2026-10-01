@@ -25,7 +25,7 @@ Walk the list top to bottom and stop at the first row that fits.
 | describes how a live subsystem works today | `docs/` root | The default for durable, current architecture and product docs. |
 | is history superseded by something else | `docs/archive/` | Must carry an `ARCHIVED` banner naming its replacement. |
 
-Then **add a row to [`README.md`](README.md) in the same commit.** A doc not listed in the
+Then **add a row to [`doc-index.md`](doc-index.md) in the same commit.** A doc not listed in the
 index does not exist.
 
 ## 2. Naming

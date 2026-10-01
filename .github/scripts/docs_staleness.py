@@ -90,10 +90,13 @@ def main() -> int:
             if d < cutoff:
                 stale.append((rel, d, (today - d).days, fm.get("owner", "—").strip() or "—"))
 
-    # Second source: the docs/README.md index table and its sub-indexes.
+    # Second source: the docs/doc-index.md register table and its sub-indexes
+    # (the per-directory README.md files it links to). The register moved out of
+    # docs/README.md on 2026-09-02 — see .github/scripts/docs_index.py.
     seen = {r[0] for r in stale} | set(undated)
-    for idx in sorted((root / "docs").rglob("README.md")):
-        if "archive" in idx.relative_to(root).parts:
+    indexes = [root / "docs" / "doc-index.md", *sorted((root / "docs").rglob("README.md"))]
+    for idx in indexes:
+        if not idx.is_file() or "archive" in idx.relative_to(root).parts:
             continue
         for m in INDEX_ROW.finditer(idx.read_text(encoding="utf-8", errors="replace")):
             if m.group("status").strip().lower() != "current":

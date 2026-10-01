@@ -1,28 +1,34 @@
 # Archimedes
 
-*The lever is academic research. The fulcrum is autonomous AI. The world is your portfolio.*
+*Research. Rigor. Proof.*
 
 [![License: Unlicense](https://img.shields.io/badge/license-Unlicense-blue.svg)](LICENSE)
 [![Settled on: Arc](https://img.shields.io/badge/settled%20on-Arc-2A4DD1.svg)](https://www.arc.network/)
 
-**Linus for quantitative finance.** Archimedes is a single-user agent that turns q-fin
-research literature into rigor-gated strategies. You describe what you want from a portfolio
-in plain English; it proposes strategies grounded in a corpus of arXiv quantitative-finance
-preprints, puts each one through four admission checks — a deflated Sharpe ratio, a
-probability of backtest overfitting, a walk-forward out-of-sample pass, and a static
-look-ahead audit — and shows you the numbers behind the verdict either way.
+**Portfolio strategy, under scrutiny.** Archimedes is an agentic strategy generation and
+validation system, grounded in research and statistical rigor. You describe what you want
+from a portfolio in plain English; it proposes strategies drawn from a corpus of arXiv
+quantitative-finance preprints, and then the part that makes it different — the honest
+validation layer — spends its effort trying to reject every one of them: a deflated Sharpe
+ratio, a probability of backtest overfitting, a walk-forward out-of-sample pass, and a
+static look-ahead audit, with the measured verdict recorded whichever way it lands.
+Survivors run as paper deployments, so a gated strategy's results play out in the open
+with full provenance.
 
 Live at **<https://archimedes-arc.com/>**, running against Arc testnet.
 
 ## The spine
 
 ```
-generate  →  rigor-gate  →  (roadmap: execute → monitor)  →  explore
+generate  →  rigor-gate  →  execute (paper)  →  explore      (roadmap: vaults → monitor)
 ```
 
 **Generate** and **rigor-gate** are the shipped product, and so is **explore** — the
 reasoning traces, the rejected alternatives, the paper provenance behind every proposal.
-**Execute** and **monitor** are roadmap. The `Vault` / `VaultFactory` contracts are written
+**Execute** ships as paper: strategies that survive the gate run as paper deployments —
+the same decision core a vault will one day use, executing against an append-only paper
+trade ledger instead of a chain, so results accrue in the open with nothing at stake.
+**Vault execution** and **monitor** are roadmap. The `Vault` / `VaultFactory` contracts are written
 and deployed to Arc testnet, but the deploy-a-vault journey is gated off every public
 surface behind `ROADMAP_SURFACES_ENABLED`
 ([`ui/src/featureFlags.js`](ui/src/featureFlags.js), off by default), and no user vault has
@@ -48,8 +54,9 @@ not. The locked spine is [`docs/user-stories.md`](docs/user-stories.md).
 ## The rigor gate
 
 The gate is evidence, not proof. The deflation prices in how many candidates were searched
-before this one was picked; the 0.90 DSR bar is a deliberate calibration, a one-sided ~10%
-test. PBO is computed and disclosed on every passport but does not block the badge while the
+before this one was picked; the DSR bar is 0.95 — a one-sided 5% test — and it has exactly
+one definition in the tree (`DSR_P_BADGE_MIN` in
+`backend/archimedes/services/rigor_profiles.py`, #1794). PBO is computed and disclosed on every passport but does not block the badge while the
 library holds fewer than ten graded strategies — below that, CSCV lacks the power to gate
 honestly, so it reports `NOT_RUN` with the reason rather than a pass. A check that cannot
 run says so; it never reports a silent pass.
@@ -82,7 +89,7 @@ describe a brief, and read the verdict.
 ### Run it locally
 
 ```bash
-git clone --recurse-submodules https://github.com/a-apin/archimedes.git
+git clone --recurse-submodules https://github.com/aprin-labs/archimedes.git
 cd archimedes
 cp .env.example .env
 # REQUIRED: generate a local auth secret, then paste it after BETTER_AUTH_SECRET=
@@ -157,7 +164,8 @@ Full reference: [`cli/README.md`](cli/README.md) and
 
 ## Documentation
 
-[`docs/README.md`](docs/README.md) is the index — **a doc not listed there does not exist.**
+[`docs/doc-index.md`](docs/doc-index.md) is the register — **a doc not listed there does not
+exist.** The same tree is published, curated, at <https://docs.archimedes-arc.com>.
 The entry points:
 
 | If you want to… | Read |
@@ -175,7 +183,7 @@ The entry points:
 | Load a grounded agent skill (every claim file:line cited) | [`skills/README.md`](skills/README.md) |
 | Understand Arc / Circle integration | [`docs/arc-integration.md`](docs/arc-integration.md) |
 | Operate the live stack | [`docs/runbooks/operations.md`](docs/runbooks/operations.md) |
-| Browse every design + planning doc | [`docs/README.md`](docs/README.md) |
+| Browse every design + planning doc | [`docs/doc-index.md`](docs/doc-index.md) |
 | Add a doc without misfiling it | [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) |
 | Write a test the way this repo wants | [`docs/testing-conventions.md`](docs/testing-conventions.md) |
 | Know who owns what | [`docs/team.md`](docs/team.md) |
@@ -200,14 +208,14 @@ re-derive from one of those.
   publishes `corpus_embedded_at_rest: false` for the corpus itself, and publishes
   `rerank_candidate_cap` because only that many candidates reach the model. Read those
   fields rather than this line. Tracked in
-  [#778](https://github.com/a-apin/archimedes/issues/778) and
-  [#1488](https://github.com/a-apin/archimedes/issues/1488).
+  [#778](https://github.com/aprin-labs/archimedes/issues/778) and
+  [#1488](https://github.com/aprin-labs/archimedes/issues/1488).
 - **The knowledge graph is not built.** No KB artifact has ever been produced, so `/health`
   reports `corpus_kg_built: false` with zero entities and zero relations,
   `GET /api/corpus/graph` refuses with **503 `kb_artifact_not_found`** instead of
   synthesizing a graph, and `GET /api/corpus/kg/*` returns empty entity and relation sets.
   Citation-link extraction over the corpus is roadmap. Tracked in
-  [#778](https://github.com/a-apin/archimedes/issues/778).
+  [#778](https://github.com/aprin-labs/archimedes/issues/778).
 - **Vault execution is not shipped**, per the spine above. The contracts are deployed and
   the routes exist, but the journey is flag-gated off every public surface and no user vault
   has been deployed.

@@ -17,11 +17,14 @@ import {
   changeEmail,
   changePassword,
   deleteAccount,
+  getVerificationStatus,
   listSessions,
   resendVerificationEmail,
   revokeOtherSessions,
   revokeSession,
 } from '../auth-client'
+import VerificationDeliveryStatus from './VerificationDeliveryStatus'
+import { deriveVerificationDeliveryView, RATE_LIMITED_BY_CLIENT, shouldShowRequestedFallback } from '../verificationDelivery'
 import { PASSWORD_MIN, passwordRulesMet, passwordsMatch } from '../password-rules'
 import { listLinkedWallets, makePrimaryWallet, removeLinkedWallet } from '../linked-wallets'
 import { providerLabel } from '../wallet-providers'
@@ -94,6 +97,11 @@ export default function AccountSettings({ walletAddr, onDisconnect, linkError })
   const [busy, setBusy] = useState(null)
   const [verifyStatus, setVerifyStatus] = useState('idle') // idle | sending | sent | error
   const [verifyError, setVerifyError] = useState('')
+  // #1748 item 2 — the auth service's own record of what happened to this
+  // address's verification mail. `null` until the first successful read, and
+  // back to `null` on any failure: an unreachable status endpoint renders
+  // nothing, never an optimistic default.
+  const [verifyDelivery, setVerifyDelivery] = useState(null)
 
   // #1367 — email change
   const [newEmail, setNewEmail] = useState('')
@@ -360,21 +368,55 @@ export default function AccountSettings({ walletAddr, onDisconnect, linkError })
     window.location.assign(`/sign-in?next=${encodeURIComponent('/app/account')}`)
   }
 
-  // On-demand resend: gives testers a path to exercise the flow with an
-  // SES-verified address today, and heals anyone who missed their window once
-  // SES production access lands. Does not gate anything — email-verification
-  // ENFORCEMENT stays off (auth/auth.js requireEmailVerification).
+  // #1748 item 2 — what the auth service actually recorded for this address.
+  // Read on mount (unverified accounts only: a verified one has no pending
+  // delivery to describe) and again after every resend click.
+  const refreshVerifyDelivery = useCallback(async () => {
+    try {
+      setVerifyDelivery(await getVerificationStatus())
+    } catch {
+      // 401 (signed out), 503 (no delivery log wired), or a network failure.
+      // None of those is knowledge about anyone's mail, so the panel shows
+      // nothing rather than guessing.
+      setVerifyDelivery(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (user?.emailVerified === false) refreshVerifyDelivery()
+  }, [user?.emailVerified, refreshVerifyDelivery])
+
+  // On-demand resend: heals anyone who missed their verification window.
+  // Does not gate anything — email-verification ENFORCEMENT stays off
+  // (auth/auth.js requireEmailVerification). Until #1748 this button's only
+  // possible answer was VERIFICATION_REQUESTED_MESSAGE, because Better Auth
+  // returns {status:true} once the send is QUEUED and the mailer fail-softs;
+  // the delivery panel below now carries what happened after that.
   const sendVerification = async () => {
     setVerifyStatus('sending')
     setVerifyError('')
     try {
       await resendVerificationEmail(user.email, `${window.location.origin}/app`)
       setVerifyStatus('sent')
+      // Re-read AFTER the send so the panel reflects this click — including
+      // the case where the send was accepted and then suppressed.
+      await refreshVerifyDelivery()
     } catch (err) {
       setVerifyError(err.message)
       setVerifyStatus('error')
+      // Better Auth's limiter is keyed per client IP, not per address, so a
+      // 429 is a fact the server-side status cannot always see. Render it from
+      // what this client just observed instead of leaving the old state up.
+      if (err.status === 429) setVerifyDelivery(RATE_LIMITED_BY_CLIENT)
+      else await refreshVerifyDelivery()
     }
   }
+
+  // Suppressed and rate-limited are the two states where pressing the button
+  // again cannot help. The control reads the SAME derivation the panel
+  // renders, so the button and the copy under it can never disagree.
+  const resendDisabled = verifyStatus === 'sending'
+    || deriveVerificationDeliveryView(verifyDelivery)?.canResend === false
 
   // ── #1367: email change ───────────────────────────────────────────────
   // Never reads the response. See EMAIL_CHANGE_REQUESTED_MESSAGE for why the
@@ -512,7 +554,7 @@ export default function AccountSettings({ walletAddr, onDisconnect, linkError })
                 <button
                   className="btn-secondary"
                   type="button"
-                  disabled={verifyStatus === 'sending'}
+                  disabled={resendDisabled}
                   onClick={sendVerification}
                 >
                   {verifyStatus === 'sending' ? 'Sending…' : 'Send verification email'}
@@ -521,12 +563,24 @@ export default function AccountSettings({ walletAddr, onDisconnect, linkError })
             ) : (
               <span className="caption">Email verified ✓</span>
             )}
-            {verifyStatus === 'sent' && (
+            {/* The eternal "requested" line is the PRE-STATUS fallback only.
+                Once the GET below has an answer this build recognises, the
+                panel is the single source of truth for this click — mounting
+                both puts "delivery isn't confirmed…" next to a specific
+                suppressed / failed / rate_limited, or a second softer
+                "requested" next to an honest sent. Shared predicate so this
+                surface and the Generate page cannot drift. */}
+            {verifyStatus === 'sent' && shouldShowRequestedFallback(verifyDelivery) && (
               <div className="status" role="status">{VERIFICATION_REQUESTED_MESSAGE}</div>
             )}
             {verifyStatus === 'error' && (
               <div className="status" role="alert">{verifyError}</div>
             )}
+            {/* #1748 item 2: the honest state — sent / suppressed /
+                rate_limited / failed / unknown — from the auth service's own
+                delivery record, replacing the eternal silent 200. Renders
+                nothing for a verified account or an unrecognised state. */}
+            <VerificationDeliveryStatus status={verifyDelivery} />
           </div>
         )}
       </section>

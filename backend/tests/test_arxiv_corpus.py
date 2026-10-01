@@ -10,11 +10,14 @@ defensive behaviour when a PDF download fails (row still emitted, sha null).
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
+import time
 from datetime import UTC, datetime
 
 import pytest
 from archimedes.services.arxiv_corpus import (
+    _PDF_DOWNLOAD_DELAY,
     CorpusPaper,
     _bare_id,
     _dedupe_and_trim,
@@ -165,6 +168,7 @@ def test_manifest_schema_is_frozen(tmp_path) -> None:
         text_dir=tmp_path / "text",
         search=_search_factory(papers),
         pdf_downloader=_fake_downloader,
+        delay_seconds=0,
     )
     assert len(rows) == 2
     for row in rows:
@@ -185,6 +189,7 @@ def test_pdf_sha256_is_content_addressed(tmp_path) -> None:
         text_dir=tmp_path / "text",
         search=_search_factory(papers),
         pdf_downloader=_fake_downloader,
+        delay_seconds=0,
     )
     expected_sha = hashlib.sha256(_FAKE_PDF).hexdigest()
     assert rows[0]["pdf_sha256"] == expected_sha
@@ -211,6 +216,7 @@ def test_cache_is_idempotent_on_rerun(tmp_path) -> None:
         "text_dir": tmp_path / "text",
         "search": _search_factory(papers),
         "pdf_downloader": _counting_downloader,
+        "delay_seconds": 0,
     }
     build_corpus(**kwargs)
     build_corpus(**kwargs)
@@ -227,6 +233,7 @@ def test_failed_pdf_still_emits_metadata_row(tmp_path) -> None:
         text_dir=tmp_path / "text",
         search=_search_factory(papers),
         pdf_downloader=_failing_downloader,
+        delay_seconds=0,
     )
     # metadata-complete for the full N even though every PDF failed
     assert len(rows) == 2
@@ -249,6 +256,7 @@ def test_no_pdfs_mode_skips_download(tmp_path) -> None:
         text_dir=tmp_path / "text",
         search=_search_factory(papers),
         pdf_downloader=_failing_downloader,
+        delay_seconds=0,
         fetch_pdfs=False,
     )
     assert rows[0]["pdf_sha256"] is None
@@ -269,6 +277,65 @@ def test_build_corpus_dedupes_and_trims_end_to_end(tmp_path) -> None:
         text_dir=tmp_path / "text",
         search=_search_factory(papers),
         pdf_downloader=_fake_downloader,
+        delay_seconds=0,
     )
     assert len(rows) == 2
     assert [r["arxiv_id"] for r in rows] == ["2501.00001", "2401.00001"]
+
+
+# ── Polite-delay seam (P1-2) ────────────────────────────────────
+
+
+def test_polite_pdf_delay_default_is_three_seconds() -> None:
+    """A live harvest still waits arXiv's guided 3.0s between PDFs.
+
+    The delay is injectable only so offline tests can pass 0; the *production*
+    default must not drift. Both halves are pinned: the module constant and the
+    ``build_corpus`` signature default that is bound to it.
+
+    MUTATION: set ``_PDF_DOWNLOAD_DELAY = 0.0``, or change the
+    ``delay_seconds`` default in ``build_corpus`` to anything but the
+    constant, and this fails — that is a real harvest hammering arXiv.
+    """
+    assert _PDF_DOWNLOAD_DELAY == 3.0
+    default = inspect.signature(build_corpus).parameters["delay_seconds"].default
+    assert default == _PDF_DOWNLOAD_DELAY
+    assert default == 3.0
+
+
+def test_build_corpus_honours_the_injected_delay(tmp_path, monkeypatch) -> None:
+    """The polite sleep uses the injected delay, and 0 sleeps not at all.
+
+    ``build_corpus`` imports ``time`` inside the loop, so patching
+    ``time.sleep`` on the module object is what the call actually resolves to.
+
+    MUTATION: revert the seam (``time.sleep(_PDF_DOWNLOAD_DELAY)`` instead of
+    ``time.sleep(delay_seconds)``) and the recorded sleeps become
+    ``[3.0, 3.0]`` in the injected case and ``[3.0, 3.0]`` in the zero case —
+    i.e. this file pays ~21s of wall clock again.
+    """
+    slept: list[float] = []
+    monkeypatch.setattr(time, "sleep", lambda seconds: slept.append(seconds))
+
+    papers = [_mk_paper("2401.00001"), _mk_paper("2401.00002")]
+    kwargs = {
+        "max_papers": 10,
+        "out_path": tmp_path / "m.jsonl",
+        "pdf_dir": tmp_path / "pdfs",
+        "text_dir": tmp_path / "text",
+        "search": _search_factory(papers),
+        "pdf_downloader": _fake_downloader,
+    }
+
+    rows = build_corpus(**kwargs, delay_seconds=0.25)
+    # one polite pause per successfully cached PDF, at the injected value
+    assert len(rows) == 2
+    assert slept == [0.25, 0.25]
+
+    # 0 short-circuits the sleep entirely (cache is warm, sha still non-null,
+    # so the delay branch is still reached — it just must not fire)
+    slept.clear()
+    rows = build_corpus(**kwargs, delay_seconds=0)
+    assert len(rows) == 2
+    assert all(r["pdf_sha256"] for r in rows)
+    assert slept == []

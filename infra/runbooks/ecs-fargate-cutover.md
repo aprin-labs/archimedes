@@ -466,8 +466,7 @@ Phase 4 until every check here passes.**
    for kv in \
      'LLM_PROVIDER=bedrock_converse' \
      'LLM_BEDROCK_MODEL=amazon.nova-micro-v1:0' \
-     'PRICE_SOURCE=cascade' \
-     'ARCHIMEDES_FUSION_ENABLED=true'; do
+     'PRICE_SOURCE=cascade'; do
      name="${kv%%=*}"; want="${kv#*=}"
      got=$(jq -r --arg n "$name" '.[] | select(.name==$n) | .value' /tmp/backend-env.json)
      [ "$got" = "$want" ] && echo "OK: $name=$got" \

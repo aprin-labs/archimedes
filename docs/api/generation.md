@@ -50,9 +50,22 @@ below), `GENERATION_DAILY_CAP_PER_USER` / `GENERATION_DAILY_CAP_PER_IP` (see
 [Quotas](#quotas)), `PREMIUM_MODELS_ENABLED` / `PREMIUM_MODELS_ALLOWLIST`
 (premium-model entitlement), slowapi `5/minute` (disabled under `TESTING`)
 
-Request (`GenerateStartRequest`): `{brief: {intent: str, risk_appetite: "fixed_income"|"conservative"|"moderate"|"aggressive"|"hyper_risky"="moderate", asset_classes: [str]|null, capital_usdc: float|null, max_papers: int(2..6)=5, name: str|null(<=80 chars, control-chars rejected)}, n_candidates: int(1..5)=1, mode: str|null (accepted for API compat, ignored post T1.1 Phase-3), model: str|null}`.
+Request (`GenerateStartRequest`): `{brief: {intent: str(1..600 chars), risk_appetite: "fixed_income"|"conservative"|"moderate"|"aggressive"|"hyper_risky"="moderate", asset_classes: [str]|null, capital_usdc: float|null, max_papers: int(2..6)=5, name: str|null(<=80 chars, control-chars rejected)}, n_candidates: int(1..5)=1, mode: str|null (accepted for API compat, ignored post T1.1 Phase-3), model: str|null}`.
 Response (202, `GenerateStartResponse`): `{job_id: str, stream_url: str, ttl_seconds: int}`.
-Errors: 409 `wallet_link_required` (payment required, caller has no linked wallet); 402 (payment-gate failure, or a non-entitled premium `model`); 422 — `max_papers` outside `[2, 6]` (or any other body-validation failure); 429 (daily generation-quota cap exceeded, unless `TESTING`; or the 5/min burst limit); 503 `payment_config_missing` (payment flag on, `GENERATION_PAYMENT_RECIPIENT` unset).
+Errors: 409 `wallet_link_required` (payment required, caller has no linked wallet); 402 (payment-gate failure, or a non-entitled premium `model`); 422 — `max_papers` outside `[2, 6]`, an `intent` outside `[1, 600]` characters, or any other body-validation failure; 422 `BRIEF_INVALID` (the deterministic brief screen, below); 429 (daily generation-quota cap exceeded, unless `TESTING`; or the 5/min burst limit); 503 `payment_config_missing` (payment flag on, `GENERATION_PAYMENT_RECIPIENT` unset).
+
+**Brief screening (#1801).** `intent` is inserted verbatim into every prompt the
+generation pays for, so it is bounded (1–600 characters, enforced by the request schema)
+and screened deterministically — no LLM — *before* the payment gate: a brief that is
+empty, mash, over-length, or carrying a prompt-injection payload (override directives,
+role forgery, forged JSON replies, code fences, links, encoded blobs) is refused **422**
+with `{reason: "brief_invalid", code: "BRIEF_INVALID", message, hint, reason_code}` and is
+never charged for. `reason_code` is the machine-readable rule that tripped, drawn from a
+versioned vocabulary; the full list, what is deliberately still allowed, and the
+`BRIEF_UNVALIDATED` outcome (the model validator could not reach a verdict — the run stops
+rather than admitting the brief) are documented in
+[`brief-guidelines.md`](../brief-guidelines.md). Off-topic-but-grammatical text is not
+screened here — it still reaches the model validator, post-payment.
 
 ```bash
 curl -s -X POST https://archimedes-arc.com/api/generate/start \

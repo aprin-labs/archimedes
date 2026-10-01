@@ -11,14 +11,14 @@ by design** — every action is scoped to a specific bucket / table / parameter 
 | `s3:GetObject`, `PutObject`, `DeleteObject` (+ versioning reads) | `archimedes-corpus-artifacts-prod/*` | KB pipeline writes `embeddings.npy`, `clusters.json`, `topics.json`, `kg_triples.jsonl`, `kg_graph.json`, `manifest.json`; backend reads them via `/api/corpus/*` |
 | `s3:GetObject`, `PutObject`, `DeleteObject` | `archimedes-paper-pdfs-prod/*` | Paper PDF storage for the corpus (input to the KB pipeline) |
 | `s3:ListBucket`, `GetBucketLocation`, `GetBucketVersioning` | Both buckets | List + introspection only on the bucket itself (no other buckets) |
-| `dynamodb:GetItem`, `PutItem`, `UpdateItem`, `DeleteItem`, `Query`, `Scan`, `BatchGetItem`, `BatchWriteItem`, `DescribeTable` | `archimedes-papers-index` (+ all GSIs) | Paper metadata index — DynamoDB is the additive read index per [T3.1 spec](https://github.com/a-apin/archimedes/issues/147); Postgres remains the source of truth |
-| `ssm:GetParameter`, `GetParameters`, `GetParametersByPath` | `/archimedes/prod/*` | Secrets surface for [TS.2 #176](https://github.com/a-apin/archimedes/issues/176) — backend reads at startup |
+| `dynamodb:GetItem`, `PutItem`, `UpdateItem`, `DeleteItem`, `Query`, `Scan`, `BatchGetItem`, `BatchWriteItem`, `DescribeTable` | `archimedes-papers-index` (+ all GSIs) | Paper metadata index — DynamoDB is the additive read index per [T3.1 spec](https://github.com/aprin-labs/archimedes/issues/147); Postgres remains the source of truth |
+| `ssm:GetParameter`, `GetParameters`, `GetParametersByPath` | `/archimedes/prod/*` | Secrets surface for [TS.2 #176](https://github.com/aprin-labs/archimedes/issues/176) — backend reads at startup |
 | `kms:Decrypt` (conditional) | KMS via `ssm.<region>.amazonaws.com` only | Decrypts SecureString SSM parameters; condition prevents using this for arbitrary KMS keys |
 | `logs:CreateLogStream`, `PutLogEvents`, `DescribeLogStreams` | `/archimedes/*` log groups | Backend writes structured logs to CloudWatch (operator observability) |
 
 ## What this policy does NOT grant
 
-Anti-goals from the original [T3.1 spec](https://github.com/a-apin/archimedes/issues/147):
+Anti-goals from the original [T3.1 spec](https://github.com/aprin-labs/archimedes/issues/147):
 
 - **No bucket-policy edits** — separating data-plane (this role) from control-plane (Chuan's deployer credentials)
 - **No public-read** of either bucket (no `s3:PutBucketAcl`, no `s3:PutObjectAcl`)
@@ -165,7 +165,8 @@ After provisioning the role + attaching to backend EC2:
 - [ ] `aws s3 ls s3://archimedes-corpus-artifacts-prod/` succeeds (empty list OK)
 - [ ] `aws dynamodb describe-table --table-name archimedes-papers-index` returns `TableStatus: ACTIVE`
 - [ ] `aws ssm get-parameter --name /archimedes/prod/test --with-decryption` returns either the value (if seeded) or `ParameterNotFound` (NOT `AccessDenied`)
-- [ ] Backend can `python -c "from archimedes.services.s3_artifact_store import S3ArtifactStore; print(S3ArtifactStore().list_keys()[:5])"` (returns `[]` if bucket is empty — that's fine)
+- [ ] Backend can `KB_S3_BUCKET=archimedes-corpus-artifacts-prod PYTHONPATH=backend python -c "from archimedes.services.kb_artifacts import _get_s3_client; print(_get_s3_client() is not None)"` → prints `True` (the call does a `head_bucket` probe, so this proves the *instance role* reaches the bucket from inside the Python process, not just from the CLI)
+  <sub>Was `services.s3_artifact_store.S3ArtifactStore`; that module was never wired to anything and was deleted 2026-09-01 (audit P1-1).</sub>
 
 ## Open question / future
 

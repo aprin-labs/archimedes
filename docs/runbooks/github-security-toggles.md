@@ -7,7 +7,7 @@ admin must flip them in the GitHub UI.
 ## Toggles to enable
 
 Navigate to **Settings → Code security and analysis** for the repo
-(`a-apin/archimedes`).
+(`aprin-labs/archimedes`).
 
 ### 1. Dependabot alerts
 

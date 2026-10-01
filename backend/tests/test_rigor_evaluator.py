@@ -53,6 +53,7 @@ from archimedes.services.rigor_evaluator import (
     look_ahead_audit,
     run_rigor_gate,
 )
+from archimedes.services.rigor_profiles import DSR_P_BADGE_MIN
 
 _ANNUALIZATION = 252
 
@@ -65,7 +66,7 @@ _ANNUALIZATION = 252
     [
         # Case A — strong: long, smooth backtest, small library → DSR clears gate
         (1.8, 2520, -0.4, 6.2, 10, 1.0000, 0.001),
-        # Case B — borderline: credibly positive but below the 0.95 bar
+        # Case B — borderline: credibly positive but below the badge bar
         (0.9, 1260, -0.2, 5.0, 20, 0.5439, 0.005),
         # Case C — failure: weak Sharpe from large selection → gate must reject
         (0.3, 504, 0.0, 3.0, 1000, 0.0023, 0.001),
@@ -1084,7 +1085,7 @@ class TestDegenerateSeriesCategory:
         assert result.is_oos_degenerate is True
         assert result.is_full_series_degenerate is False
         # The DSR itself was computed over the (non-constant) full series and
-        # passed the strictest profile's bar (p >= 0.90) — it is legitimate.
+        # passed the strictest profile's bar (p >= DSR_P_BADGE_MIN) — legitimate.
         assert result.dsr_p_value is not None
         assert result.dsr_p_value >= result.profile.dsr_p_min
 
@@ -1100,8 +1101,8 @@ class TestDegenerateSeriesCategory:
 # ─── Additional coverage: gate_details branches + run_rigor_gate paths ──────
 
 # Deterministic return series (no np.random to avoid VoidDType issue).
-# _RETURNS_50: DSR p=0.917 (above the recalibrated 0.90 badge bar; was below the
-# pre-recalibration 0.95) — used for structural tests that don't hinge on the DSR verdict.
+# _RETURNS_50: DSR p=0.917 — BELOW the badge bar since #1794 restored it to
+# DSR_P_BADGE_MIN. Used only for structural tests that don't hinge on the verdict.
 # _RETURNS_80: DSR p=1.0 (clears gate) — used where a strong series is needed.
 _RETURNS_50 = [0.01 * ((-1) ** i) * 0.5 + 0.001 for i in range(50)]
 _RETURNS_80 = [0.01, -0.005, 0.008, 0.003] * 20
@@ -1371,11 +1372,12 @@ class TestGateDetailsBranches:
         assert r.gate_details["dsr"] == "PASS (p=0.9700)"
 
     def test_dsr_fail_branch(self):
-        """dsr_p_value < the badge bar (0.90, level 1) but not None renders
-        'FAIL (p=..., need >= 0.90)' using the Unicode greater-than-or-equal sign
-        (U+2265) as in the source. 0.90 is the recalibrated Conservative bar."""
+        """dsr_p_value < the badge bar (level 1) but not None renders
+        'FAIL (p=..., need >= <bar>)' using the Unicode greater-than-or-equal sign
+        (U+2265) as in the source. The bar is rigor_profiles.DSR_P_BADGE_MIN — the
+        one definition (#1794), read here rather than restated."""
         r = RigorGateResult("s", dsr_p_value=0.8000)
-        assert r.gate_details["dsr"] == "FAIL (p=0.8000, need ≥ 0.90)"
+        assert r.gate_details["dsr"] == f"FAIL (p=0.8000, need ≥ {DSR_P_BADGE_MIN:.2f})"
 
     def test_dsr_missing_branch(self):
         """dsr_p_value is None renders 'MISSING'."""
@@ -1842,6 +1844,13 @@ class TestEquicorrelatedExpectedMax:
         The winner is then picked by in-sample Sharpe, which is precisely the
         selection event the DSR exists to correct, so a gate at ``dsr_p >= 0.90``
         should admit about 10%. The pre-#1558 form admitted 25.5% here.
+
+        The 0.90 here is a NOMINAL calibration level chosen for a clean 10%
+        expected rate and the tight binomial bound below — it is NOT the badge
+        bar (``rigor_profiles.DSR_P_BADGE_MIN``, #1794). This test asks whether
+        ``compute_dsr``'s null distribution is calibrated at a stated level, a
+        property of the estimator; the product's admission bar is a separate
+        choice and moving it must not silently re-tune this test's arithmetic.
 
         Seeded and bounded at 600 runs to stay fast. Binomial noise on a 10% rate
         at n=600 is ~1.2pp, so the 0.16 threshold sits ~5σ above the true rate and

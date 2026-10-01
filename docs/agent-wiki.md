@@ -22,7 +22,7 @@ mounted into the site at build time by
 | Command | `init` |
 | Repository state documented | commit `9a84fa25ce861756eec2262b754f07acfaa2790c` |
 | Written | 2026-08-31 |
-| Landed by | [#1597](https://github.com/a-apin/archimedes/pull/1597) |
+| Landed by | [#1597](https://github.com/aprin-labs/archimedes/pull/1597) |
 
 The scheduled regeneration workflow
 ([`../.github/workflows/openwiki-update.yml`](../.github/workflows/openwiki-update.yml))
@@ -112,5 +112,5 @@ S3 + CloudFront + Route 53 in the production account, on the pattern already
 applied for `aprin.ai` in `../company-site/infra/main.tf` — rather than GitHub
 Pages. `mkdocs build --strict` remains the build step; only the publish step
 changes. That work is tracked in
-[#1634](https://github.com/a-apin/archimedes/issues/1634), which also adds the
+[#1634](https://github.com/aprin-labs/archimedes/issues/1634), which also adds the
 docs link to the landing footer and the public header.

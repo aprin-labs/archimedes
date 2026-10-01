@@ -199,8 +199,9 @@ test("each rigor panel states its own limit, and the deck names all four verdict
 	// quoted from the code that computes them, so both get pinned here.
 	//
 	// Every `limit` below is traceable: DSR → rigor_profiles.py's own
-	// "'deflated-Sharpe evidence at the 0.90 level', not 'statistically proven'"
-	// note (level-1 dsr_p_min = 0.90); PBO → compute_pbo's "Known limitations"
+	// "'deflated-Sharpe evidence at the 95% one-sided level', not 'statistically
+	// proven'" note (level-1 dsr_p_min IS DSR_P_BADGE_MIN, #1794); PBO →
+	// compute_pbo's "Known limitations"
 	// (a selection-set property, a neighbour can flip it); OOS →
 	// compute_oos_sharpe's "a single chronological hold-out, NOT a rolling
 	// walk-forward re-estimation ... no purge/embargo gap"; LEAK → the
@@ -215,7 +216,7 @@ test("each rigor panel states its own limit, and the deck names all four verdict
 		4,
 		"every one of the four rejection checks must carry its own honest limit",
 	);
-	assert.match(criteria, /0\.90 level/);
+	assert.match(criteria, /95% one-sided level/);
 	assert.match(criteria, /selection set, not one strategy/);
 	assert.match(criteria, /not a rolling refit/);
 	assert.match(criteria, /proven to read only the current bar and earlier/);
@@ -433,7 +434,7 @@ test("metadata and sitemap describe canonical anonymous public routes", () => {
 		sitemap,
 		/<loc>https:\/\/archimedes-arc\.com\/architecture<\/loc>/,
 	);
-	for (const route of ["explore", "leaderboard", "corpus"]) {
+	for (const route of ["explore", "corpus"]) {
 		assert.match(
 			sitemap,
 			new RegExp(`<loc>https://archimedes-arc\\.com/${route}</loc>`),
@@ -446,6 +447,18 @@ test("metadata and sitemap describe canonical anonymous public routes", () => {
 	// guard and its rationale. Asserting its ABSENCE here, rather than just
 	// deleting it from the loop, keeps this test honest about the change.
 	assert.doesNotMatch(sitemap, /insights/i);
+	// `leaderboard` left the loop the same way with #1753 (the owner's
+	// call): /app/leaderboard is gated at nginx now, so the URL a
+	// crawler would follow answers 302 /sign-in and indexes nothing. Its
+	// <loc> ABSENCE is asserted rather than merely un-asserted — the sitemap
+	// must not advertise a page an anonymous visitor cannot read. (Unlike
+	// insights, the leaderboard's EXISTENCE is not a secret, so this is the
+	// <loc>-only form, not sitemap.test.js's whole-file form: the header
+	// comment names it and says why it is excluded.)
+	assert.doesNotMatch(
+		sitemap,
+		/<loc>https:\/\/archimedes-arc\.com\/leaderboard<\/loc>/,
+	);
 	assert.doesNotMatch(
 		sitemap,
 		/<loc>https:\/\/archimedes-arc\.com\/(marketplace|portfolio|publish|subscriptions)<\/loc>/,

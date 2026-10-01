@@ -51,7 +51,7 @@ test("the account-boundary header is kept", () => {
 const TRUE_STATEMENTS = [
 	"Email and password work without a wallet.",
 	"Wallet linking requires signature proof.",
-	"Arc public testnet uses no real funds.",
+	"Generation settles real testnet USDC on Arc public testnet.",
 ];
 
 // Slice the RENDERED const's array literal — a match in a code comment must not
@@ -98,6 +98,17 @@ test("removed-claim patterns match their own canonical examples (guard is not va
 			`pattern ${pattern} no longer matches its own canonical example — it is guarding nothing`,
 		);
 	}
+});
+
+test("the false no-real-funds claim never returns", () => {
+	// Vacuity: the pattern still matches the overclaim it is meant to reject.
+	const overclaim = "Arc public testnet uses no real funds.";
+	assert.match(overclaim, /no real funds/i);
+	assert.doesNotMatch(
+		authPage,
+		/no real funds/i,
+		'AuthPage.jsx overclaims: generate is paid (GET /api/generate/quote, prod dry_run: false, $2 USDC on arcTestnet). Testnet USDC is not "no real funds."',
+	);
 });
 
 test("the false wallet-boundary claim never returns", () => {

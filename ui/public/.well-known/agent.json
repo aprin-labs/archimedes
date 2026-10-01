@@ -8,8 +8,8 @@
     "organization": "Archimedes",
     "url": "https://archimedes-arc.com"
   },
-  "documentationUrl": "https://github.com/a-apin/archimedes/blob/main/docs/agent-api.md",
-  "quickstartUrl": "https://github.com/a-apin/archimedes/blob/main/docs/agent-quickstart.md",
+  "documentationUrl": "https://github.com/aprin-labs/archimedes/blob/main/docs/agent-api.md",
+  "quickstartUrl": "https://github.com/aprin-labs/archimedes/blob/main/docs/agent-quickstart.md",
   "service": {
     "endpoint": "https://archimedes-arc.com/api",
     "manifest": "https://archimedes-arc.com/api/agent/manifest",
@@ -100,7 +100,7 @@
       "routes": {
         "verify": "POST /api/rigor/verify"
       },
-      "note": "Runs the gate's admission checks over a bare returns series you submit. DSR and walk-forward OOS are evaluable; PBO and the look-ahead audit report not_evaluable rather than a silent pass. `passes` is a QUORUM over the two runnable legs -- true only when DSR and OOS both ran and passed -- and because PBO and look-ahead can never run here the verdict is CAPPED, not equivalent to the strategy passport gate. Read legs_evaluated / legs_runnable / legs_total / verdict_capped alongside it. Backs the CLI's `verify`. Rate limited 5/minute."
+      "note": "Runs the gate's admission checks over a bare returns series you submit. DSR and walk-forward OOS are evaluable; PBO and the look-ahead audit report not_evaluable rather than a silent pass. `passes` is a QUORUM over the two runnable legs -- true only when DSR and OOS both ran and passed -- and because PBO and look-ahead can never run here the verdict is CAPPED, not equivalent to the strategy passport gate. Read legs_evaluated / legs_runnable / legs_total / verdict_capped alongside it. Minimum evaluation window is 250 daily bars (one trading year): under it the route answers 422 with reason window_too_short and bars_received/bars_required, never a verdict. Dates must be strict YYYY-MM-DD, unique and ascending; returns finite with |r| <= 1.0. Backs the CLI's `verify`. Rate limited 5/minute."
     },
     "paper": {
       "status": "live",

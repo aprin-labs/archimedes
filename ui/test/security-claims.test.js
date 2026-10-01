@@ -74,7 +74,7 @@ const LIVE_CLAIMS = [
 		"auth/auth.js advanced.defaultCookieAttributes",
 	],
 	[
-		"Four browse pages are deliberately anonymous",
+		"Two browse pages are deliberately anonymous",
 		"nginx.conf carve-outs + ANON_APP_PAGES in ui/src/routes.js",
 	],
 	[
@@ -185,9 +185,9 @@ const CLAIM_BINDINGS = [
 		"auth_request /_auth_session;",
 	],
 	[
-		"Four browse pages are deliberately anonymous",
+		"Two browse pages are deliberately anonymous",
 		"ui/src/routes.js",
-		"const ANON_APP_PAGES = new Set(['explore', 'leaderboard', 'corpus', 'strategy'])",
+		"const ANON_APP_PAGES = new Set(['explore', 'corpus'])",
 	],
 
 	// Authority model

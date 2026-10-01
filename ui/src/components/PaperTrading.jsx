@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiGet, apiPost } from '../api'
+import GateVerdictChip from './GateVerdictChip'
 import {
+  DEPLOY_AT_WILL_NOTE,
+  FORWARD_EVIDENCE_NOTE,
   MARK_BASIS_DISCLOSURE,
   driftTooltip,
   formatTotalReturn,
@@ -9,8 +12,11 @@ import {
   markLabel,
   marksStalenessNote,
   marksUnavailableNote,
+  newestMark,
   noMarksNote,
+  paperCadenceCopy,
   paperErrorMessage,
+  paperReturnAnnouncement,
 } from '../paperCopy'
 
 // How often the live value is refetched. A 15-minute mark cadence does not
@@ -23,10 +29,10 @@ const MARKS_POLL_MS = 5 * 60 * 1000
 // /app/paper — the act-on step of the MVP spine (generate → verdict → paper).
 // Lists the signed-in account's paper deployments from GET /api/paper/deployments
 // (deployment_summary shape: deployment_id, strategy_id, deployed_at, status,
-// days, total_return, drift_detected_at, series[{date, daily_return,
-// equity_index}]). Deployments are SIMULATED — account-owned, no wallet, no
-// funds — and free by design (Dan's call: paper stays free even after the
-// generation paywall flips). Strategy display names come from a client-side
+// days, total_return, drift_detected_at, rigor_gate_status, graded_at,
+// gate_version, series[{date, daily_return, equity_index}]). Deployments are
+// SIMULATED — account-owned, no wallet, no funds — and free by design (Dan's
+// call: paper stays free even after the generation paywall flips). Strategy display names come from a client-side
 // join against the library lists; the paper API deliberately returns ids only.
 //
 // The DRIFT tooltip, the total-return figure, the intraday mark labels, and
@@ -36,8 +42,8 @@ const MARKS_POLL_MS = 5 * 60 * 1000
 // number with no as-of time, or a raw "Backend returned NNN".
 //
 // Two series, two lifetimes, and the card must never let them blur:
-//   - `series` (paper_daily_returns) is the SETTLED, append-only track record
-//     that carries to mainnet;
+//   - `series` (paper_daily_returns) is the SETTLED, append-only paper track
+//     record — Arc testnet, no real funds (#1807);
 //   - the intraday marks from GET /api/paper/deployments/{id}/marks are an
 //     UNSETTLED re-pricing of that strategy's ASSET BASKET — not of its live
 //     position, which v1 cannot see (MARK_BASIS_DISCLOSURE) — and the backend
@@ -88,8 +94,8 @@ function StatusChip({ status, driftAt }) {
 // Minimal equity sparkline over series[].equity_index, with the UNSETTLED
 // intraday tail (paper_marks[].portfolio_value) drawn as a separate dashed,
 // half-weight segment. The visual break is load-bearing, not decoration: only
-// the settled daily ledger carries to mainnet, so a reader has to be able to
-// see at a glance where the recorded track record ends and the intraday view
+// the settled daily ledger is the recorded track record, so a reader has to
+// be able to see at a glance where that record ends and the intraday view
 // begins. Starts the path at the 1.0 baseline so day-1 deployments still draw
 // a meaningful segment.
 function Sparkline({ series, intraday }) {
@@ -306,6 +312,11 @@ export default function PaperTrading({ onNavigate }) {
     }
   }
 
+  // The intro's cadence copy is derived from the marks actually in the payload,
+  // never asserted as a standing fact: no marks job is scheduled in infra/, so
+  // a quarter-hourly cadence is only true where a fresh mark proves it (#1802).
+  const cadence = paperCadenceCopy(newestMark(deployments, marks, marksErrors))
+
   return (
     <div style={{ maxWidth: 1100 }}>
       <div style={{ marginBottom: 18 }}>
@@ -315,13 +326,23 @@ export default function PaperTrading({ onNavigate }) {
         <p className="body" style={{ maxWidth: 760 }}>
           Simulated deployments of your strategies — <strong>no funds move</strong>. Each one
           snapshots the strategy spec at deploy time and appends one real-data return per trading
-          day; later regeneration of the strategy never rewrites a running ledger. This is the
-          track record that carries to mainnet. The <strong>live value</strong> beneath each total
-          return re-prices the strategy&apos;s asset basket every 15 minutes — it is unsettled,
-          carries the time it was observed, and never changes what the strategy does.
+          day; later regeneration of the strategy never rewrites a running ledger.
+          {cadence.sentences.map((sentence) => (
+            <span key={sentence}> {sentence}</span>
+          ))}
         </p>
+        {cadence.staleness && (
+          <p className="caption" style={{ marginTop: 4 }}>
+            {cadence.staleness}
+          </p>
+        )}
         <p className="caption" style={{ marginTop: 4 }}>
           {MARK_BASIS_DISCLOSURE}
+        </p>
+        {/* The deploy-at-will rule and its limit, stated on the page rather
+            than only implied by the chips (#1764). */}
+        <p className="caption" style={{ marginTop: 4 }}>
+          {DEPLOY_AT_WILL_NOTE} {FORWARD_EVIDENCE_NOTE}
         </p>
       </div>
 
@@ -407,9 +428,28 @@ export default function PaperTrading({ onNavigate }) {
                           : 'var(--text-2)',
                   }}
                 >
-                  {formatTotalReturn(dep.total_return, dep.days)}
+                  {/* The number and its verdict reach a screen reader as ONE
+                      utterance, from one call (#1764). A visually adjacent chip
+                      is not enough: the percentage would otherwise be announced
+                      bare, which is the same claim-without-its-caveat defect
+                      MARK_BASIS_DISCLOSURE was moved to the point of render to
+                      fix. */}
+                  <span className="sr-only">{paperReturnAnnouncement(dep)}</span>
+                  <span aria-hidden="true">{formatTotalReturn(dep.total_return, dep.days)}</span>
                 </div>
-                <div className="caption">total return</div>
+                <div className="caption" aria-hidden="true">
+                  total return
+                </div>
+                {/* Unconditional. A performance number on this card is never
+                    rendered without the gate verdict beside it — including when
+                    the payload carried no verdict, which draws the explicit
+                    "verdict unavailable" state rather than nothing.
+
+                    `ariaHidden` because the figure's sr-only line above already
+                    ends with this exact verdict, from the same call: without it
+                    a screen reader hears the verdict twice per card. The chip
+                    is the SIGHTED half of one statement, not a second one. */}
+                <GateVerdictChip dep={dep} ariaHidden />
                 <LiveValue dep={dep} marks={marks[dep.deployment_id]} error={marksErrors[dep.deployment_id]} />
                 {dep.status === 'active' && (
                   <button

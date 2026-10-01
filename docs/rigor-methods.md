@@ -38,7 +38,7 @@ Architecture page, and it is the only defensible form — docs match the app, no
 way round:
 
 > Over 20+ years of backtested returns net of realistic commission, a strategy's excess Sharpe
-> must be positive at 90% one-sided confidence under standard errors robust to non-normality
+> must be positive at 95% one-sided confidence under standard errors robust to non-normality
 > and autocorrelation, and must stay positive on a 30% chronological holdout. On the generated
 > path, the Sharpe is additionally deflated against that strategy's own candidate pool.
 >
@@ -55,9 +55,12 @@ expected best-of-`N` under the null.
 
 **What the number means:**
 - DSR is displayed as the **p-value** of the test (range 0–1).
-- A p-value ≥ 0.90 clears the bar: the excess Sharpe is positive at 90% one-sided
-  confidence under non-normality- and autocorrelation-robust standard errors.
-- Below 0.90 means the strategy has not cleared the bar — it may still be a good
+- A p-value ≥ 0.95 clears the bar: the excess Sharpe is positive at 95% one-sided
+  confidence under non-normality- and autocorrelation-robust standard errors. That
+  threshold has one definition in the codebase — `DSR_P_BADGE_MIN` in
+  `backend/archimedes/services/rigor_profiles.py` — and the four-primitive table below
+  quotes it, not a second copy (#1794).
+- Below 0.95 means the strategy has not cleared the bar — it may still be a good
   strategy, but we cannot distinguish it from noise with this sample.
 
 **Where the deflation does and does not apply.** On the **generated** path the Sharpe is
