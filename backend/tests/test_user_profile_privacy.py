@@ -2,7 +2,7 @@
 
 Verifies:
   1. Email is encrypted at rest (Fernet round-trip)
-  2. Log scrubber strips PII fields
+  2. Log scrubber strips PII fields and profile answers
   3. GET /api/user/profile/{wallet} returns the profile only to its owner;
      every other caller gets the same 404 as a missing profile (#1908)
 """
@@ -63,14 +63,17 @@ class TestLogScrubber:
             "display_name": "Secret User",
             "marketing_opt_in": True,
             "interests": ["crypto"],
+            "attribution": "Twitter",
         }
         scrubbed = scrub_profile(data)
         assert scrubbed["email"] == "<REDACTED>"
         assert scrubbed["display_name"] == "<REDACTED>"
         assert scrubbed["marketing_opt_in"] == "<REDACTED>"
-        # Public fields pass through
+        # Profile answers are owner-only too (#1908), so never logged.
+        assert scrubbed["interests"] == "<REDACTED>"
+        assert scrubbed["attribution"] == "<REDACTED>"
+        # Only the wallet key passes through.
         assert scrubbed["wallet_address"] == "0xabc"
-        assert scrubbed["interests"] == ["crypto"]
 
     def test_does_not_mutate_original(self):
         data = {"email": "test@test.com", "wallet_address": "0x1"}

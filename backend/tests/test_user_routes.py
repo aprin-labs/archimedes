@@ -3,8 +3,9 @@
 Auth model (Issue #181 + Issue #402):
   - POST requires a SIWE session matching payload.wallet_address.
     The X-Wallet-Address header fallback was dropped per #402 (forgeable).
-  - GET strips PII when caller lacks SIWE session matching the queried wallet.
-  - GET with a valid SIWE session for the queried wallet returns full data.
+  - GET is owner-only (#1908): the owning account gets every field; any other
+    signed-in account gets the same 404 as a wallet with no profile (no field
+    subset); no session at all gets 401.
   - Email is encrypted at rest before storage.
 """
 
@@ -36,9 +37,11 @@ _W_LEGACY_PROFILE = "0x7777777777777777777777777777777777777777"
 def _siwe_cookies(wallet: str) -> dict[str, str]:
     """Build a valid SIWE session cookie for `wallet`.
 
-    PII reads (display_name, email) require a SIWE session — header alone is
-    no longer trusted. Tests that previously relied on X-Wallet-Address to
-    read owner-view PII must now establish a session via this helper.
+    The conftest adapter maps this cookie to the account
+    ``legacy-test:<wallet lowercased>`` whose linked wallet is `wallet`.
+    Every profile read needs the owning account's session (#1908): a header
+    alone grants nothing, and a session for another account gets a 404, not
+    a reduced view.
     """
     return {_COOKIE_NAME: _sign_session(wallet, time.time())}
 
@@ -216,7 +219,7 @@ class TestUserProfileRoutes:
         assert res.status_code == 422
 
     def test_get_profile_case_insensitive(self, client):
-        """GET finds profile regardless of wallet case (with SIWE session for PII)."""
+        """GET finds profile regardless of wallet case (owner's session)."""
         client.post(
             "/api/user/profile",
             json={
@@ -440,14 +443,20 @@ class TestUserProfileRoutes:
 # The profile row holds what a user typed into WelcomeProfileModal: display
 # name, email, interests, "how did you hear about us" (attribution) and the
 # marketing opt-in. None of it is meant for other accounts, and no caller
-# reads another wallet's profile, so a non-owner must learn nothing — not even
-# that a profile exists. Non-owner reads therefore answer exactly like a
-# missing profile (404), never with a "public subset".
+# reads another wallet's profile, so the response must not tell a non-owner
+# anything, not even that a profile exists. Non-owner reads therefore answer
+# exactly like a missing profile (same 404 status, body and headers), never
+# with a "public subset". Logs carry none of the answers either.
 
 _W_1908_OWNER = "0x1908000000000000000000000000000000000001"
 _W_1908_OTHER = "0x1908000000000000000000000000000000000002"
 _W_1908_MISSING = "0x1908000000000000000000000000000000000003"
 _W_1908_LEGACY = "0x1908000000000000000000000000000000000004"
+_W_1908_CLAIMED = "0x1908000000000000000000000000000000000005"
+_W_1908_CLAIMANT = "0x1908000000000000000000000000000000000006"
+# Measured per request, so it differs between any two responses.
+_VOLATILE_HEADERS = {"x-response-time-ms"}
+_USER_ROUTES_LOGGER = "archimedes.api.user_routes"
 _PRIVATE_1908 = {
     "display_name": "Owner1908",
     "email": "owner1908@example.com",
@@ -466,6 +475,15 @@ def _private_values_in(body: str) -> list[str]:
         *_PRIVATE_1908["interests"],
     ]
     return [v for v in values if v in body]
+
+
+def _route_log(caplog) -> str:
+    """Everything user_routes logged during the captured block."""
+    return "\n".join(r.getMessage() for r in caplog.records if r.name == _USER_ROUTES_LOGGER)
+
+
+def _stable_headers(res) -> dict[str, str]:
+    return {k.lower(): v for k, v in res.headers.items() if k.lower() not in _VOLATILE_HEADERS}
 
 
 class TestProfileReadIsOwnerOnly:
@@ -490,6 +508,39 @@ class TestProfileReadIsOwnerOnly:
         other = client.get(f"/api/user/profile/{_W_1908_OWNER}", cookies=_siwe_cookies(_W_1908_OTHER))
         missing = client.get(f"/api/user/profile/{_W_1908_MISSING}", cookies=_siwe_cookies(_W_1908_OTHER))
         assert (other.status_code, other.json()) == (missing.status_code, missing.json())
+        # Headers too: same names, same values (bar the per-request timing).
+        assert {k.lower() for k in other.headers} == {k.lower() for k in missing.headers}
+        assert _stable_headers(other) == _stable_headers(missing)
+
+    def test_missing_and_non_owner_reads_do_the_same_lookups(self, client, owned_profile):
+        """The ownership lookup runs for a missing row too, not only when a row exists."""
+        from archimedes.api import user_routes
+
+        real = user_routes._extract_linked_wallet
+        with patch.object(user_routes, "_extract_linked_wallet", wraps=real) as lookup:
+            client.get(f"/api/user/profile/{_W_1908_OWNER}", cookies=_siwe_cookies(_W_1908_OTHER))
+        not_owner_lookups = lookup.call_count
+        with patch.object(user_routes, "_extract_linked_wallet", wraps=real) as lookup:
+            client.get(f"/api/user/profile/{_W_1908_MISSING}", cookies=_siwe_cookies(_W_1908_OTHER))
+        missing_lookups = lookup.call_count
+        assert (not_owner_lookups, missing_lookups) == (1, 1)
+
+    def test_non_owner_denial_log_has_no_profile_answers(self, client, owned_profile, caplog):
+        with caplog.at_level(logging.INFO, logger=_USER_ROUTES_LOGGER):
+            res = client.get(f"/api/user/profile/{_W_1908_OWNER}", cookies=_siwe_cookies(_W_1908_OTHER))
+        assert res.status_code == 404
+        log = _route_log(caplog)
+        assert "reason=not_owner" in log, f"expected a denial line, got: {log!r}"
+        assert _private_values_in(log) == [], f"denial log leaked profile answers: {log}"
+
+    def test_owner_read_log_has_no_profile_answers(self, client, owned_profile, caplog):
+        """The owner's own read logs only the wallet: every answer is redacted."""
+        with caplog.at_level(logging.INFO, logger=_USER_ROUTES_LOGGER):
+            res = client.get(f"/api/user/profile/{_W_1908_OWNER}", cookies=_siwe_cookies(_W_1908_OWNER))
+        assert res.status_code == 200
+        log = _route_log(caplog)
+        assert "get_profile: wallet=" in log, f"expected the owner read line, got: {log!r}"
+        assert _private_values_in(log) == [], f"owner read log leaked profile answers: {log}"
 
     def test_owner_still_sees_every_field(self, client, owned_profile):
         res = client.get(f"/api/user/profile/{_W_1908_OWNER}", cookies=_siwe_cookies(_W_1908_OWNER))
@@ -523,4 +574,37 @@ class TestProfileReadIsOwnerOnly:
         owner = client.get(f"/api/user/profile/{_W_1908_LEGACY}", cookies=_siwe_cookies(_W_1908_LEGACY))
         assert owner.status_code == 200
         assert owner.json()["interests"] == ["Bonds", "FX"]
+        assert owner.json()["attribution"] == _PRIVATE_1908["attribution"]
+
+    def test_claimed_profile_ignores_a_matching_linked_wallet(self, client):
+        """A claimed row (owner_user_id set) is readable by that account only.
+
+        The caller here is a different account whose linked wallet IS the row's
+        wallet. The linked-wallet rule is for unclaimed legacy rows; once a row
+        is claimed, holding the wallet grants nothing.
+        """
+        owner_account = f"legacy-test:{_W_1908_CLAIMANT.lower()}"
+        with get_session() as session:
+            session.query(UserProfile).filter(
+                (UserProfile.wallet_address == _W_1908_CLAIMED.lower()) | (UserProfile.owner_user_id == owner_account)
+            ).delete(synchronize_session=False)
+            session.add(
+                UserProfile(
+                    wallet_address=_W_1908_CLAIMED.lower(),
+                    owner_user_id=owner_account,
+                    display_name=_PRIVATE_1908["display_name"],
+                    interests='["Bonds", "FX"]',
+                    attribution=_PRIVATE_1908["attribution"],
+                )
+            )
+            session.commit()
+
+        # Account legacy-test:<CLAIMED>, linked wallet == the row's wallet.
+        same_wallet = client.get(f"/api/user/profile/{_W_1908_CLAIMED}", cookies=_siwe_cookies(_W_1908_CLAIMED))
+        assert _private_values_in(same_wallet.text) == [], f"wallet holder read a claimed row: {same_wallet.text}"
+        assert same_wallet.status_code == 404
+
+        # Control: the owning account reads it, though its linked wallet differs.
+        owner = client.get(f"/api/user/profile/{_W_1908_CLAIMED}", cookies=_siwe_cookies(_W_1908_CLAIMANT))
+        assert owner.status_code == 200
         assert owner.json()["attribution"] == _PRIVATE_1908["attribution"]

@@ -8,12 +8,14 @@ from __future__ import annotations
 
 from typing import Any
 
-# Fields that are considered PII and must never appear in logs.
-_PII_FIELDS = frozenset({"email", "display_name", "marketing_opt_in"})
+# Fields that must never appear in logs: personal data and consent (email,
+# display_name, marketing_opt_in) and the user's own welcome-question answers
+# (interests, attribution), which are owner-only too (#1908).
+_PII_FIELDS = frozenset({"email", "display_name", "marketing_opt_in", "interests", "attribution"})
 
 
 def scrub_profile(profile_dict: dict[str, Any]) -> dict[str, Any]:
-    """Return a copy of *profile_dict* with PII fields redacted.
+    """Return a copy of *profile_dict* with PII fields and profile answers redacted.
 
     Redacted fields are replaced with ``"<REDACTED>"`` so log consumers
     can see that a value *was* present without seeing the value itself.

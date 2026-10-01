@@ -12,9 +12,13 @@ Security (Issue #181, #1908):
   - Every profile field is owner-only. No field is public: display_name,
     email and marketing_opt_in are personal data/consent, and interests and
     attribution are the user's own answers to the welcome questions. Nothing
-    reads another wallet's profile, so a non-owner GET gets the same 404 as a
-    missing profile — no field subset and no existence signal.
-  - All log output routes through log_scrubber to prevent PII leakage.
+    reads another wallet's profile, so a non-owner GET is answered exactly
+    like a missing profile: the same 404 status, body and response headers
+    (only the measured X-Response-Time-Ms value varies), from the same branch
+    after the same lookups (the linked-wallet lookup runs before the profile
+    query, not only when a row exists). Timing is not otherwise equalized.
+  - All log output routes through log_scrubber to prevent PII leakage; it
+    redacts every profile answer, so logs carry only the wallet address.
 """
 
 from __future__ import annotations
@@ -83,25 +87,30 @@ async def get_profile(wallet: str, request: Request):
     legacy profile — the account whose verified linked wallet matches. Any
     other caller gets the same 404 as a wallet with no profile.
     """
+    # Ownership is the canonical account (legacy rows: the verified linked
+    # wallet), never a body/header address. Resolved before the profile query
+    # so a missing row and someone else's row do the same lookups.
+    user = get_current_user(request)
+    caller = _extract_linked_wallet(request)
     session: Session = get_session()
     try:
         wallet_lower = wallet.lower()
         profile = session.query(UserProfile).filter(UserProfile.wallet_address == wallet_lower).first()
-        if not profile:
-            raise HTTPException(status_code=404, detail=_PROFILE_NOT_FOUND)
-
-        # Ownership is the canonical account (legacy rows: the verified linked
-        # wallet), never a body/header address.
-        user = get_current_user(request)
-        caller = _extract_linked_wallet(request)
         is_owner = bool(
-            user
+            profile
+            and user
             and (
                 profile.owner_user_id == user.id or (profile.owner_user_id is None and caller == profile.wallet_address)
             )
         )
         if not is_owner:
-            logger.info("get_profile: wallet=%s denied to non-owner", sanitize_log_value(wallet_lower))
+            # One branch for "no row" and "not yours": same status, body and
+            # headers. The reason is for operators only, never the response.
+            logger.info(
+                "get_profile: wallet=%s not served reason=%s",
+                sanitize_log_value(wallet_lower),
+                "not_owner" if profile else "missing",
+            )
             raise HTTPException(status_code=404, detail=_PROFILE_NOT_FOUND)
 
         response = _profile_to_response(profile)
