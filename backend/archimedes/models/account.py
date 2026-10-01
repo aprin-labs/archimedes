@@ -129,6 +129,8 @@ class AuthAccount(Base):
     )
     access_token: Mapped[str | None] = mapped_column("accessToken", Text, nullable=True)
     refresh_token: Mapped[str | None] = mapped_column("refreshToken", Text, nullable=True)
+    # Always NULL (#1908): the auth service never stores the provider's ID
+    # token (auth/auth.js dropIdToken); revision 7d2f9a4c1e60 cleared old rows.
     id_token: Mapped[str | None] = mapped_column("idToken", Text, nullable=True)
     access_token_expires_at: Mapped[datetime | None] = mapped_column(
         "accessTokenExpiresAt", DateTime(timezone=True), nullable=True
