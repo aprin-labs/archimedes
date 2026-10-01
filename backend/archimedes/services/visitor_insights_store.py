@@ -12,7 +12,10 @@ records, per day, the distinct visitors broken down by:
     ``CloudFront-Is-*-Viewer`` headers (falling back to a User-Agent sniff).
 
 Distinct counts use Redis HyperLogLog keyed on the anonymous ``archimedes_vid``
-(no PII, no raw-id retention) — same privacy-friendly approach as the funnel.
+(no PII; an HLL keeps no raw id) — same privacy-friendly approach as the funnel.
+The one place a raw id is kept is the first-seen gate below: one marker key per
+visitor, which expires one cookie lifetime (180 days) after the visitor is first
+recorded (#1908).
 
 Population (issue #830): this is recorded from the **same JS-gated ``landed``
 beacon population the conversion funnel uses** — one source of truth for
@@ -29,7 +32,7 @@ Mirrors ``services/funnel_store.py`` / ``telemetry_store.py``: same
 swallows Redis errors; instrumentation never turns a request into a 5xx.
 
 Known caveat (Insights-page reconciliation follow-up, post-#854): the
-first-seen-only attribution gate below (``:attributed`` SADD) only prevents
+first-seen-only attribution gate below (``:attributed`` marker) only prevents
 NEW double-counting from the moment it shipped (2026-07-03). The
 ``:country:total:*`` / ``:device:total:*`` HyperLogLog keys are append-only —
 visits recorded before the gate existed (when every landed beacon re-bucketed
@@ -53,6 +56,8 @@ from datetime import UTC, datetime
 
 import redis.asyncio as aioredis
 
+from archimedes.api.funnel_middleware import _VID_TTL_SECONDS
+
 logger = logging.getLogger(__name__)
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -61,12 +66,34 @@ _PREFIX = "archimedes:visitors"
 # Day buckets self-expire after 90 days (trend history without unbounded growth).
 _DAY_TTL_SECONDS = 90 * 24 * 60 * 60
 
+# First-seen gate (#1908). One marker key per visitor, ``<prefix>:attributed:<vid>``,
+# set with SET NX EX. Its lifetime is the archimedes_vid cookie's: the middleware
+# mints that cookie once with this max-age and never refreshes it, and a visitor
+# can only be recorded after their cookie exists, so a marker that lives this long
+# from the first recording outlives every request that can still carry the id.
+# First-seen counting is unchanged; the id is just not kept after it can return.
+_ATTRIBUTION_TTL_SECONDS = _VID_TTL_SECONDS
+
+# The gate before #1908: one SET of every raw visitor id, with no TTL. It is no
+# longer written. During the transition it is still READ, so nobody it holds is
+# counted a second time, and the first post-deploy recording gives it a TTL of
+# one cookie lifetime (EXPIRE NX, so later calls never push it back). Every id in
+# it came from a cookie minted before this change, so none can arrive after that
+# TTL runs out: the key expires by itself and needs no migration step. After it
+# is gone, SISMEMBER/EXPIRE on a missing key are no-ops, and this read can be
+# deleted.
+_LEGACY_ATTRIBUTED_KEY = f"{_PREFIX}:attributed"
+
 DEVICE_CLASSES = ("mobile", "tablet", "desktop", "tv", "unknown")
 _UNKNOWN_COUNTRY = "ZZ"  # ISO 3166 user-assigned code — "unknown / not provided"
 
 
 def _today() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%d")
+
+
+def _marker_key(visitor_id: str) -> str:
+    return f"{_PREFIX}:attributed:{visitor_id}"
 
 
 def _norm_country(raw: str | None) -> str:
@@ -111,8 +138,7 @@ class VisitorInsightsStore:
         dev = device if device in DEVICE_CLASSES else "unknown"
         try:
             r = await self._get_redis()
-            first_seen = await r.sadd(f"{_PREFIX}:attributed", visitor_id)
-            if not first_seen:
+            if not await self._claim_first_seen(r, visitor_id):
                 return
             day = _today()
             country_day = f"{_PREFIX}:country:day:{day}:{cc}"
@@ -132,6 +158,21 @@ class VisitorInsightsStore:
             await pipe.execute()
         except Exception as exc:
             logger.debug("visitor insight record failed (%s/%s): %s", cc, dev, exc)
+
+    @staticmethod
+    async def _claim_first_seen(r: aioredis.Redis, visitor_id: str) -> bool:
+        """True exactly once per visitor id per cookie lifetime (#1908).
+
+        SET NX is atomic, so two concurrent beacons for the same new visitor
+        cannot both claim it. A claim alone is not enough while the pre-#1908
+        set still exists: an id already in it was attributed before the marker
+        scheme, so it is not first-seen.
+        """
+        claimed = await r.set(_marker_key(visitor_id), "1", nx=True, ex=_ATTRIBUTION_TTL_SECONDS)
+        if not claimed:
+            return False
+        await r.expire(_LEGACY_ATTRIBUTED_KEY, _ATTRIBUTION_TTL_SECONDS, nx=True)
+        return not await r.sismember(_LEGACY_ATTRIBUTED_KEY, visitor_id)
 
     # ─── Read (exposure path — GET /api/metrics/visitors) ────────────────
 
