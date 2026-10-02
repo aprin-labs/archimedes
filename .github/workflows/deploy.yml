@@ -195,7 +195,7 @@ env:
   # that raising it is a decision someone makes with the number in front of
   # them. Exceeding it is still red — this is a budget, not a mute button; the
   # error names the state so "slow" and "broken" stay distinguishable.
-  # Raising it past ~24 min also requires raising deploy-ecs's timeout-minutes
+  # Raising it past 22 min also requires raising deploy-ecs's timeout-minutes
   # (the poll step asserts that headroom and fails fast if it is gone).
   DEPLOY_ROLLOUT_BUDGET_SECONDS: 1200
 
@@ -685,7 +685,8 @@ jobs:
     # and the CloudFront invalidation wait — otherwise the job timeout silently
     # becomes the real budget and #1532 returns with a bigger number. 30 min
     # covers the 20-min default budget + the probe + the invalidation wait
-    # (+ the <=60s SPA render check after it, retries included) with margin.
+    # (+ Set up Node 22 and the <=60s SPA render check after it, retries
+    # included) with margin.
     # The probe is ~35s when the app is healthy and hard-caps its
     # own wall clock at MAX_TOTAL_SECONDS (300s, see
     # .github/scripts/post_rollout_probe.sh). That is a REAL ceiling, not a
@@ -857,20 +858,21 @@ jobs:
 
           # A budget larger than the job's own timeout is fiction: the outer
           # timeout would kill the job first, with no verdict — exactly #1532's
-          # bug wearing a bigger number. Reserve 7 min for the post-rollout
-          # probe + the CloudFront invalidation wait + the SPA render check
-          # that follow this step.
-          # The probe can consume at most MAX_TOTAL_SECONDS=300s of that 420s
-          # (a hard wall-clock ceiling, see .github/scripts/post_rollout_probe.sh)
-          # and the SPA render check at most 60s (.github/scripts/spa_render_check.mjs's
+          # bug wearing a bigger number. Reserve 8 min for the steps that
+          # follow this one: the post-rollout probe, the CloudFront invalidation
+          # wait, Set up Node 22 and the SPA render check.
+          # Of that 480s the probe can consume at most MAX_TOTAL_SECONDS=300s
+          # (a hard wall-clock ceiling, see .github/scripts/post_rollout_probe.sh),
+          # Set up Node 22 at most 60s (its timeout-minutes: 1) and the SPA
+          # render check at most 60s (.github/scripts/spa_render_check.mjs's
           # RENDER_CHECK_MAX_SECONDS, one wall-clock ceiling over both URLs,
           # all 3 attempts and both retry delays — its worst case, retries
           # included, is that 60s); the rest is the invalidation wait's, and
-          # tests assert those ceilings together stay strictly smaller than
+          # tests assert those three together stay strictly smaller than
           # this reserve.
           JOB_TIMEOUT_SECONDS=$(( DEPLOY_JOB_TIMEOUT_MINUTES * 60 ))
-          if [ "$BUDGET" -gt $(( JOB_TIMEOUT_SECONDS - 420 )) ]; then
-            echo "::error::DEPLOY_ROLLOUT_BUDGET_SECONDS=${BUDGET}s leaves under 7 minutes of the deploy-ecs job's ${DEPLOY_JOB_TIMEOUT_MINUTES}-minute timeout for the answer probe and the CloudFront invalidation. Raise timeout-minutes on the deploy-ecs job (and DEPLOY_JOB_TIMEOUT_MINUTES here) alongside the budget."
+          if [ "$BUDGET" -gt $(( JOB_TIMEOUT_SECONDS - 480 )) ]; then
+            echo "::error::DEPLOY_ROLLOUT_BUDGET_SECONDS=${BUDGET}s leaves under 8 minutes of the deploy-ecs job's ${DEPLOY_JOB_TIMEOUT_MINUTES}-minute timeout for the answer probe, the CloudFront invalidation and the SPA render check. Raise timeout-minutes on the deploy-ecs job (and DEPLOY_JOB_TIMEOUT_MINUTES here) alongside the budget."
             exit 1
           fi
 
@@ -1149,8 +1151,11 @@ jobs:
           fi
 
       - name: Set up Node 22 (for the post-rollout render check)
+        # Bounded: it runs inside the tail reserve the poll step holds back,
+        # and the arithmetic there counts this timeout as its worst case.
         if: ${{ !cancelled() && steps.rollout.outputs.rollout == 'completed' }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        timeout-minutes: 1
         with:
           node-version: "22"
 

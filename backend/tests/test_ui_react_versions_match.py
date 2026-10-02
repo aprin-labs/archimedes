@@ -128,6 +128,13 @@ def test_ui_ships_react_and_react_dom_at_the_same_version() -> None:
 
 # ── Dependabot: the four must land in ONE group, for every kind of bump ──
 #
+# Group assignment is all a config controls. For version updates it puts the
+# four in one PR. A security update bumps only the packages an advisory names,
+# so an advisory on react alone opens a react-only PR whatever the groups say
+# (#1872's shape). test_ui_ships_react_and_react_dom_at_the_same_version fails
+# that PR's CI, and if it is merged anyway deploy.yml's render gate fails the
+# build before the image is pushed.
+#
 # A model of Dependabot's documented assignment rules (docs.github.com, "Optimizing
 # PR creation for Dependabot version updates" and the dependabot.yml reference),
 # limited to the keys that can split the four:
@@ -180,7 +187,7 @@ def _allowed(update: dict, package: str, dep_type: str) -> bool:
 
 
 def react_grouping_problems(config: dict, dep_types: dict[str, str]) -> list[str]:
-    """Every way ``dependabot.yml`` can open a PR that moves some of the four but not all."""
+    """Every way ``dependabot.yml`` itself assigns the four to different PRs (see the note above)."""
     ui = [
         u
         for u in config.get("updates", [])
@@ -213,8 +220,13 @@ def _ui_dep_types() -> dict[str, str]:
     return types
 
 
-def test_dependabot_bumps_the_four_react_packages_in_one_pr() -> None:
-    """The upstream half: #1872 was a Dependabot PR that moved react alone."""
+def test_dependabot_puts_the_four_react_packages_in_one_group() -> None:
+    """The upstream half: #1872 was a Dependabot PR that moved react alone.
+
+    For version updates the group puts the four in one PR. For security
+    updates it cannot (see the note above), so there this test is not the
+    whole guard.
+    """
     config = yaml.safe_load(DEPENDABOT_YML.read_text(encoding="utf-8"))
     dep_types = _ui_dep_types()
     assert dep_types == {

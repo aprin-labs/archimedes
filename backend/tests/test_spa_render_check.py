@@ -10,7 +10,8 @@ index.html whether or not the bundle can start.
 
 These tests run THE EXACT SCRIPT CI RUNS against a local HTTP server, so the
 property under test is fail-closed rendering: a page that throws at startup,
-never mounts, mounts and then throws, shows the ErrorBoundary crash card,
+never mounts, mounts and then throws, crashes when a lazy chunk or an API
+response arrives after the first paint, shows the ErrorBoundary crash card,
 logs a React render error, or answers 4xx/5xx is red; a page that mounts,
 even after ``load``, is green. Retries are pinned from both sides: a
 transport-only failure is retried into green, an app failure never is, and
@@ -114,11 +115,41 @@ PAGES: dict[str, tuple[int, str]] = {
         "import('/slow-chunk.js').then((m) => m.render());</script>",
     ),
     "/blank-missing-script": (200, '<div id="root"></div><script type="module" src="/no-such-chunk.js"></script>'),
+    # The app paints, then an API response arrives (slower than the tests'
+    # SETTLE_MS, after the last script) and rendering it crashes: once over
+    # fetch, once over XHR.
+    "/api-response-crashes-fetch": (
+        200,
+        f'<div id="root"></div><script type="module">{_MOUNT} '
+        f"fetch('/slow-api').then((r) => r.json()).then(() => {{ {_SHOW_CRASH_CARD} }});</script>",
+    ),
+    "/api-response-crashes-xhr": (
+        200,
+        f'<div id="root"></div><script type="module">{_MOUNT} '
+        "const xhr = new XMLHttpRequest(); xhr.open('GET', '/slow-api'); "
+        f"xhr.onload = () => {{ {_SHOW_CRASH_CARD} }}; xhr.send();</script>",
+    ),
+    # The healthy twin: the same slow response, rendered.
+    "/api-response-renders": (
+        200,
+        '<div id="root"></div><script type="module">'
+        "document.getElementById('root').innerHTML = '<main>Loading strategies...</main>';"
+        "fetch('/slow-api').then((r) => r.json()).then((d) => { document.getElementById('root').innerHTML = "
+        "'<main><h1>Strategies</h1><p>' + d.rows.join(', ') + '</p></main>'; });</script>",
+    ),
+    # A request that never answers (a long poll, a stuck API call).
+    "/api-never-answers": (
+        200,
+        f'<div id="root"></div><script type="module">{_MOUNT} fetch(\'/hanging-api\');</script>',
+    ),
 }
 
 _ERROR_PAGE = "<h1>502 Bad Gateway</h1><p>CloudFront could not reach the origin.</p>"
+_SLOW_API_ROWS = ["alpha", "beta", "gamma"]
 _hits: Counter[str] = Counter()
 _hits_lock = threading.Lock()
+# /hanging-api answers only when the server shuts down.
+_release_hanging_requests = threading.Event()
 
 
 def _hit(key: str) -> int:
@@ -144,6 +175,15 @@ class _Pages(BaseHTTPRequestHandler):
         if url.path == "/slow-chunk.js":
             time.sleep(1.5)  # longer than the tests' SETTLE_MS of 0.8s
             self._send(200, f"export function render() {{ {_SHOW_CRASH_CARD} }}", "text/javascript")
+        elif url.path == "/slow-api":
+            time.sleep(1.5)  # longer than the tests' SETTLE_MS of 0.8s
+            self._send(200, json.dumps({"rows": _SLOW_API_ROWS}), "application/json")
+        elif url.path == "/hanging-api":
+            _release_hanging_requests.wait(timeout=60)
+            try:
+                self._send(200, "{}", "application/json")
+            except OSError:
+                pass  # the browser context that asked is long gone
         elif url.path == "/flaky":
             # The first `fail` loads of this id fail in `mode`, later loads
             # are a healthy page: a transient edge fault, or a flaky app.
@@ -214,6 +254,7 @@ def base_url() -> Iterator[str]:
     try:
         yield f"http://127.0.0.1:{server.server_address[1]}"
     finally:
+        _release_hanging_requests.set()
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
@@ -348,6 +389,33 @@ class TestCrashedApp:
 
 
 @needs_browser
+class TestSettleWaitsForRequests:
+    """The verdict waits for scripts AND fetch/XHR, up to MOUNT_MS after the first paint."""
+
+    @pytest.mark.parametrize("via", ["fetch", "xhr"])
+    def test_a_crash_on_an_api_response_after_the_first_paint_is_red(self, base_url: str, via: str) -> None:
+        """The response lands 1.5s after the last script, past SETTLE_MS (0.8s)."""
+        proc = run_check(f"{base_url}/api-response-crashes-{via}")
+        assert proc.returncode == 1, _log(proc)
+        assert any("error-boundary fallback is showing" in e for e in _errors(proc)), _log(proc)
+
+    def test_a_slow_api_response_that_renders_is_green_and_judged_after_it_lands(self, base_url: str) -> None:
+        proc = run_check(f"{base_url}/api-response-renders")
+        assert proc.returncode == 0, _log(proc)
+        landed = len("Strategies") + len(", ".join(_SLOW_API_ROWS))
+        assert f"#root has 1 child element(s), {landed} chars of text" in proc.stdout, _log(proc)
+
+    def test_a_request_that_never_answers_is_judged_mount_ms_after_the_first_paint(self, base_url: str) -> None:
+        """The wait is bounded: a long poll cannot hold the verdict past MOUNT_MS."""
+        started = time.monotonic()
+        proc = run_check(f"{base_url}/api-never-answers", RENDER_CHECK_MOUNT_MS="2500")
+        elapsed = time.monotonic() - started
+        assert proc.returncode == 0, _log(proc)
+        assert not _release_hanging_requests.is_set()
+        assert elapsed < 2.5 + 7, f"took {elapsed:.1f}s with MOUNT_MS=2.5s{_log(proc)}"
+
+
+@needs_browser
 class TestRetries:
     """Only a transport-level failure is retried, and only inside the ceiling."""
 
@@ -461,11 +529,29 @@ PRE_PUSH_RUN = "node .github/scripts/spa_render_check.mjs http://localhost:18080
 POST_ROLLOUT_RUN = (
     "node .github/scripts/spa_render_check.mjs https://archimedes-arc.com/ https://archimedes-arc.com/app"
 )
+# The exact `env:` each render step may carry. A setting weakens the gate
+# without touching the run line (RENDER_CHECK_SETTLE_MS: "0" judges a page
+# before a lazy chunk or an API response can crash it; a 60s retry delay
+# leaves no room in the ceiling for the retries), so keys AND values are pinned.
+PRE_PUSH_ENV: dict[str, str] = {}
+POST_ROLLOUT_ENV = {"RENDER_CHECK_ATTEMPTS": "3"}
+# Every setting the script reads with a numeric default.
+RENDER_CHECK_SETTINGS = (
+    "RENDER_CHECK_MAX_SECONDS",
+    "RENDER_CHECK_ATTEMPTS",
+    "RENDER_CHECK_RETRY_DELAY_MS",
+    "RENDER_CHECK_NAV_MS",
+    "RENDER_CHECK_MOUNT_MS",
+    "RENDER_CHECK_SETTLE_MS",
+)
+
+
+def _workflow(text: str | None = None) -> dict:
+    return yaml.safe_load(text if text is not None else DEPLOY_YML.read_text(encoding="utf-8"))
 
 
 def _steps(job: str, text: str | None = None) -> list[dict]:
-    workflow = yaml.safe_load(text if text is not None else DEPLOY_YML.read_text(encoding="utf-8"))
-    return workflow["jobs"][job]["steps"]
+    return _workflow(text)["jobs"][job]["steps"]
 
 
 def _index(steps: list[dict], predicate: Callable[[dict], bool]) -> int:
@@ -499,7 +585,7 @@ def _setup_node_22(step: dict) -> bool:
 _SWALLOWS_EXIT_CODE = re.compile(r"\|\||;|&|\bexit\s+0\b|\bset\s+\+e\b|\|")
 
 
-def gate_problems(step: dict, expected_run: str) -> list[str]:
+def gate_problems(step: dict, expected_run: str, expected_env: dict[str, str]) -> list[str]:
     """Every way a render-check step can stop failing the job on a blank page."""
     problems: list[str] = []
     run = str(step.get("run", ""))
@@ -507,6 +593,9 @@ def gate_problems(step: dict, expected_run: str) -> list[str]:
         problems.append(f"run line can swallow the check's exit code: {run!r}")
     if run.strip() != expected_run:
         problems.append(f"run is {run.strip()!r}, expected exactly {expected_run!r}")
+    env = {str(key): str(value) for key, value in (step.get("env") or {}).items()}
+    if env != expected_env:
+        problems.append(f"env is {env!r}, expected exactly {expected_env!r}")
     if step.get("continue-on-error") not in (None, False):
         problems.append(f"continue-on-error: {step['continue-on-error']!r} makes a red check a green step")
     if "shell" in step:
@@ -520,9 +609,54 @@ def _script_default(name: str) -> int:
     return int(match.group(1))
 
 
-def _ceiling_s(step: dict) -> float:
-    """The step's real worst case: the script's one ceiling, or its override."""
-    return float(step.get("env", {}).get("RENDER_CHECK_MAX_SECONDS", _script_default("RENDER_CHECK_MAX_SECONDS")))
+def effective_settings(job: str, step: dict, text: str | None = None) -> dict[str, float]:
+    """What the script runs with in this step: its defaults, then workflow, job and step env."""
+    workflow = _workflow(text)
+    settings = {name: float(_script_default(name)) for name in RENDER_CHECK_SETTINGS}
+    for env in (workflow.get("env"), workflow["jobs"][job].get("env"), step.get("env")):
+        for name, value in (env or {}).items():
+            if name in settings:
+                settings[name] = float(value)
+    return settings
+
+
+def tail_reserve_problems(text: str | None = None) -> list[str]:
+    """What the steps after the rollout poll can take, against the reserve it holds back.
+
+    After the poll: the answer probe, the CloudFront invalidation, Set up Node
+    22 and the render smoke. The probe and the render check each hard-cap
+    their own wall clock and Set up Node 22 has a step timeout; what is left
+    of the reserve is the invalidation wait's.
+    """
+    workflow_text = text if text is not None else DEPLOY_YML.read_text(encoding="utf-8")
+    reserve_s = int(re.search(r"JOB_TIMEOUT_SECONDS - (\d+)", workflow_text).group(1))
+    probe_ceiling_s = int(
+        re.search(r'MAX_TOTAL_SECONDS="\$\{MAX_TOTAL_SECONDS:-(\d+)\}"', PROBE_SH.read_text()).group(1)
+    )
+    steps, smoke = _gate_step("deploy-ecs", "https://archimedes-arc.com/", _steps("deploy-ecs", workflow_text))
+    settings = effective_settings("deploy-ecs", steps[smoke], workflow_text)
+    problems: list[str] = []
+    # The render step's worst case is its RENDER_CHECK_MAX_SECONDS: the script
+    # runs every URL, attempt and retry delay inside that one wall clock
+    # (TestRetries pins it behaviourally). Retries that cannot fit in it are
+    # fiction: every URL x (an instant 5xx + the delay) must.
+    render_worst_case_s = settings["RENDER_CHECK_MAX_SECONDS"]
+    urls = len(str(steps[smoke]["run"]).split()) - 2
+    retry_delays_s = urls * (settings["RENDER_CHECK_ATTEMPTS"] - 1) * settings["RENDER_CHECK_RETRY_DELAY_MS"] / 1000
+    if retry_delays_s >= render_worst_case_s:
+        problems.append(f"{retry_delays_s:g}s of retry delays do not fit in the {render_worst_case_s:g}s ceiling")
+    setup_node = steps[smoke - 1]
+    if not _setup_node_22(setup_node) or "timeout-minutes" not in setup_node:
+        problems.append("the step before the smoke must be Set up Node 22 with a timeout-minutes")
+        return problems
+    setup_node_worst_case_s = setup_node["timeout-minutes"] * 60
+    tail_s = probe_ceiling_s + setup_node_worst_case_s + render_worst_case_s
+    if tail_s >= reserve_s:
+        problems.append(
+            f"probe {probe_ceiling_s}s + Set up Node 22 {setup_node_worst_case_s}s + render check "
+            f"{render_worst_case_s:g}s = {tail_s:g}s leaves nothing of the {reserve_s}s reserve"
+        )
+    return problems
 
 
 class TestWorkflowWiring:
@@ -539,7 +673,7 @@ class TestWorkflowWiring:
         assert pushes and gate < min(pushes), "a blank SPA must never reach ECR"
         assert _setup_node_22(steps[gate - 1]), "the script needs Node >= 22 for its global WebSocket"
         assert "if" not in steps[gate], "the gate must not be skippable"
-        assert gate_problems(steps[gate], PRE_PUSH_RUN) == []
+        assert gate_problems(steps[gate], PRE_PUSH_RUN, PRE_PUSH_ENV) == []
 
     def test_the_post_rollout_smoke_loads_both_routes_of_prod_after_the_cache_purge(self) -> None:
         steps, smoke = _gate_step("deploy-ecs", "https://archimedes-arc.com/")
@@ -548,40 +682,35 @@ class TestWorkflowWiring:
         assert steps[smoke]["if"] == steps[invalidate]["if"], "runs exactly when the new content is live"
         assert _setup_node_22(steps[smoke - 1])
         assert steps[smoke - 1]["if"] == steps[smoke]["if"]
-        assert gate_problems(steps[smoke], POST_ROLLOUT_RUN) == []
+        assert gate_problems(steps[smoke], POST_ROLLOUT_RUN, POST_ROLLOUT_ENV) == []
+
+    def test_nothing_else_sets_a_render_check_setting(self) -> None:
+        """Workflow env, job env, or another step (an export, a write to $GITHUB_ENV)."""
+        workflow = _workflow()
+        found = [f"workflow env: {k}" for k in workflow.get("env") or {} if k.startswith("RENDER_CHECK_")]
+        for job_name, job in workflow["jobs"].items():
+            found += [f"{job_name} env: {k}" for k in job.get("env") or {} if k.startswith("RENDER_CHECK_")]
+            for step in job.get("steps", []):
+                if not _runs_the_script(step) and "RENDER_CHECK_" in f"{step.get('run', '')} {step.get('env', '')}":
+                    found.append(f"{job_name} step {step.get('name', step.get('uses'))!r}")
+        assert found == []
 
     def test_only_the_post_rollout_smoke_retries(self) -> None:
         """Through CloudFront a 5xx can be a blip; from nginx-validate it is the image."""
-        _, smoke = _gate_step("deploy-ecs", "https://archimedes-arc.com/")
-        assert _steps("deploy-ecs")[smoke]["env"]["RENDER_CHECK_ATTEMPTS"] == "3"
+        steps, smoke = _gate_step("deploy-ecs", "https://archimedes-arc.com/")
+        assert effective_settings("deploy-ecs", steps[smoke])["RENDER_CHECK_ATTEMPTS"] == 3
         steps, gate = _gate_step("build-and-push", "http://localhost:18080/")
-        assert "RENDER_CHECK_ATTEMPTS" not in steps[gate].get("env", {})
-        assert _script_default("RENDER_CHECK_ATTEMPTS") == 1
+        assert effective_settings("build-and-push", steps[gate])["RENDER_CHECK_ATTEMPTS"] == 1
 
     def test_step_timeouts_are_only_a_backstop_for_the_scripts_own_ceiling(self) -> None:
         for job, url in (("build-and-push", "http://localhost:18080/"), ("deploy-ecs", "https://archimedes-arc.com/")):
             steps, i = _gate_step(job, url)
-            assert steps[i]["timeout-minutes"] * 60 > _ceiling_s(steps[i]), (job, steps[i]["timeout-minutes"])
+            ceiling_s = effective_settings(job, steps[i])["RENDER_CHECK_MAX_SECONDS"]
+            assert steps[i]["timeout-minutes"] * 60 > ceiling_s, (job, steps[i]["timeout-minutes"])
 
     def test_probe_and_render_ceilings_fit_the_tail_reserve(self) -> None:
-        """The poll step holds back a reserve for everything after the rollout.
-
-        The render step's worst case is its RENDER_CHECK_MAX_SECONDS: the
-        script runs both URLs, all attempts and every retry delay inside that
-        one wall clock (TestRetries pins it behaviourally).
-        """
-        workflow_text = DEPLOY_YML.read_text(encoding="utf-8")
-        reserve_s = int(re.search(r"JOB_TIMEOUT_SECONDS - (\d+)", workflow_text).group(1))
-        probe_ceiling_s = int(
-            re.search(r'MAX_TOTAL_SECONDS="\$\{MAX_TOTAL_SECONDS:-(\d+)\}"', PROBE_SH.read_text()).group(1)
-        )
-        steps, smoke = _gate_step("deploy-ecs", "https://archimedes-arc.com/")
-        render_worst_case_s = _ceiling_s(steps[smoke])
-        attempts = int(steps[smoke]["env"]["RENDER_CHECK_ATTEMPTS"])
-        # Even with a ceiling, a run must be ABLE to finish its retries in it,
-        # or the retries are fiction: two URLs x (an instant 5xx + the delay).
-        assert 2 * (attempts - 1) * _script_default("RENDER_CHECK_RETRY_DELAY_MS") / 1000 < render_worst_case_s
-        assert probe_ceiling_s + render_worst_case_s < reserve_s
+        """The poll step holds back a reserve for everything after the rollout."""
+        assert tail_reserve_problems() == []
 
     def test_the_crash_marker_and_log_prefix_are_the_ones_error_boundary_jsx_emits(self) -> None:
         script = SCRIPT.read_text(encoding="utf-8")
@@ -596,7 +725,7 @@ class TestWorkflowWiring:
 
 
 class TestTheWiringCheckRejects:
-    """gate_problems, fed the ways a gate gets quietly made advisory."""
+    """gate_problems and tail_reserve_problems, fed the ways a gate gets quietly weakened."""
 
     @pytest.mark.parametrize(
         "mutation",
@@ -627,7 +756,7 @@ class TestTheWiringCheckRejects:
     )
     def test_each_advisory_shape_is_named(self, mutation: dict) -> None:
         steps, gate = _gate_step("build-and-push", "http://localhost:18080/")
-        assert gate_problems({**steps[gate], **mutation}, PRE_PUSH_RUN), mutation
+        assert gate_problems({**steps[gate], **mutation}, PRE_PUSH_RUN, PRE_PUSH_ENV), mutation
 
     def test_the_real_pre_push_text_with_or_true_appended_is_rejected(self) -> None:
         text = DEPLOY_YML.read_text(encoding="utf-8").replace(
@@ -635,4 +764,77 @@ class TestTheWiringCheckRejects:
         )
         assert text != DEPLOY_YML.read_text(encoding="utf-8"), "the pre-push run line moved; update this test"
         steps, gate = _gate_step("build-and-push", "http://localhost:18080/", _steps("build-and-push", text))
-        assert gate_problems(steps[gate], PRE_PUSH_RUN)
+        assert gate_problems(steps[gate], PRE_PUSH_RUN, PRE_PUSH_ENV)
+
+    @pytest.mark.parametrize(
+        ("job", "url", "expected_run", "expected_env", "env"),
+        [
+            ("build-and-push", "http://localhost:18080/", PRE_PUSH_RUN, PRE_PUSH_ENV, {"RENDER_CHECK_SETTLE_MS": "0"}),
+            ("build-and-push", "http://localhost:18080/", PRE_PUSH_RUN, PRE_PUSH_ENV, {"RENDER_CHECK_ATTEMPTS": "3"}),
+            (
+                "deploy-ecs",
+                "https://archimedes-arc.com/",
+                POST_ROLLOUT_RUN,
+                POST_ROLLOUT_ENV,
+                {**POST_ROLLOUT_ENV, "RENDER_CHECK_SETTLE_MS": "0"},
+            ),
+            (
+                "deploy-ecs",
+                "https://archimedes-arc.com/",
+                POST_ROLLOUT_RUN,
+                POST_ROLLOUT_ENV,
+                {**POST_ROLLOUT_ENV, "RENDER_CHECK_RETRY_DELAY_MS": "60000"},
+            ),
+            ("deploy-ecs", "https://archimedes-arc.com/", POST_ROLLOUT_RUN, POST_ROLLOUT_ENV, {}),
+        ],
+        ids=["pre-push-settle-0", "pre-push-retries", "post-rollout-settle-0", "post-rollout-60s-delay", "no-retries"],
+    )
+    def test_any_env_but_the_pinned_one_is_named(
+        self, job: str, url: str, expected_run: str, expected_env: dict[str, str], env: dict[str, str]
+    ) -> None:
+        steps, i = _gate_step(job, url)
+        assert gate_problems({**steps[i], "env": env}, expected_run, expected_env), env
+
+    @pytest.mark.parametrize(
+        ("old", "new"),
+        [
+            # A retry delay the ceiling cannot hold: 2 URLs x 2 retries x 60s.
+            (
+                '          RENDER_CHECK_ATTEMPTS: "3"\n',
+                '          RENDER_CHECK_ATTEMPTS: "3"\n          RENDER_CHECK_RETRY_DELAY_MS: "60000"\n',
+            ),
+            # A ceiling the reserve cannot hold.
+            (
+                '          RENDER_CHECK_ATTEMPTS: "3"\n',
+                '          RENDER_CHECK_ATTEMPTS: "3"\n          RENDER_CHECK_MAX_SECONDS: "200"\n',
+            ),
+            # The same, set for the whole workflow instead of the step.
+            (
+                "  DEPLOY_ROLLOUT_BUDGET_SECONDS: 1200\n",
+                '  DEPLOY_ROLLOUT_BUDGET_SECONDS: 1200\n  RENDER_CHECK_MAX_SECONDS: "200"\n',
+            ),
+            # Set up Node 22 unbounded, or bounded past what the reserve holds.
+            (
+                "        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0\n"
+                "        timeout-minutes: 1\n",
+                "        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0\n",
+            ),
+            (
+                "        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0\n"
+                "        timeout-minutes: 1\n",
+                "        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0\n"
+                "        timeout-minutes: 3\n",
+            ),
+        ],
+        ids=[
+            "retry-delay-60s",
+            "step-ceiling-200s",
+            "workflow-ceiling-200s",
+            "setup-node-unbounded",
+            "setup-node-3-min",
+        ],
+    )
+    def test_the_real_tail_with_a_ceiling_it_cannot_hold_is_rejected(self, old: str, new: str) -> None:
+        real = DEPLOY_YML.read_text(encoding="utf-8")
+        assert real.count(old) == 1, f"{old!r} moved; update this test"
+        assert tail_reserve_problems(real.replace(old, new)), new

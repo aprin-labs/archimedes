@@ -59,10 +59,14 @@
 //   RENDER_CHECK_NAV_MS          how long the document request may take before the
 //                                attempt counts as a navigation failure (default 15000)
 //   RENDER_CHECK_MOUNT_MS        how long after `load` #root may stay empty before
-//                                the page counts as blank (default 15000)
+//                                the page counts as blank; also how long after #root
+//                                first has children the wait below may last at most,
+//                                so a request that never finishes (a long poll, a stuck
+//                                API call) cannot hold the verdict (default 15000)
 //   RENDER_CHECK_SETTLE_MS       how long to keep listening for startup errors after
 //                                #root first has children, the page has loaded and no
-//                                script is in flight (lazy route chunks) (default 2000)
+//                                script, fetch or XHR is in flight (a lazy route chunk,
+//                                an API response the app renders) (default 2000)
 
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
@@ -293,10 +297,13 @@ async function loadOnce(target) {
   const renderErrors = [];
   const otherConsoleErrors = [];
   const scriptsInFlight = new Map();
+  // fetch/XHR: an API response the app renders can crash it after the last
+  // script has loaded, so the settle wait below covers these too.
+  const callsInFlight = new Set();
   const scriptFailures = [];
   let documentStatus = null;
   let loadedAt = null;
-  let lastScriptActivity = 0;
+  let lastRequestActivity = 0;
 
   const listener = (msg) => {
     if (msg.sessionId !== sessionId) return;
@@ -317,7 +324,10 @@ async function loadOnce(target) {
       case 'Network.requestWillBeSent':
         if (p.type === 'Script') {
           scriptsInFlight.set(p.requestId, p.request.url);
-          lastScriptActivity = Date.now();
+          lastRequestActivity = Date.now();
+        } else if (p.type === 'Fetch' || p.type === 'XHR') {
+          callsInFlight.add(p.requestId);
+          lastRequestActivity = Date.now();
         }
         break;
       case 'Network.responseReceived':
@@ -333,7 +343,9 @@ async function loadOnce(target) {
             scriptFailures.push({ url: scriptsInFlight.get(p.requestId), why: p.errorText, status: null });
           }
           scriptsInFlight.delete(p.requestId);
-          lastScriptActivity = Date.now();
+          lastRequestActivity = Date.now();
+        } else if (callsInFlight.delete(p.requestId)) {
+          lastRequestActivity = Date.now();
         }
         break;
       default:
@@ -362,12 +374,14 @@ async function loadOnce(target) {
     const committedAt = Date.now();
 
     // React mounts after the module graph evaluates, which can be after
-    // `load`, and a lazy route chunk (AuthenticatedApp on /app) renders after
-    // the first paint. Poll until #root has children, `load` has fired and no
-    // script has been in flight for SETTLE_MS, so an error thrown by the
-    // first paint or by a lazy chunk still counts. A crash card ends the wait
-    // at once. A page whose #root is still empty MOUNT_MS after load is blank;
-    // one still empty SETTLE_MS after an uncaught error will not recover.
+    // `load`, and a lazy route chunk (AuthenticatedApp on /app) or an API
+    // response renders after the first paint. Poll until #root has children,
+    // `load` has fired and no script, fetch or XHR has been in flight for
+    // SETTLE_MS, so an error thrown by the first paint, by a lazy chunk or by
+    // rendering an API response still counts. The wait ends MOUNT_MS after
+    // the first paint at the latest, and a crash card ends it at once. A page
+    // whose #root is still empty MOUNT_MS after load is blank; one still
+    // empty SETTLE_MS after an uncaught error will not recover.
     let root; // assigned by the first probe; the loop always runs at least once
     let renderedAt = null;
     for (;;) {
@@ -378,9 +392,11 @@ async function loadOnce(target) {
       if (root.crashed) break;
       if (root.children > 0 && renderedAt === null) renderedAt = now;
       if (renderedAt !== null) {
-        const quietSince = Math.max(renderedAt, loadedAt ?? Infinity, lastScriptActivity);
-        if (scriptsInFlight.size === 0 && now - quietSince >= SETTLE_MS) break;
-        // Scripts that never stop loading: judge what is on screen.
+        const quietSince = Math.max(renderedAt, loadedAt ?? Infinity, lastRequestActivity);
+        const idle = scriptsInFlight.size === 0 && callsInFlight.size === 0;
+        if (idle && now - quietSince >= SETTLE_MS) break;
+        // Requests that never stop (a long poll, a stuck call): judge what is
+        // on screen.
         if (now - renderedAt >= MOUNT_MS) break;
       } else {
         if (now - since >= MOUNT_MS) break;
