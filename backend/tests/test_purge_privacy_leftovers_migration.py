@@ -18,6 +18,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import types
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -318,3 +319,102 @@ def test_count_script_reports_a_missing_chat_table_as_absent(tmp_path):
 
     assert counts["chat_messages_rows"] == "absent"
     assert counts["identity_events_siwe_vid_pairs_in_window"] == "3"
+
+
+# ─── The count script's read-only guards ────────────────────────────────────
+#
+# The tests above check that the database is unchanged after the script runs.
+# A write the script rolls back would pass them too. These check that the
+# DATABASE refuses a write on the script's connection: remove ``PRAGMA
+# query_only = ON`` or ``SET TRANSACTION READ ONLY`` (or move either after the
+# first query) and the matching test below fails.
+
+_WRITE_ATTEMPT = "UPDATE identity_events SET vid = NULL WHERE vid IS NOT NULL"
+
+
+def test_count_script_sqlite_connection_refuses_a_write_before_every_query(tmp_path):
+    """Attempt a real write on the script's own DBAPI connection immediately
+    before each of its SELECTs. ``PRAGMA query_only`` must make SQLite refuse
+    every one of them. Without the guard the write succeeds, and the script's
+    closing rollback then undoes it, so the dump check in
+    ``test_count_script_reports_the_counts_and_writes_nothing`` cannot see the
+    difference. That is why this test exists."""
+    import sqlalchemy as sa
+    from archimedes.scripts.count_privacy_leftovers import count_leftovers
+
+    db_path, _url = _prepared(tmp_path, "readonly.db")
+    before = _dump(db_path)
+    engine = sa.create_engine(f"sqlite:///{db_path}")
+    outcomes: list[str] = []
+
+    @sa.event.listens_for(engine, "before_cursor_execute")
+    def _try_to_write(_conn, cursor, statement, _params, _context, _executemany):
+        if not statement.lstrip().upper().startswith("SELECT"):
+            return
+        try:
+            cursor.connection.execute(_WRITE_ATTEMPT)
+        except sqlite3.OperationalError as exc:
+            outcomes.append(f"refused: {exc}")
+        else:
+            outcomes.append("ACCEPTED")
+
+    try:
+        counts = count_leftovers(engine)
+    finally:
+        engine.dispose()
+
+    assert len(outcomes) == 3, f"expected one write attempt per SELECT, got {outcomes}"
+    assert outcomes == ["refused: attempt to write a readonly database"] * 3, (
+        f"a write through the count script's connection was not refused: {outcomes}"
+    )
+    # An accepted write would have nulled the vids before the first count read them.
+    assert counts["identity_events_siwe_vid_pairs_in_window"] == 3
+    assert _dump(db_path) == before
+
+
+class _RecordingPostgresConnection:
+    """Enough of a SQLAlchemy ``Connection`` for ``count_leftovers``' Postgres
+    branch: it records every statement, commit and rollback in order. The suite
+    has no Postgres server, so this asserts the guard's ORDER (Postgres only
+    accepts ``SET TRANSACTION`` before the transaction's first query, and from
+    then on refuses writes in it) rather than a live refusal."""
+
+    dialect = types.SimpleNamespace(name="postgresql")
+
+    def __init__(self, log: list[str]) -> None:
+        self._log = log
+
+    def __enter__(self) -> _RecordingPostgresConnection:
+        return self
+
+    def __exit__(self, *_exc) -> bool:
+        self._log.append("<close>")
+        return False
+
+    def execute(self, clause):
+        self._log.append(" ".join(str(clause).split()))
+        return types.SimpleNamespace(scalar_one=lambda: 0)
+
+    def commit(self) -> None:
+        self._log.append("<commit>")
+
+    def rollback(self) -> None:
+        self._log.append("<rollback>")
+
+
+def test_count_script_opens_its_postgres_transaction_read_only_before_any_query(monkeypatch):
+    import sqlalchemy as sa
+    from archimedes.scripts.count_privacy_leftovers import count_leftovers
+
+    log: list[str] = []
+    engine = types.SimpleNamespace(connect=lambda: _RecordingPostgresConnection(log))
+    # ``has_table`` is the one call that needs a live inspector; answer it here.
+    monkeypatch.setattr(sa, "inspect", lambda _conn: types.SimpleNamespace(has_table=lambda _name: True))
+
+    count_leftovers(engine)
+
+    assert log[0] == "SET TRANSACTION READ ONLY", f"the first statement must open the transaction read-only: {log}"
+    queries = log[1 : log.index("<rollback>")]
+    assert len(queries) == 3 and all(q.startswith("SELECT COUNT(*) FROM ") for q in queries), log
+    assert "<commit>" not in log, f"the read-only transaction must be rolled back, never committed: {log}"
+    assert log[-2:] == ["<rollback>", "<close>"], log

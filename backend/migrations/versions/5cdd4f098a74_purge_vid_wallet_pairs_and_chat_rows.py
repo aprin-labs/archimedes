@@ -52,10 +52,16 @@ writes ``chat_messages`` rows. This revision deletes every row.
 The TABLE is kept, on purpose. ``ChatMessage`` is still mapped in
 ``models/chat.py``, so the SQLite ``create_all()`` path would recreate it.
 ``init_db()`` still issues ``ALTER TABLE chat_messages ADD COLUMN IF NOT
-EXISTS verified`` on Postgres at boot and from request paths; against a
-dropped table that statement would fail, as a logged WARNING, on every call. A drop belongs in a change that
-removes the mapping and that patch in the same PR. A downgrade of a drop
-could only recreate an empty table, so it would not be a true reversal.
+EXISTS verified`` on Postgres. No request handler calls ``init_db()`` on
+main: the comment above ``main.py``'s call records that the request-handler
+calls were removed on 2026-09-03. The web process runs it at boot, once from
+``main.py`` at import and again from the lifespan's request-path warmup (on
+by default) before uvicorn listens, and batch scripts such as
+``scripts/run_paper_marks.py`` call it too. Against a dropped table that
+statement would fail, as a logged WARNING, on each of those calls. A drop
+belongs in a change that removes the mapping and that patch in the same PR.
+A downgrade of a drop could only recreate an empty table, so it would not be
+a true reversal.
 
 IDEMPOTENT. The ``vid IS NOT NULL`` condition and an unconditional
 ``DELETE`` mean a second run changes zero rows. Each statement logs its row
