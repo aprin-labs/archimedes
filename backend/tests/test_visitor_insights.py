@@ -586,10 +586,12 @@ async def test_repeat_visit_inside_the_cookie_lifetime_is_still_not_rebucketed()
 async def test_ids_in_the_pre_1908_unbounded_set_are_honoured_then_expire():
     """The old SET is read during the transition and given a TTL, never re-counted.
 
-    Every id in it was attributed before this change, through a cookie minted
-    before this change, so no id in it can arrive more than one cookie lifetime
-    after the first post-deploy write. Expiring the whole key one lifetime after
-    that write therefore forgets nobody who can still come back.
+    Every id in it was added by the old code, through a cookie minted no later
+    than the end of the rolling deploy, so it can arrive for at most one cookie
+    lifetime after the rollout ends. Expiring the whole key one lifetime after
+    the first post-deploy write can therefore forget an id that can still come
+    back only for at most the length of the rollout (see the comment on
+    ``_LEGACY_ATTRIBUTED_KEY``).
     """
     store, r = _fakeredis_store()
     await r.sadd("archimedes:visitors:attributed", "vid-legacy")
@@ -620,12 +622,12 @@ def _trace_top_level_commands(r) -> list[str]:
 async def test_the_pre_1908_set_expires_a_lifetime_after_the_first_recording_and_nothing_later_moves_it():
     """The old SET gets ONE TTL, from the first post-deploy recording, and keeps it.
 
-    "The old SET expires 180 days after deploy" needs two things in
-    ``_claim_first_seen``. EXPIRE must say NX: without it every new visitor
-    restarts the old set's clock, so on a live site it never runs out. And it
-    must come after the SET NX first-seen check: issued before it, it would
-    also run on every repeat visit, which then costs two round trips instead
-    of one (and, without NX, restarts the clock on every visit).
+    "The old SET expires 180 days after the first post-deploy recording" needs
+    two things in ``_claim_first_seen``. EXPIRE must say NX: without it every
+    new visitor restarts the old set's clock, so on a live site it never runs
+    out. And it must come after the SET NX first-seen check: issued before it,
+    it would also run on every repeat visit, which then costs two round trips
+    instead of one (and, without NX, restarts the clock on every visit).
     """
     legacy = "archimedes:visitors:attributed"
     store, r = _fakeredis_store()

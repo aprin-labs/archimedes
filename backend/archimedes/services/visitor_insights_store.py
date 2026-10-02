@@ -13,9 +13,10 @@ records, per day, the distinct visitors broken down by:
 
 Distinct counts use Redis HyperLogLog keyed on the anonymous ``archimedes_vid``
 (no PII; an HLL keeps no raw id) — same privacy-friendly approach as the funnel.
-The one place a raw id is kept is the first-seen gate below: one marker key per
-visitor, which expires one cookie lifetime (180 days) after the visitor is first
-recorded (#1908).
+The one place a raw id is kept is the first-seen gate below (#1908): one marker
+key per visitor, which expires one cookie lifetime (180 days) after it is
+written, and, until it expires, the pre-#1908 set of the ids the old code
+recorded. How long each id is held is set out at ``_LEGACY_ATTRIBUTED_KEY``.
 
 Population (issue #830): this is recorded from the **same JS-gated ``landed``
 beacon population the conversion funnel uses** — one source of truth for
@@ -67,21 +68,39 @@ _PREFIX = "archimedes:visitors"
 _DAY_TTL_SECONDS = 90 * 24 * 60 * 60
 
 # First-seen gate (#1908). One marker key per visitor, ``<prefix>:attributed:<vid>``,
-# set with SET NX EX. Its lifetime is the archimedes_vid cookie's: the middleware
-# mints that cookie once with this max-age and never refreshes it, and a visitor
-# can only be recorded after their cookie exists, so a marker that lives this long
-# from the first recording outlives every request that can still carry the id.
-# First-seen counting is unchanged; the id is just not kept after it can return.
+# set with SET NX EX the first time this code records that id, and never
+# refreshed. Its lifetime is the archimedes_vid cookie's: the middleware mints
+# that cookie once with this max-age and never refreshes it, and a visitor can
+# only be recorded after their cookie exists, so a marker that lives this long
+# from that recording outlives every request that can still carry the id.
+# First-seen counting is unchanged.
 _ATTRIBUTION_TTL_SECONDS = _VID_TTL_SECONDS
 
-# The gate before #1908: one SET of every raw visitor id, with no TTL. It is no
-# longer written. During the transition it is still READ, so nobody it holds is
-# counted a second time, and the first post-deploy recording gives it a TTL of
-# one cookie lifetime (EXPIRE NX, so later calls never push it back). Every id in
-# it came from a cookie minted before this change, so none can arrive after that
-# TTL runs out: the key expires by itself and needs no migration step. After it
-# is gone, SISMEMBER/EXPIRE on a missing key are no-ops, and this read can be
-# deleted.
+# The gate before #1908: one SET of every raw visitor id, with no TTL. This code
+# never writes it. During the transition it is still READ, so nobody it holds is
+# counted a second time, and this code's first recording gives it a TTL of one
+# cookie lifetime (EXPIRE NX, so later calls never push it back). Old tasks keep
+# adding to it until the rolling deploy ends, also after that TTL is set, so its
+# ids come from cookies minted no later than the end of the rollout and can
+# arrive up to 180 days after the rollout ends. The set is gone 180 days after
+# this code's first recording, so an id in it can still arrive for at most the
+# length of the rollout after the set is gone; that visitor is counted once more
+# only if no new task recorded them before. The key expires by itself and needs
+# no migration step. After it is gone, SISMEMBER/EXPIRE on a missing key are
+# no-ops, and this read can be deleted.
+#
+# How long a raw visitor id is held, then:
+#   - first recorded by this code: until its marker expires, 180 days after that
+#     recording. If an old task also adds it to this set during the rollout, the
+#     set expires no later than the marker.
+#   - first recorded by the old code (before the deploy, or by an old task during
+#     the rollout): in this set until the set expires, 180 days after this code's
+#     first recording (about 180 days after the deploy). If the visitor lands
+#     again while their cookie is valid, this code writes them a marker too, and
+#     the id is held until 180 days after that landing, which is no earlier than
+#     the set's expiry. That landing comes before the cookie expires, 180 days
+#     after it was minted, so the marker is gone less than 360 days after the
+#     rollout ends.
 _LEGACY_ATTRIBUTED_KEY = f"{_PREFIX}:attributed"
 
 DEVICE_CLASSES = ("mobile", "tablet", "desktop", "tv", "unknown")
