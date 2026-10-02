@@ -15,7 +15,10 @@ Covers:
   4. FAIL-SAFE (ADVERSARIAL): a receipt-write failure must never fail or
      delay the paid generation. Demonstrated by patching the exact
      persistence boundary (``generate_routes._write_payment_receipt``) to
-     raise — the ``/start`` response is still 202, and no receipt row lands.
+     raise — the ``/start`` response is still 202, and no receipt row lands;
+  5. #1908: the receipt is written at the settle, so an entitlement 402 or an
+     enqueue error AFTER a settled payment still leaves exactly one receipt
+     (unlinked, beside the #1441 credit), and a retry adds no second one.
 
 Hermetic: tmp-file SQLite (``redirect_to_tmp_sqlite`` — the ``_use_tmp_db``
 precedent from ``test_api_routes.py``), mocked job store + backgrounded task
@@ -190,6 +193,76 @@ class TestRecordPaymentReceipt:
         assert [r["settlement_ref"] for r in rows] == ["new", "old"]
         assert [r["settlement_ref"] for r in capped] == ["new"]
 
+    def test_linking_a_job_fills_only_an_unlinked_receipt(self):
+        """#1908: the receipt is written at the settle with no job and linked
+        once the job is queued. A second link must not re-point it."""
+        from archimedes.models.payment_receipt import link_payment_receipt_job
+
+        with get_session() as session:
+            record = record_payment_receipt(
+                session,
+                user_id="user-a",
+                payer_wallet=PAYER_A,
+                amount_base_units=2_000_000,
+                price_usd="$2.00",
+                network="eip155:5042002",
+                settlement_ref="ref-link",
+            )
+            session.commit()
+            receipt_id = record.id
+        assert record.job_id is None
+
+        with get_session() as session:
+            assert link_payment_receipt_job(session, receipt_id, "job-first") is True
+            session.commit()
+        with get_session() as session:
+            assert link_payment_receipt_job(session, receipt_id, "job-other") is False
+            assert link_payment_receipt_job(session, receipt_id + 999, "job-none") is False
+            session.commit()
+            rows = list_payment_receipts(session, "user-a")
+        assert [r["job_id"] for r in rows] == ["job-first"]
+
+    def test_linking_a_job_leaves_every_other_unlinked_receipt_alone(self):
+        """#1908: two settled payments whose jobs never queued leave two
+        unlinked receipts. Linking one of them names a job on that receipt
+        only; the other keeps ``job_id`` NULL."""
+        from archimedes.models.payment_receipt import link_payment_receipt_job
+
+        with get_session() as session:
+            bystander = record_payment_receipt(
+                session,
+                user_id="user-b",
+                payer_wallet=PAYER_B,
+                amount_base_units=2_000_000,
+                price_usd="$2.00",
+                network="eip155:5042002",
+                settlement_ref="ref-bystander",
+            )
+            target = record_payment_receipt(
+                session,
+                user_id="user-a",
+                payer_wallet=PAYER_A,
+                amount_base_units=2_000_000,
+                price_usd="$2.00",
+                network="eip155:5042002",
+                settlement_ref="ref-target",
+            )
+            session.commit()
+            bystander_id, target_id = bystander.id, target.id
+        assert bystander.job_id is None and target.job_id is None
+
+        with get_session() as session:
+            assert link_payment_receipt_job(session, target_id, "job-target") is True
+            session.commit()
+        with get_session() as session:
+            linked = {
+                r.id: r.job_id
+                for r in session.query(PaymentReceiptRecord).filter(
+                    PaymentReceiptRecord.id.in_([bystander_id, target_id])
+                )
+            }
+        assert linked == {target_id: "job-target", bystander_id: None}
+
     def test_missing_identity_is_refused(self):
         with get_session() as session:
             with pytest.raises(ValueError, match="user_id"):
@@ -301,3 +374,205 @@ def test_a_receipt_write_failure_never_fails_the_paid_generation(monkeypatch):
     list_resp = _client().get("/api/payments/receipts", cookies=cookies)
     assert list_resp.status_code == 200
     assert list_resp.json() == []
+
+
+# ── 5. #1908 — the receipt is written at the settle, not after the enqueue ──
+#
+# The receipt used to be written only once ``store.enqueue`` had returned a
+# job id. Everything between the settle and that point — the premium-model
+# entitlement gate, the enqueue itself — could raise, and when it did the
+# money had moved with no ``payment_receipts`` row behind it. The credit
+# ledger (#1441) already kept the payer whole in that window; the receipt did
+# not. These tests force each raise AFTER a successful settle.
+
+
+def _all_receipts() -> list[PaymentReceiptRecord]:
+    with get_session() as session:
+        return list(session.query(PaymentReceiptRecord).order_by(PaymentReceiptRecord.id).all())
+
+
+def _all_credits():
+    from archimedes.models.generation_credit import GenerationCreditRecord
+
+    with get_session() as session:
+        return list(session.query(GenerationCreditRecord).order_by(GenerationCreditRecord.id).all())
+
+
+def _assert_one_unlinked_receipt_and_an_unspent_credit() -> None:
+    """The consistent post-settle record: one receipt for the charge, naming no
+    job because none was queued, beside the #1441 credit that still owes the
+    payer a generation. Both rows describe the same settlement."""
+    from archimedes.models.generation_credit import CREDIT_AVAILABLE
+
+    receipts = _all_receipts()
+    assert len(receipts) == 1, f"expected exactly one receipt, found {len(receipts)}"
+    receipt = receipts[0]
+    assert receipt.job_id is None
+    assert receipt.amount_base_units == 2_000_000
+    assert receipt.payer_wallet == PAYER_A
+    assert receipt.settlement_ref == "831aaaf1-f110-47f7-8faf-c76aa8f841cb"
+
+    credits = _all_credits()
+    assert len(credits) == 1
+    assert credits[0].status == CREDIT_AVAILABLE
+    assert credits[0].job_id is None
+    assert credits[0].settlement_ref == receipt.settlement_ref
+
+
+def test_enqueue_failure_after_settlement_still_leaves_exactly_one_receipt(monkeypatch):
+    _settled(monkeypatch)
+    store = _mock_store()
+    store.enqueue = AsyncMock(side_effect=RuntimeError("redis is down"))
+    p1, p2 = _harness(store)
+    with p1, p2, _client() as client, pytest.raises(RuntimeError, match="redis is down"):
+        client.post("/api/generate/start", json=_BODY, cookies=auth_cookies(PAYER_A))
+    generation_payment.enforce_generation_payment.assert_awaited_once()
+
+    _assert_one_unlinked_receipt_and_an_unspent_credit()
+
+
+def test_entitlement_402_after_settlement_still_leaves_exactly_one_receipt(monkeypatch):
+    from archimedes.api import generate_routes
+    from fastapi import HTTPException
+
+    _settled(monkeypatch)
+    monkeypatch.setattr(
+        generate_routes,
+        "enforce_model_entitlement",
+        MagicMock(side_effect=HTTPException(status_code=402, detail="premium not entitled")),
+    )
+    store = _mock_store()
+    p1, p2 = _harness(store)
+    cookies = auth_cookies(PAYER_A)
+    with p1, p2, _client() as client:
+        resp = client.post("/api/generate/start", json=_BODY, cookies=cookies)
+    assert resp.status_code == 402
+    store.enqueue.assert_not_awaited()
+
+    _assert_one_unlinked_receipt_and_an_unspent_credit()
+    # …and the payer can read it back, exactly as for a run that started.
+    listed = _client().get("/api/payments/receipts", cookies=cookies).json()
+    assert [r["settlement_ref"] for r in listed] == ["831aaaf1-f110-47f7-8faf-c76aa8f841cb"]
+    assert listed[0]["job_id"] is None
+
+
+@pytest.mark.parametrize(
+    ("idempotency_key", "credit_lookup_fails"),
+    [
+        pytest.param("retry-same-key", False, id="same-key"),
+        pytest.param(None, False, id="keyless"),
+        pytest.param("retry-same-key", True, id="same-key-credit-lookup-fails"),
+    ],
+)
+def test_a_retry_after_a_post_settle_failure_does_not_write_a_second_receipt(
+    monkeypatch, idempotency_key, credit_lookup_fails
+):
+    """One charge, one receipt — however many times the payer retries.
+
+    The retry is served from the #1441 credit, so ``_paywall_with_credit``
+    returns ``payment=None`` and the receipt write (``if payment is not None``)
+    does not run. Which branch of ``_paywall_with_credit`` serves it:
+
+    - ``same-key`` and ``keyless``: the unspent-credit lookup that runs FIRST,
+      before the Idempotency-Key is read (``generation_credits.take_credit``,
+      ``api/generate_routes.py:323-326``), finds the ``available`` credit the
+      failed attempt left behind and returns ``(None, credit_id)``. The key is
+      never claimed, so ``generation_credits.claim`` is not called. The key
+      makes no difference on this path.
+    - ``same-key-credit-lookup-fails``: ``take_credit`` is quiet on a ledger
+      read error and reports no credit. The same key then reaches
+      ``generation_credits.claim``, which finds the key's ``available`` credit
+      and returns ``already_settled`` (``api/generate_routes.py:338-340``),
+      also ``(None, credit_id)``.
+
+    The test records what ``take_credit`` and ``claim`` return on the retry
+    and asserts the branch named above, not only the receipt count."""
+    from archimedes.models.generation_credit import CREDIT_CONSUMED
+    from archimedes.services import generation_credits
+
+    _settled(monkeypatch)
+    headers = {"Idempotency-Key": idempotency_key} if idempotency_key else {}
+    cookies = auth_cookies(PAYER_A)
+
+    failing = _mock_store()
+    failing.enqueue = AsyncMock(side_effect=RuntimeError("redis is down"))
+    p1, p2 = _harness(failing)
+    with p1, p2, _client() as client, pytest.raises(RuntimeError):
+        client.post("/api/generate/start", json=_BODY, cookies=cookies, headers=headers)
+    _assert_one_unlinked_receipt_and_an_unspent_credit()
+    credit_id = _all_credits()[0].id
+
+    # Record what the two credit-ledger entry points return on the retry.
+    real_take_credit, real_claim = generation_credits.take_credit, generation_credits.claim
+    take_credit_returned: list = []
+    claim_returned: list = []
+
+    def _recording_take_credit(user_id):
+        result = real_take_credit(user_id)
+        take_credit_returned.append(result)
+        return result
+
+    def _recording_claim(user_id, key):
+        result = real_claim(user_id, key)
+        claim_returned.append(result)
+        return result
+
+    monkeypatch.setattr(generation_credits, "take_credit", _recording_take_credit)
+    monkeypatch.setattr(generation_credits, "claim", _recording_claim)
+    if credit_lookup_fails:
+        monkeypatch.setattr(
+            generation_credits,
+            "take_available_credit",
+            MagicMock(side_effect=RuntimeError("ledger read failed")),
+        )
+
+    healthy = _mock_store("job-retry")
+    p1, p2 = _harness(healthy)
+    with p1, p2, _client() as client:
+        resp = client.post("/api/generate/start", json=_BODY, cookies=cookies, headers=headers)
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["job_id"] == "job-retry"
+
+    # The branch that served the retry, as the docstring names it.
+    if credit_lookup_fails:
+        assert take_credit_returned == [None]
+        assert claim_returned == [("already_settled", credit_id)]
+    else:
+        assert take_credit_returned == [credit_id]
+        assert claim_returned == []
+
+    # One charge was taken across both attempts…
+    generation_payment.enforce_generation_payment.assert_awaited_once()
+    # …so exactly one receipt exists for it…
+    receipts = _all_receipts()
+    assert len(receipts) == 1, f"expected exactly one receipt, found {len(receipts)}"
+    assert receipts[0].settlement_ref == "831aaaf1-f110-47f7-8faf-c76aa8f841cb"
+    # …and the credit it bought was spent on the run that actually started.
+    credits = _all_credits()
+    assert [(c.status, c.job_id) for c in credits] == [(CREDIT_CONSUMED, "job-retry")]
+
+
+def test_a_receipt_job_link_failure_never_fails_the_paid_generation(monkeypatch):
+    """Adversarial companion for the link step. The receipt is written before
+    the enqueue and linked to its job after; the link is best-effort exactly
+    like the write. If it raises, /start still returns 202 and the receipt for
+    the charge survives — unlinked, never dropped."""
+    _settled(monkeypatch)
+    store = _mock_store("job-link-boom")
+    p1, p2 = _harness(store)
+    with (
+        p1,
+        p2,
+        patch(
+            "archimedes.api.generate_routes._write_payment_receipt_job",
+            side_effect=RuntimeError("database is on fire"),
+        ),
+        _client() as client,
+    ):
+        resp = client.post("/api/generate/start", json=_BODY, cookies=auth_cookies(PAYER_A))
+    assert resp.status_code == 202
+    assert resp.json()["job_id"] == "job-link-boom"
+
+    receipts = _all_receipts()
+    assert len(receipts) == 1
+    assert receipts[0].job_id is None

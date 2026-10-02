@@ -6,6 +6,7 @@ import { fromNodeHeaders, toNodeHandler } from 'better-auth/node'
 import { createAuth, createPool, enabledProviders } from './auth.js'
 import { createDeliveryLog } from './delivery-log.js'
 import { createMailer } from './mailer.js'
+import { startSessionSweep } from './session-sweep.js'
 import { createSuppressionLookup } from './suppression.js'
 import { resolveVerificationStatus } from './verification-status.js'
 
@@ -98,23 +99,31 @@ export function createRequestHandler({
   }
 }
 
-export function startServer(env = process.env) {
+// `database` is injectable only so a test can start this exact entry point on
+// an in-memory database; production always takes the createPool default.
+export function startServer(env = process.env, { database } = {}) {
   // One pool, three consumers: Better Auth's adapter, the delivery log's
   // inserts, and the status endpoint's reads. createPool lives in auth.js so
   // the Aurora sslmode translation has exactly one implementation.
-  const db = createPool(env)
+  const db = database ?? createPool(env)
   const deliveryLog = createDeliveryLog(db)
   const mailer = createMailer(env, { deliveryLog })
   const suppression = createSuppressionLookup(env)
   const auth = createAuth({ database: db, env, mailer })
   const port = Number(env.PORT || 3000)
-  return createServer(createRequestHandler({
+  const server = createServer(createRequestHandler({
     auth,
     providers: enabledProviders(env),
     verificationStatus: user => resolveVerificationStatus({ user, deliveryLog, suppression }),
   })).listen(port, '0.0.0.0', () => {
     console.log(`Archimedes auth listening on ${port}`)
   })
+  // #1908: expired auth_sessions rows (IP + user agent) are deleted by this
+  // process on a timer; nothing else in the stack deletes them. See
+  // session-sweep.js for the schedule and why two tasks running it is safe.
+  const sessionSweep = startSessionSweep(auth)
+  server.on('close', sessionSweep.stop)
+  return server
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

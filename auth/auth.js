@@ -159,6 +159,30 @@ export async function notifyAccountChange(mailer, endpointContext, account, acti
   }
 }
 
+// #1908: the provider's ID token is never stored. encryptOAuthTokens (below)
+// covers accessToken and refreshToken only — better-auth@1.6.25 passes those
+// two through setTokenUtil and writes idToken as issued (oauth2/
+// link-account.mjs, api/routes/callback.mjs, api/routes/account.mjs). For
+// Google that is a JWT carrying the user's email, name and picture.
+//
+// Dropped rather than encrypted because nothing needs it after the callback:
+// sign-in and linking read the ID token from the token exchange, never from
+// the row; auth_users already holds the email, name and image, and
+// auth_accounts.accountId the subject. The only readers of the stored column
+// are better-auth's /get-access-token, /refresh-token and /account-info, which
+// nothing in this repo calls. Those never decrypt idToken, so encrypting it
+// would hand them ciphertext instead of a token; dropping it hands them none.
+//
+// Runs on every account create and update (better-auth/dist/db/
+// with-hooks.mjs merges the returned data over the write). The update half
+// matters: a returning sign-in and a re-link both write the fresh ID token
+// through updateAccount, and it also clears a token left on a row from
+// before this change. Rows nobody writes again are cleared by alembic
+// revision 7d2f9a4c1e60.
+export function dropIdToken(data) {
+  return { data: { ...data, idToken: null } }
+}
+
 // #1367 (D2): the "confirm from your CURRENT address" half of the two-step
 // email change. Better Auth calls this only when the account's existing
 // address is already verified (update-user.mjs `canSendConfirmation` =
@@ -524,6 +548,8 @@ export function createAuth({ database, env = process.env, mailer = createMailer(
     },
     account: {
       modelName: 'auth_accounts',
+      // Access and refresh tokens only; the ID token is dropped instead
+      // (dropIdToken above, wired in databaseHooks below — #1908).
       encryptOAuthTokens: true,
       // #1420 follow-up (account linking). Semantics below verified against
       // the INSTALLED better-auth@1.6.25 source
@@ -801,10 +827,16 @@ export function createAuth({ database, env = process.env, mailer = createMailer(
     },
     // Round-2 review finding (minor): notify the account owner's email
     // whenever a sign-in credential is added or removed — see
-    // notifyAccountChange above for why it must never throw.
+    // notifyAccountChange above for why it must never throw. The before
+    // hooks keep the provider's ID token out of auth_accounts (#1908, see
+    // dropIdToken above).
     databaseHooks: {
       account: {
-        create: { after: (account, ctx) => notifyAccountChange(mailer, ctx, account, 'added') },
+        create: {
+          before: dropIdToken,
+          after: (account, ctx) => notifyAccountChange(mailer, ctx, account, 'added'),
+        },
+        update: { before: dropIdToken },
         delete: { after: (account, ctx) => notifyAccountChange(mailer, ctx, account, 'removed') },
       },
     },
@@ -877,14 +909,22 @@ export function createAuth({ database, env = process.env, mailer = createMailer(
       // so a caller cannot supply it: whatever the client sends under that name
       // is overwritten before the request reaches this process. It is the same
       // value the FastAPI limiter and the daily generation cap already key on
-      // via X-Real-IP. Behind CloudFront it identifies the CloudFront EDGE, not
-      // the viewer (nginx trusts only the ALB CIDR) — so buckets are per-edge:
-      // unspoofable, no longer global, coarser than one caller. Say that, don't
-      // round it up to "per user".
+      // via X-Real-IP. Since #1908 nginx trusts CloudFront's origin-facing
+      // ranges as well as the ALB's VPC, so this is the VIEWER's address as
+      // CloudFront saw it: buckets are per viewer IPv4 address, or per IPv6 /64
+      // (viewers behind one NAT still share one). Say that, don't round it up
+      // to "per user".
+      //
+      // ipv6Subnet: 64 is the library default (@better-auth/core normalizeIP),
+      // written out because it is a security setting, not a detail: a host can
+      // use any address in its /64, so a /128 key would let one IPv6 caller
+      // rotate through 2**64 buckets. The two backend limiters key IPv6 on the
+      // same /64 (backend/archimedes/services/client_ip.py); IPv4 stays the
+      // address. Pinned by the IPv6 rotation test in test/email-flows.test.js.
       //
       // Deliberately NOT trustedProxies: that would re-admit X-Forwarded-For
-      // and require carrying CloudFront's published edge ranges in this file,
-      // where a stale list degrades silently back to the shared bucket. And
+      // here and need a second copy of the CloudFront ranges nginx already
+      // carries (nginx/cloudfront-origin-facing.conf). And
       // deliberately not a fallback to 'x-forwarded-for' after this one — a
       // single-valued XFF reaching this process is exactly the shape a
       // direct-to-container caller can forge. No header, no key: the limiter
@@ -892,6 +932,7 @@ export function createAuth({ database, env = process.env, mailer = createMailer(
       // open.
       ipAddress: {
         ipAddressHeaders: ['x-client-ip'],
+        ipv6Subnet: 64,
       },
       useSecureCookies: production,
       defaultCookieAttributes: {

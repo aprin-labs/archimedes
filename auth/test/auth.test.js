@@ -1449,3 +1449,168 @@ test("deleting an account does not email the owner about 'unlinked' sign-in meth
     `account deletion tripped the link/unlink notify alarm: ${JSON.stringify(logged)}`,
   )
 })
+
+// ── No plain Google ID token at rest (#1908) ─────────────────────────────
+//
+// encryptOAuthTokens: true encrypts accessToken and refreshToken only
+// (link-account.mjs / callback.mjs wrap exactly those two in setTokenUtil).
+// The ID token went into auth_accounts.idToken exactly as Google issued it:
+// a JWT whose payload carries the user's email, name and picture, readable
+// by anyone who can read the table or a backup of it. Nothing in this repo
+// reads it back, so auth.js now drops it before every account write
+// (databaseHooks.account.{create,update}.before) instead of encrypting it,
+// and alembic revision 7d2f9a4c1e60 clears rows written before that.
+//
+// Every round trip below is the same real OAuth flow the linking tests above
+// drive (real state/cookie handling, real account-linking code, in-memory
+// sqlite); only the providers' HTTP endpoints are faked.
+
+function storedAccountRows(database, providerId) {
+  return database
+    .prepare('SELECT "idToken", "accessToken" FROM auth_accounts WHERE "providerId" = ?')
+    .all(providerId)
+}
+
+async function oauthSignInRoundTrip(auth, provider) {
+  const initiate = await auth.api.signInSocial({
+    body: { provider, callbackURL: 'http://localhost:3000/app', disableRedirect: true },
+    asResponse: true,
+  })
+  const { url } = await initiate.json()
+  const state = new URL(url).searchParams.get('state')
+  return auth.handler(new Request(
+    `http://localhost:3000/api/auth/callback/${provider}?code=fake-code&state=${encodeURIComponent(state)}`,
+    { headers: { cookie: forwardedCookies(initiate) } },
+  ))
+}
+
+async function signedInEmail(auth, callback) {
+  const session = await auth.api.getSession({ headers: new Headers({ cookie: forwardedCookies(callback) }) })
+  return session?.user?.email
+}
+
+test('a Google signup stores no ID token, and the sign-in itself still works (#1908)', async (t) => {
+  const { auth, database } = await googleEnabledAuth()
+  const email = 'google-signup-no-id-token@example.com'
+  mockGoogleTokenExchange(t, { email, emailVerified: true })
+
+  const callback = await oauthSignInRoundTrip(auth, 'google')
+  assert.equal(callback.status, 302)
+  assert.equal(new URL(callback.headers.get('location')).searchParams.get('error'), null)
+  assert.equal(await signedInEmail(auth, callback), email)
+
+  const rows = storedAccountRows(database, 'google')
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].idToken, null, `Google ID token stored at rest: ${rows[0].idToken}`)
+  // Control: the access token is still stored, and still not as issued.
+  assert.ok(rows[0].accessToken)
+  assert.notEqual(rows[0].accessToken, 'fake-access-token')
+})
+
+test('a returning Google sign-in does not write the fresh ID token back, and clears one already stored (#1908)', async (t) => {
+  const { auth, database } = await googleEnabledAuth()
+  const email = 'google-returning-no-id-token@example.com'
+  mockGoogleTokenExchange(t, { email, emailVerified: true })
+
+  assert.equal((await oauthSignInRoundTrip(auth, 'google')).status, 302)
+  // A row written before the fix: the plain token Google issued.
+  const legacy = fakeGoogleIdToken({ sub: 'google-sub-1', email, emailVerified: true, name: 'Google User' })
+  database.prepare('UPDATE auth_accounts SET "idToken" = ? WHERE "providerId" = ?').run(legacy, 'google')
+
+  // Second sign-in takes link-account.mjs's already-linked branch, which
+  // updates the existing row with the fresh tokens (updateAccount) rather
+  // than creating one: the update.before half of the hook.
+  const again = await oauthSignInRoundTrip(auth, 'google')
+  assert.equal(again.status, 302)
+  assert.equal(new URL(again.headers.get('location')).searchParams.get('error'), null)
+  assert.equal(await signedInEmail(auth, again), email)
+
+  const rows = storedAccountRows(database, 'google')
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].idToken, null, `Google ID token stored at rest: ${rows[0].idToken}`)
+})
+
+test('linking Google from Account Settings stores no ID token, on the first link and on a re-link (#1908)', async () => {
+  const { auth, database } = await googleEnabledAuth({}, capturingMailer())
+  const credentials = { email: 'google-link-no-id-token@example.com', password: 'correct horse battery staple' }
+  await auth.api.signUpEmail({ body: { ...credentials, name: 'Owner' }, asResponse: true })
+  const sessionCookie = cookieHeader(await auth.api.signInEmail({ body: credentials, asResponse: true }))
+
+  // First link: callback.mjs's createAccount branch.
+  const linked = await linkGoogleForReal(auth, sessionCookie, credentials.email)
+  assert.equal(linked.status, 302)
+  assert.equal(linked.headers.get('location'), 'http://localhost:3000/app/account')
+  assert.equal(storedAccountRows(database, 'google')[0].idToken, null)
+
+  // Re-link of the same Google account: callback.mjs's existingAccount
+  // branch, which calls updateAccount with the fresh idToken.
+  const relinked = await linkGoogleForReal(auth, sessionCookie, credentials.email)
+  assert.equal(relinked.status, 302)
+  assert.equal(relinked.headers.get('location'), 'http://localhost:3000/app/account')
+
+  const rows = storedAccountRows(database, 'google')
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].idToken, null, `Google ID token stored at rest: ${rows[0].idToken}`)
+  const accounts = await auth.api.listUserAccounts({ headers: new Headers({ cookie: sessionCookie }) })
+  assert.deepEqual(accounts.map(a => a.providerId).sort(), ['credential', 'google'])
+})
+
+// GitHub issues no ID token at all, so it has nothing to lose here; this
+// pins that the hook, which runs on every account write, leaves the GitHub
+// sign-in and link flows working. GitHub had no OAuth round-trip test before.
+function mockGitHub(t, { id = 4242, email }) {
+  t.mock.method(globalThis, 'fetch', async (input) => {
+    const href = typeof input === 'string' ? input : input?.url ?? String(input)
+    const json = body => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
+    if (href.startsWith('https://github.com/login/oauth/access_token')) {
+      return json({ access_token: 'fake-github-access-token', token_type: 'bearer', scope: 'read:user,user:email' })
+    }
+    if (href.startsWith('https://api.github.com/user/emails')) return json([{ email, primary: true, verified: true }])
+    if (href.startsWith('https://api.github.com/user')) return json({ id, login: 'owner', name: 'Owner', email, avatar_url: null })
+    throw new Error(`unexpected network call to ${href}`)
+  })
+}
+
+test('GitHub sign-in and GitHub linking still work with the account-write hook in place (#1908)', async (t) => {
+  const { auth, database } = await googleEnabledAuth({
+    GITHUB_CLIENT_ID: 'test-github-client-id',
+    GITHUB_CLIENT_SECRET: 'test-github-client-secret',
+  }, capturingMailer())
+
+  // Sign-in (registration branch).
+  const signupEmail = 'github-signup@example.com'
+  mockGitHub(t, { id: 1001, email: signupEmail })
+  const callback = await oauthSignInRoundTrip(auth, 'github')
+  assert.equal(callback.status, 302)
+  assert.equal(new URL(callback.headers.get('location')).searchParams.get('error'), null)
+  assert.equal(await signedInEmail(auth, callback), signupEmail)
+  t.mock.restoreAll()
+
+  // Link from Account Settings onto a password account.
+  const credentials = { email: 'github-link@example.com', password: 'correct horse battery staple' }
+  await auth.api.signUpEmail({ body: { ...credentials, name: 'Owner' }, asResponse: true })
+  const sessionCookie = cookieHeader(await auth.api.signInEmail({ body: credentials, asResponse: true }))
+  const initiate = await auth.api.linkSocialAccount({
+    headers: new Headers({ cookie: sessionCookie }),
+    body: { provider: 'github', callbackURL: 'http://localhost:3000/app/account', disableRedirect: true },
+    asResponse: true,
+  })
+  const state = new URL((await initiate.json()).url).searchParams.get('state')
+  mockGitHub(t, { id: 2002, email: credentials.email })
+  const linked = await auth.handler(new Request(
+    `http://localhost:3000/api/auth/callback/github?code=fake-code&state=${encodeURIComponent(state)}`,
+    { headers: { cookie: forwardedCookies(initiate) } },
+  ))
+  assert.equal(linked.status, 302)
+  assert.equal(linked.headers.get('location'), 'http://localhost:3000/app/account')
+  const accounts = await auth.api.listUserAccounts({ headers: new Headers({ cookie: sessionCookie }) })
+  assert.deepEqual(accounts.map(a => a.providerId).sort(), ['credential', 'github'])
+
+  const rows = storedAccountRows(database, 'github')
+  assert.equal(rows.length, 2)
+  for (const row of rows) {
+    assert.equal(row.idToken, null)
+    assert.ok(row.accessToken)
+    assert.notEqual(row.accessToken, 'fake-github-access-token')
+  }
+})
