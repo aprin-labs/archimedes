@@ -21,11 +21,12 @@
 //     the counts the two runs report add up to the rows actually removed. No
 //     transaction or lock is held between the select and the delete;
 //   - each run deletes at most batchSize rows, so one run is one short
-//     statement however large a backlog is. A backlog drains by up to
-//     batchSize rows per run of each task, and by at least batchSize per
-//     interval while any task's runs succeed. Overlapping runs are why it can
-//     be the lower figure: both can select the same ids, and then the two
-//     runs together delete one batch, not two;
+//     statement however large a backlog is. An interval therefore removes at
+//     most batchSize rows per task. Two tasks do not guarantee twice one
+//     batch: runs that overlap can select the same ids, and then the two of
+//     them delete one batch between them, not two. What is guaranteed is one
+//     batch (or the whole backlog, if smaller) per interval in which at least
+//     one task's run succeeds;
 //   - any database error (Aurora failover, or Postgres aborting one of two
 //     overlapping DELETEs) fails only that run. It is logged and the next run
 //     simply repeats the same idempotent statement.
