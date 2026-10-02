@@ -35,7 +35,7 @@ uvicorn[standard]>=0.52.4
 # in an isolated venv both directions (2.0.52 clean, 2.1.1 breaks) before pinning.
 # Raise this ceiling only alongside either installing `psycopg` (v3) or making
 # every DATABASE_URL construction say `postgresql+psycopg2://` explicitly.
-sqlalchemy>=2.0.52,<2.1
+sqlalchemy>=2.1.1,<2.2
 # Schema migration tool (issue #1028) — replaces the hand-rolled idempotent
 # `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` patches in db.py for retrofitting
 # the already-populated prod Postgres DB. MIT license, maintained by the
