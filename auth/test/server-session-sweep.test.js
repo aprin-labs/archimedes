@@ -75,3 +75,20 @@ test('the running auth server first sweeps 60 seconds after boot, not before', a
   await settle(() => remainingTokens(database).length === 1)
   assert.deepEqual(remainingTokens(database), liveTokens, 'the sweep had not run 60 s after boot')
 })
+
+test('closing the auth server stops its sweep', async t => {
+  const database = new DatabaseSync(':memory:')
+  await authWithSessions(database, { live: 1, expired: 2 })
+
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] })
+  const server = startServer({ ...env, PORT: '0' }, { database })
+  await once(server, 'listening')
+  await new Promise(resolve => server.close(resolve))
+
+  // Past the first run and the first hourly run: neither may happen.
+  t.mock.timers.tick(MINUTE_MS)
+  await settle(() => remainingTokens(database).length !== 3)
+  t.mock.timers.tick(HOUR_MS - MINUTE_MS)
+  await settle(() => remainingTokens(database).length !== 3)
+  assert.equal(remainingTokens(database).length, 3, 'the sweep kept running after server.close')
+})

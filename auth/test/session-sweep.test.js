@@ -3,6 +3,7 @@
 // 1.6.25 deletes an expired session only when its cookie is presented again,
 // and that cookie's Max-Age is the session's own lifetime.
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
 import { inspect } from 'node:util'
@@ -181,4 +182,17 @@ test('a run still going when the next one is due is not doubled up, and the one 
   t.mock.timers.tick(HOUR_MS)
   await settle(() => selects === 2)
   assert.equal(selects, 2, 'no run started after the stuck one finished')
+})
+
+test('the sweep never keeps the process alive on its own', async () => {
+  // A process that has started the sweep and nothing else must exit by itself,
+  // without waiting for the first run (60 s) or the hourly timer (forever).
+  const sweepModule = new URL('../session-sweep.js', import.meta.url).href
+  const script = `import { startSessionSweep } from ${JSON.stringify(sweepModule)}\nstartSessionSweep({})`
+  const outcome = await new Promise(resolve => {
+    execFile(process.execPath, ['--input-type=module', '-e', script], { timeout: 10_000 }, error => {
+      resolve(error ? `still running after 10 s (${error.signal ?? error.code})` : 'exited')
+    })
+  })
+  assert.equal(outcome, 'exited', 'the sweep timers keep the process alive')
 })
