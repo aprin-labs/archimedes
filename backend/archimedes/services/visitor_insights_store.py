@@ -82,14 +82,15 @@ _ATTRIBUTION_TTL_SECONDS = _VID_TTL_SECONDS
 # cookie lifetime (EXPIRE NX, so later calls never push it back). Old tasks keep
 # adding to it until the rolling deploy ends, also after that TTL is set, so its
 # ids come from cookies minted no later than the end of the rollout and can
-# arrive up to 180 days after the rollout ends. The set is gone 180 days after
+# arrive up to 180 days after the rollout ends. The set expires 180 days after
 # this code's first recording, so an id in it can still arrive for at most the
-# length of the rollout after the set is gone; that visitor is counted once more
-# only if no new task recorded them before. The key expires by itself and needs
+# length of the rollout after it expires; that visitor is counted once more only
+# if no new task recorded them before. The key expires by itself and needs
 # no migration step. After it is gone, SISMEMBER/EXPIRE on a missing key are
 # no-ops, and this read can be deleted.
 #
-# How long a raw visitor id is held, then:
+# How long a raw visitor id is held at most, then (each bound is a TTL; eviction
+# under memory pressure can only remove it sooner):
 #   - first recorded by this code: until its marker expires, 180 days after that
 #     recording. If an old task also adds it to this set during the rollout, the
 #     set expires no later than the marker.
