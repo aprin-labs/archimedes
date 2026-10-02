@@ -2,20 +2,47 @@ import PolicyBanner from "./PolicyBanner";
 
 // /privacy — the public privacy policy.
 //
-// EVERY factual claim on this page was written from the code, and the PR that
-// introduced it carries a claim-by-claim evidence map (statement → file:line).
-// That is the standard to hold it to when editing: if you change what the
-// software does, this page is part of the change, and if you change this page,
-// name the code that makes the new sentence true.
+// Every factual sentence here is a claim about main PLUS the live stack, and
+// the 2026-10-01 rewrite (#1432) re-checked each one against both: the code
+// that does the thing, and the live AWS configuration where code is not the
+// whole story (log retention, backups, the firewall, SES, the privacy@ relay).
+// If you change what the software does, this page is part of the change; if
+// you change this page, name the code that makes the new sentence true.
+// ui/test/policy-pages.test.js pins the load-bearing sentences.
 //
-// Two things that are easy to get wrong here, both of which were wrong in the
-// first draft of this page's outline:
-//   - Cookies are NOT session-only. There is a second cookie, archimedes_vid
-//     (backend/archimedes/api/funnel_middleware.py), with a 180-day lifetime.
-//   - IP addresses ARE stored. Not in the visitor-counting pipeline — that one
-//     genuinely never sees an IP — but on every sign-in session row
-//     (auth_sessions.ipAddress) and in the rate-limit / quota keys.
-// Saying otherwise would be the comfortable version, not the true one.
+// The sentences most likely to rot, and what makes them true today:
+//   - "We store your IP address on each sign-in session". Since #1908 nginx
+//     trusts CloudFront's origin-facing ranges (nginx/nginx.conf, "Real client
+//     IP behind CloudFront"), so X-Client-IP, which Better Auth stores as
+//     auth_sessions.ipAddress, is the viewer. Better Auth keeps an IPv6
+//     address as its /64 (auth/auth.js advanced.ipAddress.ipv6Subnet). Before
+//     #1908 this sentence was false: the stored value was the CloudFront edge.
+//   - Expired sessions are deleted by auth/session-sweep.js (hourly). The
+//     Google ID token is dropped before every write (auth/auth.js
+//     dropIdToken) and old ones were cleared by alembic 7d2f9a4c1e60.
+//   - The deletion lists mirror ui/src/account-deletion.js, which
+//     ui/test/account-deletion.test.js pins against the models' ON DELETE
+//     actions. payment_receipts, generation_credits, free_generation_grants
+//     and the wallet ledger (wallet_identities / identity_events) carry no FK
+//     to auth_users, so account deletion does not reach them. Detached rows
+//     keep owner_wallet and the brief text.
+//   - Three free generations, the $2.00 price and the 100/200 daily caps are
+//     pinned in infra/ecs.tf (FREE_GENERATIONS_PER_ACCOUNT,
+//     GENERATION_PRICE_USD, GENERATION_DAILY_CAP_PER_USER/_PER_IP).
+//   - The visitor-id marker expires one cookie lifetime after it is written
+//     (services/visitor_insights_store.py, #1908). The /security inventory
+//     (ui/src/storage-consent.js) is the full key list this page points to.
+//   - privacy@ is an SES receipt rule -> SNS -> one email subscription, a
+//     personal Gmail inbox (infra/ses_inbound.tf). SNS actions bounce mail
+//     over 150 KB.
+//   - Backups: Aurora's automated retention is 7 days (infra/aurora.tf). The
+//     manual Aurora snapshots were deleted on 2026-10-01; the one remaining
+//     snapshot is the EBS image of the decommissioned EC2 server.
+//   - Not offered today, so not described as running: vault deployment,
+//     on-chain trace publication, marketplace publishing (all behind
+//     ROADMAP_SURFACES_ENABLED), IPFS pinning (docs/adr/ipfs-pinning-not-live.md),
+//     per-vault chat (deleted), Google Fonts on this site (removed from
+//     ui/index.html in the rebrand). The live agent runner runs in dry-run.
 export default function Privacy() {
 	return (
 		<div className="page-content policy-page">
@@ -34,16 +61,17 @@ export default function Privacy() {
 			<section>
 				<h2>The short version</h2>
 				<p>
-					Archimedes is a research tool. We collect what we need to run an
-					account, generate strategies, and stop abuse — and not much else.
-					There are no advertising trackers or third-party analytics scripts on
-					this site. We do not sell your data.
+					Archimedes is a research tool. We collect what we need to run your
+					account, generate strategies, take payments, count visitors and stop
+					abuse. There are no advertising trackers or third-party analytics
+					scripts on this site. We do not sell your data.
 				</p>
 				<p>
-					We are also going to be specific about the parts that are less
-					comfortable: we store your IP address on each sign-in, we set a
-					long-lived cookie to count visitors, and there is currently no
-					self-service delete button. All three are described below.
+					Three things are less comfortable, so we say them first: we store your
+					IP address on each sign-in session and in our server logs; our server
+					sets a long-lived visitor cookie even if you decline analytics; and
+					deleting your account does not remove your payment records. Each is
+					explained below.
 				</p>
 			</section>
 
@@ -51,9 +79,8 @@ export default function Privacy() {
 				<h2>What we collect when you create an account</h2>
 				<ul>
 					<li>
-						<strong>Your name and email address.</strong> Email is used to sign
-						you in, verify the address, and send password resets. We do not send
-						marketing email.
+						<strong>Your name and email address.</strong> The emails we send are
+						described in the next section.
 					</li>
 					<li>
 						<strong>Your password, hashed.</strong> We never store the password
@@ -64,30 +91,72 @@ export default function Privacy() {
 						URL if your sign-in provider supplied one.
 					</li>
 					<li>
-						<strong>A record of each sign-in session</strong> — a session token,
-						when it expires, and the IP address and browser user-agent the
-						session was created from. Sessions last seven days.
+						<strong>A record of each sign-in session:</strong> a session token,
+						when it expires, and the IP address and browser user-agent of the
+						sign-in that created it. For an IPv6 connection we store only the
+						first half of the address, the part that identifies your network. A
+						session expires seven days after it was last renewed, and using the
+						site renews it at most once a day. A job that runs every hour deletes
+						expired session records. Account Settings lists your sessions and
+						lets you end any of them.
+					</li>
+					<li>
+						<strong>API keys, if you create any.</strong> Keys are created
+						through our API, not the site. We store each key&rsquo;s name, a
+						salted hash of it (never the key itself), and when it was created,
+						last used and revoked. A revoked key stays on record, marked revoked,
+						until your account is deleted.
 					</li>
 				</ul>
 				<p>
-					You can optionally add a display name, a list of research interests,
-					how you heard about us, and a separate contact email. That contact
-					email is encrypted before it is written to the database.
+					Our API also accepts an optional profile attached to a linked wallet: a
+					display name, research interests, how you heard about us, a &ldquo;keep
+					me updated&rdquo; choice and a separate contact email. The site does
+					not currently show a form for it. If you do set one, the contact email
+					is encrypted before it is stored, only you can read the profile back,
+					and nothing sends email based on the &ldquo;keep me updated&rdquo;
+					choice.
+				</p>
+			</section>
+
+			<section>
+				<h2>Emails we send</h2>
+				<p>
+					We email you only about your account: to verify your address, to reset
+					your password, to confirm a change of email address, and to warn you
+					when a sign-in method is added to or removed from your account. We do
+					not send marketing email. Our emails are plain text, with no open or
+					click tracking.
+				</p>
+				<p>
+					We keep a record of each of those emails: the address it went to,
+					which kind it was, when it was sent, and whether Amazon SES (which
+					sends them) accepted it, with SES&rsquo;s message id or, if sending
+					failed, the name of the error. The record never includes the message
+					or the link in it. These records do not expire, and deleting your
+					account erases them.
+				</p>
+				<p>
+					If an email to you bounces permanently or is reported as spam, Amazon
+					SES puts your address on a do-not-send list for our account. That list
+					is kept by SES, not in our database, so deleting your account does not
+					remove your address from it; it stays until we remove it by hand.
 				</p>
 			</section>
 
 			<section>
 				<h2>If you sign in with Google or GitHub</h2>
 				<p>
-					We ask the provider only for the default sign-in scopes — enough to
-					learn your email address, your name, and your avatar. We do not
-					request access to your files, repositories, contacts, or anything
-					else, and we have not configured any extended scopes.
+					We ask the provider only for the default sign-in scopes: enough to
+					learn your email address, your name and your avatar. We do not request
+					access to your files, repositories, contacts or anything else.
 				</p>
 				<p>
-					We store the provider&rsquo;s account identifier for you, the scope it
-					granted, and the tokens it issued. Those tokens are encrypted before
-					they are stored.
+					We store the provider&rsquo;s identifier for your account, the scope it
+					granted, and the access and refresh tokens it issued, which are
+					encrypted before they are stored. We do not store the ID token Google
+					issues at sign-in (a signed copy of your Google account details), and
+					any stored before this change have been cleared.
 				</p>
 				<p>
 					<strong>Linking is always explicit.</strong> Signing in with Google
@@ -106,35 +175,72 @@ export default function Privacy() {
 				<p>
 					Linking a wallet means signing a message to prove you control it. We
 					store the wallet address, its chain, which wallet software you used,
-					and the time it was verified. The one-time challenge you sign is
-					stored only as a hash — the challenge text itself is never kept.
+					Circle&rsquo;s id for it if it is a Circle wallet, and when it was
+					verified. A wallet already linked to another account cannot be taken
+					over by linking it again; that request is refused.
 				</p>
 				<p>
-					We also keep an append-only ledger of wallet activity: the first time
-					an address was seen, the last time it proved control, and the events
-					it took part in (a generation started, a vault created, a strategy
-					published). At the moment a wallet proves control, the anonymous
-					visitor id described below is linked to it in that ledger. Before that
-					moment, it is not.
+					For each link attempt we also keep the challenge you were asked to
+					sign. Its one-time code is stored only as a hash. The rest (the
+					address, chain, wallet software, our site&rsquo;s address, and when it
+					was issued and expires) is kept as plain text, whether or not the link
+					completed, until your account is deleted.
 				</p>
 				<p>
-					A wallet already linked to another account cannot be taken over by
-					linking it again; that request is refused rather than transferred.
+					We also keep a ledger keyed by wallet address: when an address was
+					first linked here, and events it took part in, such as a generation
+					started or completed. New entries do not include the anonymous visitor
+					id described below. For a period in summer 2026, before our current
+					sign-in system, signing in with a wallet did record that id next to
+					the wallet address, and any entries from then are still in the ledger. The ledger has no database link to
+					your account, so deleting your account does not remove it.
+				</p>
+				<p>
+					If you pay from a Circle passkey wallet, your first payment also links
+					that browser&rsquo;s device payment key (see the next section) to your
+					account as a second wallet. It is listed in Account Settings, where
+					you can remove it.
 				</p>
 			</section>
 
 			<section>
-				<h2>When you pay for a generation</h2>
+				<h2>Free generations and payments</h2>
 				<p>
-					Generating a strategy is charged to your linked wallet — currently
-					$2.00 in testnet USDC — and that payment really settles. The terms
-					describe what that means for your funds; this section is about the
-					record it leaves.
+					Once your email address is verified, your first three generations are
+					free, with no wallet and no payment. Each one is recorded in{" "}
+					<code>free_generation_grants</code>: which run used it, and when. A
+					free run that fails to produce a strategy is handed back. That record
+					has no database link to your account, so deleting your account does
+					not remove it.
 				</p>
 				<p>
-					Every settled payment is written to a{" "}
-					<code>payment_receipts</code> row and kept, so that you can look back
-					at what you were charged. Each row holds:
+					After that, a generation currently costs $2.00 in testnet USDC, and the
+					payment really settles. It works through Circle&rsquo;s Gateway:
+				</p>
+				<ul>
+					<li>
+						Your first payment includes a deposit. Your wallet approves and
+						deposits test USDC (20 by default; you can change the amount) into
+						Circle&rsquo;s Gateway contract, where it is held as a balance for
+						your address.
+					</li>
+					<li>
+						With a Circle passkey wallet, the deposit goes instead to a device
+						payment key that your browser generates and keeps, unencrypted, in
+						its local storage. Anything that can read that storage can spend what
+						is left of the deposit, which is why each deposit to the key is
+						capped at $50.
+					</li>
+					<li>
+						For each generation you sign a payment authorisation with a wallet
+						linked to your account. Our server sends it to Circle&rsquo;s payment
+						service, which verifies it and moves $2.00 from your Gateway balance
+						to ours.
+					</li>
+				</ul>
+				<p>
+					Every payment that settles is written, at that moment, to a{" "}
+					<code>payment_receipts</code> row. Each row holds:
 				</p>
 				<ul>
 					<li>your account id, and the wallet address that paid;</li>
@@ -143,33 +249,37 @@ export default function Privacy() {
 						charged on;
 					</li>
 					<li>
-						the settlement reference our payment provider returned — an
-						identifier for the transfer, not an on-chain transaction hash;
+						the settlement reference Circle returned — an identifier for the
+						transfer, not an on-chain transaction hash;
 					</li>
 					<li>
-						which generation the payment funded, and when the payment settled.
+						when the payment settled and, once the generation is queued, which
+						generation it paid for.
 					</li>
 				</ul>
 				<p>
-					A second record, <code>generation_credits</code>, is the ledger that
-					decides what you are owed. A settled payment buys a credit and a
-					generation spends it, so that a run which takes your money and then
-					fails leaves the credit with you rather than leaving you out of pocket.
-					Alongside the payment details above, a credit row holds its state
-					(claimed, available, spent, or voided), the times it changed hands,
-					which generation spent it, and — if your client sent one — the
-					idempotency key it used, which is how a retried request is recognised
-					as the same charge instead of becoming a second one.
+					A second record, <code>generation_credits</code>, decides what you are
+					owed. A settled payment buys a credit and a generation spends it, so a
+					run that takes your money and then fails leaves the credit with you. A
+					credit row holds the payment details above, its state (claimed,
+					available, spent or voided), when that changed, which generation spent
+					it, and the idempotency key your client sent, if it sent one, which is
+					how a retried request is recognised as the same charge.
 				</p>
 				<p>
-					You can read your own receipts back in the app, and no other account
-					can see them. These rows have no expiry date — they persist until your
-					account is deleted, and removing them is part of the deletion process
-					described below. One honest limitation: writing the receipt is never
-					allowed to fail or delay the generation you paid for, so if our
-					database is unavailable at that moment a payment can settle without a
-					receipt row. A missing receipt is a gap in the record, not evidence
-					that no charge happened.
+					Receipts and credits belong to your account, and no other account can
+					read them. The site shows a payment&rsquo;s settlement reference when
+					it completes; your full receipt history is not yet shown on the site,
+					but your signed-in account can read it from our API, or you can ask us
+					for it. Writing the receipt is never allowed to block the generation
+					you paid for, so if our database fails at that moment a payment can
+					settle without a receipt row. A missing receipt is a gap in the
+					record, not evidence that no charge happened.
+				</p>
+				<p>
+					These records have no expiry date, and deleting your account does not
+					remove them: they carry your account id but no database link to the
+					account. Account Settings says so before you confirm a deletion.
 				</p>
 			</section>
 
@@ -177,97 +287,134 @@ export default function Privacy() {
 				<h2>What you make on Archimedes</h2>
 				<p>
 					We store what you put in and what comes out: the brief you write, the
-					strategy the system generates, its backtest results and rigor verdicts,
-					the reasoning trace behind it, and any chat you have with the agent.
-					This is the product — it is stored so you can come back to it.
+					strategy generated from it, the papers it drew on, its backtest results
+					and rigor verdicts, and the debate between models that produced it. If
+					you start a paper-trading deployment, we store its simulated positions,
+					trades and daily returns. This is the product, kept so you can come
+					back to it. Your strategies and paper-trading records are visible only
+					to your account; nothing on the site publishes them.
+				</p>
+				<p>
+					For every generation run that gets as far as producing candidates, we
+					keep each candidate, including the ones that fail the rigor gate and
+					the alternates ranked below the winner, with your brief, the strategy
+					specification and its verdict. A run that stops earlier (an invalid
+					brief, the model unavailable, no candidates) leaves no candidate
+					records; its brief stays only in a job record in our cache, deleted an
+					hour after the run ends.
+				</p>
+				<p>
+					For each run that produces a strategy we also record what it consumed
+					(token counts per model, elapsed and processor time, peak memory) next
+					to the price quote in force when it started. A check runs over the
+					measurement before it is saved and raises an error if anything
+					price-shaped is in it, so the measurement cannot quietly become a bill.
+					Your brief and the model&rsquo;s response text are in neither.
 				</p>
 				<p>
 					<strong>Your brief is sent to a language model to be answered.</strong>{" "}
-					Today that model runs on Amazon Bedrock, inside the same AWS account
-					that runs the rest of the service. Your brief text is part of the
-					prompt sent to it.
-				</p>
-				<p>
-					We keep every generation attempt, including the ones that fail the
-					rigor gate and the ones you reject — the brief text, the resulting
-					strategy specification, the papers it drew on, and the verdict. Keeping
-					the failures is deliberate: a system that only remembers its successes
-					cannot tell you how selective it was being.
-				</p>
-				<p>
-					We also record a measurement of what each generation run consumed:
-					token counts and elapsed seconds. That record is deliberately
-					measurement only. A check runs over it before it is saved and raises an
-					error if anything price-shaped is present, so the measurement cannot
-					quietly become a bill. Your prompt and the model&rsquo;s response text
-					are not part of it.
+					Every model we offer is called through Amazon Bedrock under our own AWS
+					account, including third-party models such as Meta&rsquo;s Llama or
+					DeepSeek; we do not send your brief to any other AI provider. The
+					default model runs in AWS&rsquo;s US East region. Two of the models you
+					can pick are served through Bedrock&rsquo;s routing across AWS&rsquo;s
+					US regions, so with those your brief may be processed in US East or US
+					West. Bedrock&rsquo;s own prompt logging is switched off in our
+					account.
 				</p>
 			</section>
 
 			<section>
 				<h2>Counting visitors</h2>
 				<p>
-					We want to know how many people reach the site and how far they get.
-					We do this without keeping a record of individuals:
+					We count how many people reach the site and how far they get, mostly
+					with counters rather than records of individuals:
 				</p>
 				<ul>
 					<li>
-						Your browser is given a random, opaque id in a cookie named{" "}
-						<code>archimedes_vid</code>. It is not derived from your IP address,
-						your device, or anything about you. It lasts 180 days and cannot be
-						read by JavaScript.
+						On its first response, our server gives your browser a random,
+						opaque id in a cookie named <code>archimedes_vid</code>. It is not
+						derived from your IP address, your device or anything about you. It
+						lasts 180 days and cannot be read by JavaScript. The server sets it
+						whether or not you allow analytics.
 					</li>
 					<li>
 						That id is fed into probabilistic distinct-count sketches
-						(HyperLogLog) for each funnel stage. The sketches count how many
-						distinct visitors reached a stage; they cannot be read back to
-						produce the list of ids that went in.
+						(HyperLogLog), which count how many different visitors reached each
+						step but cannot be read back as a list of ids. Some steps are counted
+						by our server whatever you choose in the consent banner: being asked
+						to connect a wallet, and starting a generation (and whether it was a
+						free one). Your browser reports that you landed on the site only if
+						you allow analytics.
 					</li>
 					<li>
-						Country comes from a two-letter code that our CDN derives from the
-						connection and passes on as a header. We do not run an IP-geolocation
-						lookup, and the servers behind the CDN cannot see your real IP at
-						all on that path.
+						When that landing report is sent, we also count your country and
+						device class, once per visitor. To count you only once, we keep a
+						marker holding your visitor id, which expires 180 days after it is
+						written. An older list of ids, recorded before this change in October
+						2026, expires 180 days after the first landing counted since the
+						change.
 					</li>
 					<li>
-						Device class (mobile, tablet, desktop) comes from the same CDN
-						headers, falling back to a coarse read of the user-agent string. The
-						user-agent string itself is not stored by this pipeline — only which
-						of those buckets it fell into.
+						Country comes from a two-letter code that our CDN adds to the
+						request; we do not run an IP-geolocation lookup. Device class
+						(mobile, tablet, desktop) comes from the same CDN headers, falling
+						back to a coarse read of your browser&rsquo;s user-agent, and only
+						the bucket is kept.
 					</li>
 				</ul>
 				<p>
-					This pipeline never reads your IP address. Daily counts expire after
-					90 days; running totals do not expire.
+					This counting never reads your IP address. Daily counts expire after
+					90 days; running totals do not expire. Our current code does not link
+					the visitor id to your account or your wallet; the one past exception,
+					in summer 2026, is described under wallets above.
 				</p>
 			</section>
 
 			<section>
-				<h2>IP addresses</h2>
+				<h2>IP addresses and logs</h2>
 				<p>
-					Being straightforward about this, because the section above is easy to
-					misread as &ldquo;we never touch IPs&rdquo;:
+					Because the counting above never reads IP addresses, it is easy to miss
+					where they are used:
 				</p>
 				<ul>
 					<li>
-						Your IP address is stored on each sign-in session record, alongside
-						your browser user-agent.
+						Your IP address is stored on each sign-in session record, as
+						described above.
 					</li>
 					<li>
-						Your IP address is used as a rate-limiting key, and as the key for a
-						daily cap on how many generations can be started from one address.
-						Those keys live in a cache and expire on their own — the
-						rate-limit counters within minutes, the daily generation cap within
-						36 hours.
+						It is the key for our rate limits and for the daily cap on
+						generations per address. For IPv6, the key is the first half of the
+						address rather than the whole of it. The API rate-limit counters and
+						the daily cap live in our cache and expire on their own, the counters
+						within an hour and the cap within 36 hours. Limits on signing in,
+						signing up, password resets and verification emails are counted in
+						our database, and those rows are deleted once their time window has
+						passed, when a later request triggers the clean-up.
 					</li>
 					<li>
-						When that daily cap is hit, the IP address is written to our
-						application log.
+						Amazon&rsquo;s web application firewall, in front of the site,
+						rate-limits requests per IP address and checks them against
+						Amazon&rsquo;s managed rules, including an IP-reputation list. We keep
+						no firewall logs; AWS keeps a small sample of recent requests,
+						including their IP addresses, for up to three hours.
 					</li>
 					<li>
-						Our web server and load balancer keep standard access logs, which
-						include IP addresses. Load balancer logs are deleted after 30 days;
-						application and web server logs after 90 days.
+						Our web server logs every request: your IP address, browser
+						user-agent, the address requested and the chain of forwarding
+						addresses. Sign-in tokens are removed from that access log, though
+						not from the error entry written when a request fails inside our
+						servers. Our application keeps a similar log of API requests, with
+						your IP address and the address requested; some of those addresses
+						contain a wallet address. Both are kept for 90 days.
+					</li>
+					<li>
+						Our load balancer logs every request with the full address
+						requested, including the one-time tokens in email-verification and
+						password-reset links (a verification token contains your email
+						address in encoded form). For visits through our CDN it records the
+						CDN server&rsquo;s IP address rather than yours. These logs are
+						deleted after 30 days.
 					</li>
 				</ul>
 				<p>
@@ -279,74 +426,84 @@ export default function Privacy() {
 
 			<section>
 				<h2>Cookies and browser storage</h2>
-				<p>Two cookies, both set by our own servers and both hidden from JavaScript:</p>
+				<p>
+					On your first visit a banner asks whether to allow two optional kinds
+					of browser storage, functional and analytics. Both stay off until you
+					choose, and you can change your choice on our{" "}
+					<a href="/security#storage-disclosure">Security page</a>. The banner
+					controls only what your browser stores and reports; it does not stop
+					the cookies our server sets.
+				</p>
+				<p>
+					Cookies, all set by our own servers, hidden from JavaScript, and sent
+					only over HTTPS:
+				</p>
 				<ul>
 					<li>
-						<strong>The sign-in session cookie.</strong> Present once you sign
-						in, expires after seven days.
+						<strong>The sign-in session cookie,</strong> present once you sign in.
+						It expires with the session, seven days after it was last renewed.
+					</li>
+					<li>
+						<strong>A five-minute sign-in check,</strong> set only while a Google
+						or GitHub sign-in is in progress, so that the sign-in that comes back
+						is the one you started.
 					</li>
 					<li>
 						<strong>
 							<code>archimedes_vid</code>
 						</strong>
-						, the anonymous visitor id described above, 180 days.
+						, the visitor id described above: 180 days, set whatever you choose
+						in the banner.
 					</li>
 				</ul>
 				<p>
-					We also keep some things in your browser&rsquo;s own storage that never
-					leave your device unless you send them to us: your light/dark theme
-					choice, which wallet you last connected and any nickname you gave it,
-					whether you have finished the onboarding tour, your rigor-strictness
-					preference, and, if you use a Circle passkey wallet, that
-					wallet&rsquo;s credential. None of these are tracking identifiers.
+					Your browser&rsquo;s own storage, which stays on your device unless
+					you send it to us:
+				</p>
+				<ul>
+					<li>
+						<strong>Always, because the site needs them:</strong> which wallet you
+						last connected, your consent choice, short-lived per-tab markers used
+						while linking a sign-in method or using a passkey, and, if you use a
+						Circle passkey wallet, that wallet&rsquo;s credential and its device
+						payment key. The payment key is a private key, stored unencrypted,
+						that can spend whatever is left of what you deposited to it.
+					</li>
+					<li>
+						<strong>Only if you allow functional storage:</strong> preferences
+						such as your light or dark theme, a nickname for your wallet, whether
+						you finished the onboarding tour, and your rigor-strictness setting.
+					</li>
+					<li>
+						<strong>Only if you allow analytics:</strong> a per-tab marker so that
+						your landing is reported once.
+					</li>
+				</ul>
+				<p>
+					None of these is an advertising or cross-site tracking identifier. The
+					Security page lists every cookie and storage key by name, with what
+					each one reveals.
 				</p>
 			</section>
 
 			<section>
-				<h2>Anything published is public and permanent</h2>
+				<h2>What goes on a public blockchain</h2>
 				<p>
-					When you deploy a vault, publish a reasoning trace, or transact, that
-					goes onto the Arc public testnet. This is the point of the product —
-					provenance you can verify without trusting us — but it has consequences
-					worth stating plainly.
-				</p>
-				<p>
-					<strong>On-chain records are public and permanent.</strong> Anyone can
-					read them. We cannot edit or delete them, and neither can you. A
+					Archimedes runs on the Arc public testnet.{" "}
+					<strong>On-chain records are public and permanent:</strong> anyone can
+					read them, and nobody, including us, can edit or delete them. A
 					deletion request reaches our database; it cannot reach a blockchain.
 				</p>
-				<p>What actually gets published, so there are no surprises:</p>
-				<ul>
-					<li>
-						<strong>Vault and contract addresses,</strong> and the fact that a
-						particular wallet created a vault. That is an ordinary public event
-						on any chain.
-					</li>
-					<li>
-						<strong>Hashes,</strong> not documents, in contract storage — the
-						registry holds a fingerprint of a strategy&rsquo;s methodology and of
-						the paper corpus behind it, never the strategy itself.
-					</li>
-					<li>
-						<strong>Revealed trace content, inside the transaction itself.</strong>{" "}
-						The commit-then-reveal flow proves a decision was made before its
-						outcome was known, and the reveal transaction carries the trace
-						contents so anyone can check the hash. That includes the
-						model&rsquo;s written reasoning, the market context, the capital
-						figure, and the portfolio weights before and after. It is not kept in
-						contract storage, but transaction history is public and permanent, so
-						treat it as published. Your original free-text brief is deliberately
-						excluded from what gets hashed and revealed.
-					</li>
-					<li>
-						<strong>A public provenance record on IPFS.</strong> A reduced version
-						of a trace — the papers cited, the methodology, the rigor scores, the
-						vault address, and the model&rsquo;s reasoning — is pinned to IPFS and
-						its address anchored on-chain. Position sizing, weights and code
-						hashes are deliberately left out. Pinned content is public and, in
-						practice, permanent.
-					</li>
-				</ul>
+				<p>
+					Today, the on-chain records you create here are your wallet&rsquo;s
+					transactions funding Circle&rsquo;s Gateway: a token approval and a
+					deposit. Circle then settles payments made from that balance on-chain,
+					on its own schedule. Paper trading is simulated and writes nothing to a
+					chain. The site does not currently offer vault deployment, on-chain
+					publication of reasoning traces or marketplace publishing, and we do
+					not pin anything to IPFS. If that changes, this page will say what gets
+					published before the feature is switched on.
+				</p>
 				<p>
 					<strong>A wallet address is pseudonymous, not anonymous.</strong> It is
 					not your name, but everything that address has ever done is linkable —
@@ -361,62 +518,61 @@ export default function Privacy() {
 				<p>These are the third parties your data actually reaches:</p>
 				<ul>
 					<li>
-						<strong>Amazon Web Services (US East region).</strong> The whole
-						service runs there — application servers, the database, the cache,
-						logs, and the CDN. In practice AWS holds everything described on this
-						page.
+						<strong>Amazon Web Services.</strong> Our servers, database, cache and
+						logs run in AWS&rsquo;s US East (N. Virginia) region, and every
+						request to the site passes through Amazon CloudFront, AWS&rsquo;s
+						global content-delivery network, on the way. AWS therefore holds
+						almost everything this page describes us storing.
 					</li>
 					<li>
-						<strong>Amazon SES,</strong> which delivers your verification and
-						password-reset emails. It receives your email address and the
-						contents of those messages.
+						<strong>Amazon SES,</strong> which sends the account emails described
+						above and receives mail sent to privacy@archimedes-arc.com. It sees
+						your email address and the contents of those messages, and keeps the
+						do-not-send list described above.
 					</li>
 					<li>
-						<strong>Amazon Bedrock,</strong> which runs the language model. Your
-						brief and the context around it are sent to it as a prompt. Bedrock
-						is part of the same AWS account, so this does not hand your text to a
-						separate vendor by default.
+						<strong>Amazon Bedrock,</strong> which runs the language models. Your
+						brief and the context around it are sent to it as a prompt, as
+						described above.
 					</li>
 					<li>
 						<strong>Google or GitHub,</strong> only if you choose to sign in with
 						them, and only for what that sign-in requires.
 					</li>
 					<li>
-						<strong>Circle,</strong> if you use a Circle-backed wallet. Creating a
-						passkey wallet registers a public key and a generated username with
-						Circle from your browser; it does not send them your email address or
-						password. Separately, our own operator wallet submits on-chain
-						transactions through Circle, which sees vault addresses and
-						transaction data.
+						<strong>Google (Gmail),</strong> if you email
+						privacy@archimedes-arc.com: that address forwards to the
+						operator&rsquo;s personal Gmail inbox.
 					</li>
 					<li>
-						<strong>IPFS pinning,</strong> for the public provenance records
-						described above.
+						<strong>Circle.</strong> When you pay for a generation, the paying
+						wallet address and the authorisation you signed go to Circle&rsquo;s
+						payment service, whatever wallet you use. If you create a Circle
+						passkey wallet, your browser registers a public key and a username
+						with Circle (the wallet name you type, or a generated one if you
+						leave it blank), and then sends that wallet&rsquo;s transactions
+						through Circle, which pays their network fees. We never send Circle
+						your email address or password.
 					</li>
 					<li>
-						<strong>The Arc testnet network.</strong> Your browser talks
-						directly to the Arc testnet RPC endpoint and, when you follow a
-						transaction link, to the Arc block explorer. Those services see your
-						IP address and what you asked the chain about.
+						<strong>The Arc testnet network.</strong> Your browser talks directly
+						to the Arc testnet RPC endpoint and, when you follow a transaction
+						link, to the Arc block explorer. Those services see your IP address
+						and what you asked the chain about.
 					</li>
 					<li>
-						<strong>Google Fonts — linked, but blocked.</strong> The page markup
-						still asks for typefaces from Google&rsquo;s font CDN, and we would
-						rather delete that line than explain it. As the site is served today
-						our content security policy does not permit it: styles and font
-						files may load only from our own origin, so both the stylesheet and
-						the fonts are refused before they are fetched and the page renders
-						in the fallback typefaces already on your device. What can still
-						reach Google is the connection hint the markup opens ahead of that
-						blocked load — a network connection Google may see your IP address
-						from, carrying nothing about the page. Removing the link is tracked
-						separately; until it is gone, this is the accurate description.
+						<strong>Our documentation site,</strong> docs.archimedes-arc.com,
+						linked from every page here. It loads its typefaces from Google Fonts
+						and asks GitHub&rsquo;s API for our repository&rsquo;s details from
+						your browser, so Google and GitHub see your IP address when you open
+						it.
 					</li>
 				</ul>
 				<p>
-					Market price data is pulled by our servers from public market-data
-					sources. That is a one-way request we make; nothing about you goes with
-					it.
+					This site itself serves its typefaces from our own domain and makes no
+					requests to Google Fonts or any other font service. Market price data
+					is pulled by our servers from public market-data sources; that is a
+					one-way request we make, and nothing about you goes with it.
 				</p>
 			</section>
 
@@ -426,9 +582,10 @@ export default function Privacy() {
 					<li>
 						<strong>No advertising or analytics trackers.</strong> There is no
 						Google Analytics, no Segment, no Mixpanel, no PostHog, no Facebook
-						pixel, and no error-reporting SaaS on this site. The browser is also
-						blocked from running third-party scripts by our content security
-						policy, so a tracker could not be added by accident.
+						pixel, and no error-reporting service on this site. Our content
+						security policy also blocks the browser from running scripts from any
+						other site, so a third-party tracking script could not be added by
+						accident.
 					</li>
 					<li>
 						<strong>We do not sell your data,</strong> and we do not share it for
@@ -436,7 +593,8 @@ export default function Privacy() {
 					</li>
 					<li>
 						<strong>We do not buy or import contact lists.</strong> The only
-						addresses we ever email are ones people typed in themselves.
+						addresses we email are ones people gave us themselves: typed into our
+						forms, or supplied by the Google or GitHub sign-in they chose.
 					</li>
 				</ul>
 			</section>
@@ -445,70 +603,110 @@ export default function Privacy() {
 				<h2>How long we keep things, and how to get them deleted</h2>
 				<p>Some things expire on their own:</p>
 				<ul>
-					<li>Sign-in sessions, after seven days.</li>
-					<li>Rate-limit counters, within minutes; daily generation caps, within 36 hours.</li>
-					<li>Daily visitor counts, after 90 days.</li>
-					<li>Load balancer access logs, after 30 days; application and web server logs, after 90 days.</li>
+					<li>
+						Sign-in sessions, seven days after they were last renewed; an hourly
+						job then deletes the expired records.
+					</li>
+					<li>
+						API rate-limit counters, within an hour; daily generation caps, within
+						36 hours; generation job records in our cache, an hour after the run
+						ends.
+					</li>
+					<li>
+						Visitor-id markers, 180 days after they are written; daily visitor
+						counts, after 90 days.
+					</li>
+					<li>
+						Firewall samples, within three hours; load balancer logs, after 30
+						days; web server and application logs, after 90 days.
+					</li>
+					<li>Automated database backups, after 7 days.</li>
 				</ul>
 				<p>
-					<strong>Everything else persists until you ask us to delete it.</strong>{" "}
-					Your account, your strategies, every generation attempt including the
-					rejected ones, your profile, your payment receipts, and stored
-					reasoning traces have no expiry date today.
+					Everything else has no expiry date today: your account and profile,
+					your strategies and every stored generation candidate, your
+					paper-trading records, your payment receipts and credits, your
+					free-generation record, the wallet ledger, the email log, API keys,
+					wallet-link challenges, and running visitor totals.
 				</p>
 				<p>
-					We are describing what we have rather than a policy we have not built:{" "}
-					<strong>
-						there is no delete-my-account button and no automated deletion job.
-					</strong>{" "}
-					Deletion today is manual, done by a person, on request. Ask through the
-					contact route below and we will remove your account and everything
-					attached to it.
+					<strong>You can delete your account yourself</strong> in Account
+					Settings, under Delete account. You type a confirmation, plus your
+					password if your account has one (otherwise you must have signed in
+					within the last day), and the deletion takes effect at once, with no
+					recovery window. Apart from the expiries listed above, nothing deletes
+					your data automatically. What account deletion does, exactly:
 				</p>
+				<ul>
+					<li>
+						<strong>Erased:</strong> your sessions, your API keys, your sign-in
+						methods (your password and any linked Google or GitHub), your wallet
+						links and wallet-link challenges, your profile row
+						(which holds your encrypted contact email), your paper-trading
+						deployments with everything recorded under them, and the log of
+						emails we sent you.
+					</li>
+					<li>
+						<strong>Detached from you rather than destroyed:</strong> your
+						strategies, their rigor passports, the generation records behind
+						them, and descriptions of vaults you created stay in our database
+						with your account id removed, because other accounts can reference
+						them. They still contain your brief text and, if a wallet was linked
+						when they were made, that wallet&rsquo;s address.
+					</li>
+					<li>
+						<strong>Not touched:</strong> your payment receipts, your credit
+						ledger, your free-generation record and the wallet ledger, because
+						none of them has a database link to your account; and nothing on a
+						blockchain.
+					</li>
+				</ul>
 				<p>
-					It is worth being precise about what &ldquo;everything attached&rdquo;
-					means, because two kinds of record are handled differently. Records
-					that exist only for you are erased: your sessions, your linked sign-in
-					providers, your linked wallets, your profile row — which is the one
-					holding your encrypted contact email — your paper-trading history, and
-					your payment receipts and credits. Records that other accounts can
-					reference by id
-					are detached from you rather than destroyed: your strategies, their
-					passports, the generation records behind them, and vault descriptions
-					keep existing with the link to you removed, so that deleting your
-					account cannot break someone else&rsquo;s. If you want those erased as
-					well rather than detached, say so and they will be. Some of this the
-					database now does by itself when the account row goes and some of it is
-					still done by hand as part of the request — which is which is an
-					implementation detail we are actively closing, and it does not change
-					what you end up with.
+					If you want any of the detached or untouched records removed, or you
+					cannot sign in to delete your account yourself, write to the contact
+					address below. There is no self-service export of your data yet; you
+					can ask for a copy the same way.
 				</p>
-				<p>
-					Two limits, stated up front: published records cannot be deleted by
-					anyone once they are on a blockchain or pinned to IPFS (see above), and
-					log entries age out on the schedules listed rather than being pulled out
-					individually.
-				</p>
-				<p>
-					A self-service deletion and export path is work we intend to do. Until
-					it exists, this page will keep describing the manual process, because
-					describing the one we mean to build would be a claim about software that
-					is not running.
-				</p>
+				<p>Limits, stated up front:</p>
+				<ul>
+					<li>Anything on a blockchain cannot be deleted by anyone (see above).</li>
+					<li>
+						Log entries age out on the schedules above rather than being removed
+						one account at a time.
+					</li>
+					<li>
+						Deleted data remains in our automated database backups for up to 7
+						days.
+					</li>
+					<li>
+						We also keep one disk snapshot of a server we decommissioned in
+						August 2026. It has no expiry date and contains whatever was on that
+						server&rsquo;s disk when it was taken.
+					</li>
+					<li>
+						An address on the SES do-not-send list stays there until we remove it
+						by hand.
+					</li>
+				</ul>
 			</section>
 
 			<section>
 				<h2>Security</h2>
 				<p>
-					Passwords are hashed. Sign-in provider tokens and your optional contact
-					email are encrypted before storage. Both cookies are marked HttpOnly
-					and, in production, Secure. Sign-in and sign-up are rate limited, and
-					personal fields are stripped from our logs before they are written.
+					Passwords are hashed. Sign-in provider access and refresh tokens, and
+					the optional contact email, are encrypted before storage. Our cookies
+					are hidden from JavaScript and sent only over HTTPS. Sign-in and
+					sign-up are rate limited. Profile answers and contact emails are
+					redacted from our application logs, and sign-in tokens from our web
+					server&rsquo;s access log, but account ids, wallet addresses, IP
+					addresses and browser user-agents do appear in our logs, which expire
+					on the schedules above.
 				</p>
 				<p>
 					Archimedes runs on a public testnet and is early software. Please do
-					not connect a wallet holding assets you care about, and please do not
-					put anything in a prompt that you would not want stored.
+					not connect a wallet holding assets you care about, do not deposit
+					more test USDC than you need, and do not put anything in a brief that
+					you would not want stored.
 				</p>
 			</section>
 
@@ -523,22 +721,28 @@ export default function Privacy() {
 			<section>
 				<h2>Changes to this policy</h2>
 				<p>
-					When what the software does changes, this page changes with it. The
-					&ldquo;last updated&rdquo; line at the top is the record of that. If a
-					change materially affects what we collect or who receives it, we will
-					say so rather than editing quietly.
+					We will update this page whenever what the software does changes. It is
+					still a draft awaiting the owner&rsquo;s approval and can lag behind the
+					code; the issue tracker below is the place to point out where it does.
+					Once the page is approved, the &ldquo;last updated&rdquo; line at the
+					top will record each change; until then it is undated. If a change
+					materially affects what we collect or who receives it, we will say so
+					on this page rather than editing quietly.
 				</p>
 			</section>
 
 			<section>
 				<h2>Contact</h2>
 				<p>
-					Privacy questions, and deletion or access requests, go to{" "}
+					Privacy questions, and requests to delete or see your data, go to{" "}
 					<a href="mailto:privacy@archimedes-arc.com">
 						privacy@archimedes-arc.com
 					</a>
-					. That is a private mailbox and the right route for anything involving
-					your account or your personal details.
+					. Mail to that address is received by Amazon SES and forwarded through
+					Amazon SNS to the operator&rsquo;s personal Gmail inbox; we keep no
+					other copy of it. Messages larger than 150&nbsp;KB, such as ones with
+					attachments, bounce, so please send text only and include only the
+					personal details your request needs.
 				</p>
 				<p>
 					If you would rather raise something in the open — a question about this

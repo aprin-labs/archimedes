@@ -32,6 +32,11 @@ const layout = src("components/Layout.jsx");
 const landing = src("components/Landing.jsx");
 const app = src("App.jsx");
 
+// The component body only: everything from the default export on. Each page's
+// header comment names stale claims in order to say they are gone, and some
+// guards must not be satisfied (or tripped) by that comment.
+const rendered = (source) => source.slice(source.indexOf("export default function"));
+
 // ── Routing: anonymous, public, and not feature-gated ───────────────────
 
 test("/privacy and /terms resolve as public routes", () => {
@@ -213,32 +218,56 @@ test("external links on the policy pages are safe and point at the real repo", (
 test("the privacy policy discloses the things it would be convenient to omit", () => {
 	assert.match(privacy, /archimedes_vid/, "the 180-day visitor cookie must be named");
 	assert.match(privacy, /180 days/);
+	// TRUE again since #1908: nginx trusts CloudFront's origin-facing ranges,
+	// so the X-Client-IP Better Auth stores on auth_sessions is the viewer's.
+	// Before #1908 it was the CloudFront edge and this sentence was false.
 	assert.match(privacy, /IP address is stored on each sign-in/i, "session IP storage must be disclosed");
-	assert.match(privacy, /no delete-my-account button/i, "the absent deletion path must be stated");
 	assert.match(privacy, /public and permanent/i, "the on-chain permanence caveat must be present");
 	assert.match(privacy, /pseudonymous, not anonymous/i);
-	assert.match(privacy, /Google Fonts/, "the font-CDN link in index.html must be disclosed either way");
 	assert.match(privacy, /do not sell your data/i);
+	// The vid cookie is set by funnel_middleware on the first response with no
+	// consent check; the banner only gates the browser's own landing beacon.
+	assert.match(
+		sectionBody(privacy, "Counting visitors"),
+		/sets it\s+whether or not you allow analytics/,
+		"the visitor cookie must be disclosed as set regardless of the consent choice",
+	);
+	// The ALB access log (S3, 30 days) keeps full URLs; nginx's redaction does
+	// not reach it, and a verify-email token is an unencrypted JWT of the address.
+	assert.match(
+		sectionBody(privacy, "IP addresses and logs"),
+		/verification token contains your email\s+address/,
+		"the load balancer's unredacted auth links must be disclosed",
+	);
 });
 
-// The draft called Google Fonts "the only third-party request the site makes
-// from your browser". Two things were wrong with that. It is not the only one
-// — circle-wallet.js and circle-tx-executor.js call modular-sdk.circle.com and
-// config.js points the browser at rpc.testnet.arc.network — and it is not a
-// request that succeeds: the CSP served by nginx/nginx.conf is
-// `style-src 'self' 'unsafe-inline'; font-src 'self' data:`, which allows
-// neither fonts.googleapis.com nor fonts.gstatic.com, so the stylesheet and
-// the font files are refused. Describing a blocked request as the site's one
-// third-party contact was wrong in both directions at once.
-test("the third-party disclosure matches the CSP that is actually served", () => {
+// #1367 shipped self-service deletion (Account Settings -> Delete account,
+// auth/auth.js deleteUser.enabled). The draft said there was "no
+// delete-my-account button" and that deletion was manual; a guard used to pin
+// that sentence. It now pins the opposite, in both directions.
+test("the privacy policy describes the self-service deletion that exists", () => {
+	const deletion = sectionBody(privacy, "How long we keep things, and how to get them deleted");
+	assert.match(deletion, /You can delete your account yourself/, "self-service deletion must be stated");
+	assert.doesNotMatch(privacy, /no delete-my-account button/i, "false since #1367: the button exists");
+	assert.doesNotMatch(privacy, /Deletion today is manual/i, "false since #1367: the database does it in-request");
+	assert.match(deletion, /no\s+recovery window/, "the irreversibility must be stated before anyone clicks");
+});
+
+// Fonts, twice over. The draft first called Google Fonts "the only
+// third-party request the site makes from your browser" (false: the Circle SDK
+// and the Arc RPC are browser calls too), then "linked, but blocked" (stale:
+// the rebrand deleted the preconnects and the css2 link from ui/index.html, so
+// this site requests nothing from Google at all). What IS true is that the
+// docs site linked from every page, docs.archimedes-arc.com (mkdocs-material),
+// loads Google Fonts and calls api.github.com from the visitor's browser, with
+// no CSP. The guard pins the true text for both sites and forbids the stale one.
+test("the third-party disclosure matches what each site actually loads", () => {
 	const path = sectionBody(privacy, "Who else is in the path");
-	assert.match(path, /Google Fonts/, "the font-CDN link must still be disclosed");
-	assert.match(path, /linked, but blocked/i, "the bullet must lead with the fact that the request is refused");
-	assert.doesNotMatch(
-		path,
-		/loads its typefaces from/i,
-		"false: style-src/font-src are 'self' only, so the font CDN never loads",
-	);
+	assert.match(path, /serves its typefaces from our own domain/, "this site's self-hosted fonts must be stated");
+	assert.doesNotMatch(path, /linked, but blocked/i, "stale: ui/index.html no longer links the font CDN at all");
+	assert.match(path, /docs\.archimedes-arc\.com/, "the docs site's third parties must be disclosed");
+	assert.match(path, /loads its typefaces from Google Fonts/, "the docs site really does load Google Fonts");
+	assert.match(path, /GitHub&rsquo;s API/, "the docs site's in-browser GitHub API call must be disclosed");
 	assert.match(path, /Arc testnet RPC endpoint/i, "the browser's own RPC calls must be disclosed");
 	assert.match(path, /Circle/, "the browser's Circle SDK calls must be disclosed");
 	assert.doesNotMatch(
@@ -252,7 +281,7 @@ test("the third-party disclosure matches the CSP that is actually served", () =>
 // that charge leaves is collected personal data and belongs on this page.
 // Grounded in backend/archimedes/models/payment_receipt.py.
 test("the privacy policy discloses the payment records the paywall creates", () => {
-	const receipts = sectionBody(privacy, "When you pay for a generation");
+	const receipts = sectionBody(privacy, "Free generations and payments");
 	assert.match(receipts, /payment_receipts/, "the table must be named, as archimedes_vid is");
 	assert.match(receipts, /wallet address that paid/i);
 	assert.match(receipts, /settlement reference/i);
@@ -263,6 +292,34 @@ test("the privacy policy discloses the payment records the paywall creates", () 
 	// you are owed has disclosed the comfortable half.
 	assert.match(receipts, /generation_credits/, "the credit ledger must be named too");
 	assert.match(receipts, /idempotency key/i, "the client-supplied key stored on the credit must be disclosed");
+	// #1643: the first three runs on a verified account are free, and each one
+	// writes a free_generation_grants row (no FK to auth_users).
+	assert.match(receipts, /free_generation_grants/, "the free-generation ledger must be named");
+	// #1908 (#1910): the receipt is written at the settle, before the enqueue.
+	assert.match(receipts, /written, at that moment/, "the receipt is written when the payment settles");
+});
+
+// payment_receipts.user_id and generation_credits.user_id carry no FK to
+// auth_users (migration 85ca5310b7a1 leaves them out on purpose), and
+// ui/src/account-deletion.js lists both under DELETION_RETAINED. The draft
+// said removing them was "part of the deletion process" and listed them as
+// erased; both sentences were false. The receipts list renders only inside
+// Portfolio, a roadmap-hidden page, so "read your receipts back in the app"
+// was false too.
+test("the privacy policy says payment records survive account deletion", () => {
+	const receipts = sectionBody(privacy, "Free generations and payments");
+	assert.match(receipts, /deleting your account does not\s+remove them/, "receipts and credits outlive the account");
+	assert.doesNotMatch(privacy, /removing them is part of the deletion process/i, "false: no FK, nothing removes them");
+	assert.doesNotMatch(privacy, /read your own receipts back in the app/i, "false: the receipts list is roadmap-hidden");
+	const deletion = sectionBody(privacy, "How long we keep things, and how to get them deleted");
+	const erased = deletion.match(/<strong>Erased:<\/strong>([\s\S]*?)<\/li>/);
+	assert.ok(erased, "the Erased bullet must exist");
+	assert.doesNotMatch(erased[1], /receipt|credit/i, "receipts and credits are not erased by account deletion");
+	assert.match(
+		deletion,
+		/Not touched:<\/strong>\s+your payment receipts,\s+your credit\s+ledger/,
+		"the retained records must be named where the deletion is described",
+	);
 });
 
 // #1429 makes user_profiles CASCADE on account deletion: the row holding the
@@ -275,12 +332,17 @@ test("the deletion section splits what is erased from what is detached", () => {
 	const deletion = sectionBody(privacy, "How long we keep things, and how to get them deleted");
 	assert.match(deletion, /profile row/i, "the encrypted-email row's fate must be stated explicitly");
 	assert.match(deletion, /detached from you rather than destroyed/i, "the SET NULL tables must be described");
-	assert.match(deletion, /payment receipts/i, "receipts must be named in what deletion removes");
+	assert.match(deletion, /payment receipts/i, "receipts must be named where deletion is described");
 	assert.doesNotMatch(
 		deletion,
 		/detach your strategies and profile/i,
 		"the profile row is erased, not detached (#1429 cascade policy)",
 	);
+	// SET NULL clears owner_user_id only: strategy_store keeps brief_intent and
+	// owner_wallet, so "detached" must not read as "anonymised".
+	assert.match(deletion, /still contain your brief text/, "what a detached row still holds must be stated");
+	// Aurora BackupRetentionPeriod=7 (infra/aurora.tf); deleted rows live on there.
+	assert.match(deletion, /automated database backups for up to 7\s+days/, "the backup window must be disclosed");
 });
 
 // #1460 stood up privacy@archimedes-arc.com (SES receipt rule -> SNS -> the
@@ -304,6 +366,15 @@ test("both pages route account and privacy requests to the private mailbox", () 
 		/do not post personal details/i,
 		"the tracker must still be labelled public",
 	);
+	// How the mail is DELIVERED is part of the disclosure: the receipt rule's
+	// SNS action has one email subscriber, a personal Gmail inbox
+	// (infra/ses_inbound.tf), so Google holds what is sent, and an SNS action
+	// bounces any message over 150 KB. "A private mailbox we read" described
+	// neither.
+	assert.match(sectionBody(privacy, "Contact"), /personal Gmail inbox/, "the Gmail relay must be disclosed");
+	assert.match(sectionBody(privacy, "Contact"), /150&nbsp;KB/, "the attachment-size bounce must be disclosed");
+	assert.match(sectionBody(terms, "Contact"), /personal Gmail inbox/, "the terms must not imply a dedicated mailbox");
+	assert.doesNotMatch(terms, /a private mailbox we read/i, "stale: the address is a relay to a personal inbox");
 });
 
 test("the terms state the testnet and no-advice position", () => {
@@ -350,6 +421,67 @@ test("the terms disclose the real generation charge without over-claiming the ma
 	// the payments section.
 	const limits = sectionBody(terms, "Limits and fair use");
 	assert.match(limits, /\$2\.00 in testnet USDC/, "the fair-use section must name the price too");
+});
+
+// Three facts the first draft had wrong, each pinned against the live task
+// definition's values in infra/ecs.tf:
+//   - FREE_GENERATIONS_PER_ACCOUNT=3 (#1643): "each generation costs $2.00"
+//     stopped being true for verified accounts on 2026-09-01;
+//   - the money comes from a Circle GATEWAY balance funded by an approve +
+//     deposit (ui/src/x402.js), not straight from "your linked wallet", and a
+//     passkey's device payment key is capped at $50 per deposit
+//     (ui/src/payment-deposit-cap.js);
+//   - the daily caps are 100 per account and 200 per IP
+//     (GENERATION_DAILY_CAP_PER_USER/_PER_IP); 10 and 20 are only the code
+//     fallbacks in services/generation_quota.py.
+test("the terms state the free allowance, the Gateway flow and the live caps", () => {
+	assert.match(terms, /first three generations are free/, "the free allowance must be stated");
+	assert.match(
+		sectionBody(terms, "Limits and fair use"),
+		/After your three free generations/,
+		"the price sentence must not read as unconditional",
+	);
+	assert.match(terms, /Circle&rsquo;s Gateway contract/, "the deposit step must be disclosed");
+	assert.match(rendered(terms), /capped at \$50/, "the device-payment-key deposit cap must be disclosed");
+	assert.doesNotMatch(terms, /leaves your wallet and arrives in ours/i, "false: settlement moves Gateway balances");
+	assert.doesNotMatch(terms, /charged to\s+your linked wallet/i, "false: the charge comes from the Gateway balance");
+	const limits = sectionBody(terms, "Limits and fair use");
+	assert.match(limits, /one hundred\s+generations per account per day/, "the live per-account cap");
+	assert.match(limits, /two hundred per IP address per day/, "the live per-IP cap");
+	assert.doesNotMatch(terms, /ten\s+generations per account per day/i, "stale: 10/20 are only code fallbacks");
+});
+
+// Paper trading is a database replay (services/paper_trading.py) and the live
+// agent runner is in dry-run, so the draft's "executing a paper trade genuinely
+// writes to a public chain" was false; the user's only own on-chain writes are
+// the Gateway approve + deposit. IPFS pinning never ran in production
+// (docs/adr/ipfs-pinning-not-live.md), and per-vault chat was deleted. All of
+// these are absences, so each is pinned on the RENDERED text (the source
+// comments name them in order to say they are gone; see rendered() above).
+
+test("neither page describes features that are not running", () => {
+	assert.doesNotMatch(terms, /paper trade genuinely\s+writes/i, "false: paper trading writes nothing to a chain");
+	assert.match(terms, /Paper\s+trading, by contrast, is simulated/, "the paper-trading position must be stated");
+	for (const [name, page] of [
+		["Privacy", privacy],
+		["Terms", terms],
+	]) {
+		assert.doesNotMatch(rendered(page), /pinned to IPFS|pinning a\s+provenance record|IPFS\s+records/i, `${name}: no IPFS pinning runs`);
+	}
+	assert.match(privacy, /do\s+not pin anything to IPFS/, "the absence of pinning must be stated, not just omitted");
+	assert.doesNotMatch(rendered(privacy), /chat you have with the agent/i, "per-vault chat was deleted");
+});
+
+// #1908 (#1911): auth/auth.js dropIdToken nulls idToken on every account write,
+// and alembic 7d2f9a4c1e60 cleared the stored ones. The draft's "Those tokens
+// are encrypted" covered only access/refresh; the Google ID token sat in clear.
+// #1908 (#1912): auth/session-sweep.js deletes expired auth_sessions hourly;
+// before it, expired rows (with their IP and user-agent) were never deleted.
+test("the privacy policy states the token and session facts #1908 made true", () => {
+	assert.match(privacy, /We do not store the ID token/, "the dropped ID token must be stated");
+	assert.doesNotMatch(privacy, /tokens it issued\.\s+Those tokens are encrypted/, "stale: the ID token was not encrypted");
+	assert.match(privacy, /job that runs every\s+hour\s+deletes\s+expired session records/, "the session sweep must be stated");
+	assert.doesNotMatch(privacy, /Sessions last seven days/, "stale: sessions roll, and expired rows used to persist");
 });
 
 // Once the page says you are really charged, what happens when the thing you

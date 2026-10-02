@@ -2,7 +2,7 @@
 
 > **status:** current
 > **owner:** Dan Browne
-> **updated:** 2026-09-03
+> **updated:** 2026-10-01
 > **superseded-by:** —
 
 Every public claim Archimedes makes, with a verdict on each and the code that backs it.
@@ -21,6 +21,11 @@ pass moved the remaining `OVER-CLAIMED` generation-on-chain tags to `CHANGED`.
 cancelled mainnet cutover ([#1240](https://github.com/aprin-labs/archimedes/issues/1240),
 owner call 2026-08-30) had left a live claim standing on four user-facing surfaces. Those
 rows were measured against `main` on 2026-09-03; no other row was re-measured.
+
+**Amended 2026-10-01 (#1432)** with the policy-pages section below (`/privacy` and
+`/terms`), measured against `main` at `3591cd79` plus the live stack (task definition
+`archimedes-backend:281`, which runs that commit). The footer row under Landing gained
+the free-allowance precision; no other row was re-measured.
 
 ## How to read a row
 
@@ -67,7 +72,7 @@ checks that recur:
 | Every vault / non-custodial / custody claim on this page | `RETRACTED` | #1469. `ui/test/roadmap-copy.test.js` source-scans this file for `/vault\|non-?custodial\|custody/i` with no carve-outs — which is why the file's own comments are written around the words. |
 | "Arc census live — ≥N reported instances" | `TRUE` | `ui/src/components/Landing.jsx:504` renders "Live census unavailable · No cached count substituted" when `GET /api/config/contracts` fails or the pool count is unreadable. The count is a floor by construction (`:16` scopes it to five core fields). |
 | The page quotes no strategy pass count and no performance number | `TRUE` | The only percentage on the page is "70/30" — a methodology parameter, not a result. Deliberate; see `ui/src/components/Landing.jsx:90`. |
-| Footer / announcement — "No real funds" | `CHANGED` | Was an unqualified "No real funds" on `PublicLayout.jsx` and the Landing footer, which read as *nothing you sign moves value* after the generation paywall shipped (`dry_run: false`). Narrowed to no mainnet money; generation fee is real testnet USDC: `ui/src/components/PublicLayout.jsx:23` (announcement) and `ui/src/components/PublicLayout.jsx:149` (the shell footer — the Landing page no longer carries its own footer, see `ui/test/policy-pages.test.js`), with the same narrowing in the Landing FAQ copy at `ui/src/components/Landing.jsx:188`. |
+| Footer / announcement — "No real funds" | `CHANGED` | Was an unqualified "No real funds" on `PublicLayout.jsx` and the Landing footer, which read as *nothing you sign moves value* after the generation paywall shipped (`dry_run: false`). Narrowed to no mainnet money; generation fee is real testnet USDC: `ui/src/components/PublicLayout.jsx:23` (announcement) and `ui/src/components/PublicLayout.jsx:149` (the shell footer — the Landing page no longer carries its own footer, see `ui/test/policy-pages.test.js`), with the same narrowing in the Landing FAQ copy at `ui/src/components/Landing.jsx:188`. Still `TRUE` with the free allowance live (`infra/ecs.tf:776` pins `FREE_GENERATIONS_PER_ACCOUNT=3`): the line says the fee is real, not that every generation pays it; `/terms` states the allowance. |
 | "Does Archimedes trade for me?" paper-trading split | `CHANGED` | Landing FAQ no longer names the unmerged `paper_agent_trades` table as a visitor path. `ui/src/components/Landing.jsx:182` says simulated paper trading grades `paper_daily_returns`, not on-chain execution proof. The two-book split from [PR #1704](https://github.com/aprin-labs/archimedes/pull/1704#issuecomment-5493036672) lives on machine surfaces (`agent.json` paper note), which state that table is not on main. |
 
 ## Security page — `ui/src/components/Security.jsx`
@@ -173,6 +178,25 @@ unset, so the boundary holds under both answers.
 | Claim | Status | What backs it |
 |---|---|---|
 | "Anything already published to a blockchain or pinned to IPFS stays there" | `RETRACTED` | #1526. Deletion copy now says chain writes stay; it does not claim an IPFS pin (`ui/src/components/AccountSettings.jsx:844`). Guarded by `ui/test/ipfs-pinning-copy.test.js`. |
+
+## Policy pages — `ui/src/components/Privacy.jsx`, `ui/src/components/Terms.jsx`
+
+Both pages carry the owner's draft banner and an undated "Last updated" line until he
+approves them (`ui/test/policy-pages.test.js:116`). Every row below is pinned there by a
+guard that a mutation of the page turns red.
+
+| Claim | Status | What backs it |
+|---|---|---|
+| "Your IP address is stored on each sign-in session record" | `TRUE` | False before #1908: nginx trusted only the VPC, so `X-Client-IP` (the value Better Auth stores on `auth_sessions`) was the CloudFront edge. `nginx/nginx.conf:66` and `:71` now trust the VPC and CloudFront's origin-facing ranges, so it is the viewer; `auth/auth.js:934` reads that header and `:935` keeps IPv6 as the /64, which the page states (`ui/src/components/Privacy.jsx:382`). |
+| Expired sessions are deleted hourly; the Google ID token is not stored | `CHANGED` | Was "Sessions last seven days" and "Those tokens are encrypted". `auth/session-sweep.js:38` runs the sweep hourly (#1912); `auth/auth.js:182` (`dropIdToken`) nulls the ID token on every account write and alembic `7d2f9a4c1e60` cleared the stored ones (#1911; its upgrade line is in the live `/archimedes/app` log). Page: `ui/src/components/Privacy.jsx:99`, `:157`. |
+| Self-service deletion: what is erased, detached, and not touched | `CHANGED` | Was "there is no delete-my-account button" and listed receipts and credits as erased. The lists mirror `ui/src/account-deletion.js:28` (erased), `:43` (detached) and `:57` (retained: receipts and credits have no FK). The page adds the other FK-less tables (free-generation grants, the wallet ledger) and that detached rows keep the brief and `owner_wallet`: `ui/src/components/Privacy.jsx:642`, `:650`, `:658`. |
+| Three free generations, then $2.00 testnet USDC from a Circle Gateway balance; caps 100/account and 200/IP per day | `CHANGED` | Was "each generation costs $2.00, charged to your linked wallet", "the test USDC leaves your wallet", and caps of 10/20. `infra/ecs.tf:776` (free allowance), `:781` (price), `:709` and `:710` (caps; 10/20 are only code fallbacks). The deposit is `ui/src/components/Generate.jsx:205` (20 USDC default) and `ui/src/payment-deposit-cap.js:6` ($50 per deposit to a passkey's device key). Page: `ui/src/components/Terms.jsx:74`, `:199`, `:208`. |
+| The payment receipt is written when the payment settles | `CHANGED` | Was true only after the enqueue, so a 402 or enqueue error left a settled payment with no receipt. `backend/archimedes/api/generate_routes.py:580` now writes it at the settle (#1910). Page: `ui/src/components/Privacy.jsx:242`. |
+| Profile answers are visible only to their owner | `CHANGED` | Interests and how-you-heard were readable by any signed-in account. `backend/archimedes/api/user_routes.py:120` answers every non-owner with the missing-profile 404 (#1909). Page: `ui/src/components/Privacy.jsx:116`. |
+| Visitor-id markers expire 180 days after they are written | `TRUE` | `backend/archimedes/services/visitor_insights_store.py:77` sets the marker TTL to the cookie's lifetime (#1912). The page also states that the server sets `archimedes_vid` whatever the consent choice: `ui/src/components/Privacy.jsx:338`. |
+| privacy@ is relayed to a personal Gmail inbox; messages over 150 KB bounce | `CHANGED` | Was "a private mailbox we read". `infra/ses_inbound.tf:58` records that the SNS subscriber is a personal inbox. Page: `ui/src/components/Privacy.jsx:742`, `ui/src/components/Terms.jsx:361`. |
+| Deleted data stays in automated backups for up to 7 days; one disk snapshot has no expiry | `TRUE` | `infra/aurora.tf:94` (`backup_retention_period = 7`). The manual Aurora snapshots were deleted on 2026-10-01; the remaining EBS snapshot of the decommissioned EC2 server is disclosed at `ui/src/components/Privacy.jsx:682`. |
+| IPFS pinning, Google Fonts on this site, per-vault chat, on-chain paper trades | `RETRACTED` | None runs: `docs/adr/ipfs-pinning-not-live.md`; `ui/index.html` has no font-CDN link; chat was deleted; paper trading is a database replay and vault deployment is behind `ui/src/featureFlags.js:57`. The docs site's own Google Fonts and GitHub API calls are disclosed instead (`ui/src/components/Privacy.jsx:564`). Guarded by `ui/test/policy-pages.test.js:462` and `:264`. |
 
 ## `docs/user-stories.md`
 

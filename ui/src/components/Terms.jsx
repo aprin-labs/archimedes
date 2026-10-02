@@ -3,33 +3,37 @@ import PolicyBanner from "./PolicyBanner";
 // /terms — the public terms of service.
 //
 // Same standard as Privacy.jsx: every factual claim about what the service
-// does today is grounded in code, and the PR that added this page carries the
-// statement-to-file map. The two claims most likely to rot, and the code that
-// currently makes them true:
+// does today is grounded in main plus the live stack, re-checked on
+// 2026-10-01 (#1432). The claims most likely to rot, and what makes them true:
 //
 //   - the payment position, which is SPLIT and must stay split on the page.
 //     The generation paywall SETTLES FOR REAL: infra/ecs.tf pins
 //     GENERATION_PAYMENT_REQUIRED="true", GENERATION_PAYMENTS_DRY_RUN="false"
-//     and GENERATION_PRICE_USD="2.00" in the live task definition, so
-//     services/generation_payment.py runs its verify+settle path through
-//     Circle's facilitator and test USDC really moves. The MARKETPLACE rail is
-//     the one still switched off: PAYMENTS_DRY_RUN="true" (same file;
-//     backend/archimedes/main.py's default) keeps marketplace/settlement.py on
-//     dry_run_noop pending the custody migration (#975). An earlier draft of
-//     this page said settlement was off in production full stop — that was
-//     false the day GENERATION_PAYMENTS_DRY_RUN flipped, and it is exactly the
-//     claim a test now pins. If either flag moves, THIS PAGE IS PART OF THAT
-//     CHANGE.
-//   - the generation price and limits ($2.00; 10/account/day, 20/IP/day) —
-//     defaults in backend/archimedes/services/generation_payment.py and
-//     services/generation_quota.py, pinned in infra/ecs.tf. The page says
-//     "currently" and names them as operational settings rather than promising
-//     them, so a tuning change doesn't instantly make the page false.
-//
-// One deliberate non-claim: on-chain activity itself is NOT simulated.
-// AGENT_DRY_RUN defaults to false, so trace publishes and trades are real
-// transactions — on a testnet, with test assets. The page says that plainly
-// rather than letting "dry run" imply nothing happens.
+//     and GENERATION_PRICE_USD="2.00", so services/generation_payment.py runs
+//     its verify+settle path through Circle's Gateway facilitator. The money
+//     moves between GATEWAY BALANCES: the payer first deposits into Circle's
+//     GatewayWallet contract (ui/src/x402.js depositToGateway; 20 USDC default
+//     in Generate.jsx; a passkey wallet funds a device payment key instead,
+//     capped at $50 per deposit by ui/src/payment-deposit-cap.js), and each
+//     settle moves $2.00 to the platform's Gateway balance. There is no
+//     withdraw control in the UI. The MARKETPLACE rail is the one switched
+//     off: PAYMENTS_DRY_RUN="true", and the marketplace pages are roadmap-
+//     hidden (ui/src/featureFlags.js ROADMAP_PAGES). If any of these flags
+//     move, THIS PAGE IS PART OF THAT CHANGE.
+//   - the free allowance, price and limits: 3 free generations per verified
+//     account (FREE_GENERATIONS_PER_ACCOUNT, services/free_generations.py),
+//     $2.00, and 100/account/day + 200/IP/day (GENERATION_DAILY_CAP_PER_USER /
+//     _PER_IP), all pinned in infra/ecs.tf. The code fallbacks in
+//     services/generation_quota.py are 10/20; the live values are 100/200.
+//     The quota runs BEFORE the paywall and counts every POST /start,
+//     including the unpaid one Generate.jsx sends to fetch a fresh 402.
+//   - what is on-chain: the user's own Gateway approve + deposit, and Circle's
+//     settlement. Paper trading is a database replay (services/paper_trading.py)
+//     with anchoring off (PAPER_TRACE_ANCHOR unset). The live agent runner
+//     takes AGENT_DRY_RUN from SSM and logs "DRY RUN" lines, so it signs
+//     nothing. Vault deployment and on-chain trace publishing are behind
+//     ROADMAP_SURFACES_ENABLED. IPFS pinning never ran in production
+//     (docs/adr/ipfs-pinning-not-live.md).
 export default function Terms() {
 	return (
 		<div className="page-content policy-page">
@@ -60,27 +64,51 @@ export default function Terms() {
 			</section>
 
 			<section>
-				<h2>Test assets only — but generation is really charged</h2>
+				<h2>Test assets only — but paid generation is really charged</h2>
 				<p>
 					This is a testnet service. The assets are test assets with no monetary
 					value, obtained free from a faucet.
 				</p>
 				<p>
 					<strong>
-						Generating a strategy is behind a paywall, and that paywall settles
-						for real.
+						Your first three generations are free once your email address is
+						verified. After that, generating a strategy is behind a paywall, and
+						that paywall settles for real.
 					</strong>{" "}
-					Each generation currently costs $2.00 in testnet USDC. You sign a
-					payment authorisation with the wallet linked to your account, we verify
-					it and settle it through Circle&rsquo;s payment facilitator, and the
-					test USDC leaves your wallet and arrives in ours. That is a real
-					transfer, not a simulated one, and we keep a receipt of it you can read
-					back in the app. Because the currency is test USDC you obtained free
-					from a faucet, nothing of monetary value leaves you — but do not read
+					Each paid generation currently costs $2.00 in testnet USDC. Payment
+					works through Circle&rsquo;s Gateway:
+				</p>
+				<ul>
+					<li>
+						Your first payment includes a deposit: your wallet approves and
+						deposits test USDC (20 by default; you can change the amount) into
+						Circle&rsquo;s Gateway contract, where it is held as a balance for
+						your address. With a Circle passkey wallet, the deposit goes instead
+						to a device payment key kept in your browser, and each deposit to it
+						is capped at $50.
+					</li>
+					<li>
+						For each generation you sign a payment authorisation with a wallet
+						linked to your account. We verify it and settle it through
+						Circle&rsquo;s payment facilitator, and $2.00 of test USDC moves from
+						your Gateway balance to ours. That is a real transfer, not a
+						simulated one.
+					</li>
+					<li>
+						Whatever you do not spend stays in Circle&rsquo;s Gateway. The site
+						does not currently offer a way to withdraw it, so deposit only what
+						you expect to use.
+					</li>
+				</ul>
+				<p>
+					Because the currency is test USDC you obtained free from a faucet,
+					nothing of monetary value leaves you — but do not read
 					&ldquo;testnet&rdquo; as &ldquo;the payment step is fake&rdquo;. The
-					reference on your receipt is Circle&rsquo;s settlement reference, not a
-					chain transaction hash; Circle performs the on-chain settlement on its
-					own schedule.
+					site shows a settlement reference when a payment completes. That is
+					Circle&rsquo;s reference, not a chain transaction hash; Circle performs
+					the on-chain settlement on its own schedule. The records we keep of
+					your payments are described in the{" "}
+					<a href="/privacy">Privacy Policy</a>.
 				</p>
 				<p>
 					<strong>
@@ -90,24 +118,26 @@ export default function Terms() {
 					A settled payment buys a credit, and a generation spends it; if the run
 					fails, crashes, or never starts, the credit stays yours and your next
 					attempt spends it instead of charging you again. Credits do not expire.
-					We are being direct that this is not a money-back guarantee: settlement
-					runs one way through our payment provider, so we cannot send test USDC
-					back to you today, and promising a refund we cannot execute would be
-					worse than telling you plainly what you get.
+					A free generation that does not produce a strategy is handed back the
+					same way. We are being direct that this is not a money-back guarantee:
+					settlement runs one way through our payment provider and the product
+					has no way to send test USDC back to you, so we do not offer refunds.
 				</p>
 				<p>
-					The <em>other</em> payment path is the one that is switched off. Buying
-					or subscribing to a strategy in the marketplace runs end to end so it
-					can be tested — a price quote, a payment header, a receipt — but in
-					production nothing is verified and nothing settles there, and no
+					The <em>other</em> payment path is the one that is switched off. The
+					strategy marketplace (publishing strategies and subscribing to them) is
+					not offered on the site today, and its payment rail is off in
+					production: nothing is verified and nothing settles there, and no
 					balance moves. If that ever changes, it will be an announced change
 					with this page updated first, not a silent flip.
 				</p>
 				<p>
-					One thing that is <em>not</em> simulated: transactions on the testnet
-					are real transactions. Deploying a vault, publishing a trace, or
-					executing a paper trade genuinely writes to a public chain. Real chain,
-					real permanence — play money.
+					One thing that is <em>not</em> simulated: funding your Gateway balance
+					is a real transaction on a public chain, and Circle settles your
+					payments on-chain. Real chain, real permanence — play money. Paper
+					trading, by contrast, is simulated and writes nothing to a chain, and
+					the site does not currently offer vault deployment or on-chain
+					publication of reasoning traces.
 				</p>
 				<p>
 					<strong>
@@ -152,8 +182,10 @@ export default function Terms() {
 						Accounts are for one person. Do not share, sell, or transfer one.
 					</li>
 					<li>
-						Linking a wallet or a sign-in provider is something you do
-						deliberately; we never merge accounts on your behalf.
+						Linking a wallet or a sign-in provider happens only through something
+						you do, and we never merge accounts on your behalf. Paying from a
+						Circle passkey wallet links that wallet&rsquo;s device payment key to
+						your account; you can unlink it in Account Settings.
 					</li>
 					<li>Tell us if you think your account has been compromised.</li>
 				</ul>
@@ -164,19 +196,24 @@ export default function Terms() {
 				<p>
 					Generation costs us real compute, so it is both priced and capped.{" "}
 					<strong>
-						Each generation currently costs $2.00 in testnet USDC, charged to
-						your linked wallet before the work starts.
+						After your three free generations, each generation currently costs
+						$2.00 in testnet USDC, taken from your Circle Gateway balance before
+						the work starts.
 					</strong>{" "}
-					The price is an operational setting we may change; when we do, the
-					quote you are shown before you pay is the price that applies.
+					An unspent credit from a paid run that failed is used first. The price
+					is an operational setting we may change; when we do, the quote you are
+					shown before you pay is the price that applies.
 				</p>
 				<p>
-					On top of the price there are caps. Currently the defaults are ten
-					generations per account per day and twenty per network address per day,
-					and individual endpoints are rate limited as well. These numbers are
-					operational settings, not entitlements — we may change them, and we
-					will not treat a limit as a promise. A request that is over the cap is
-					refused before you are asked to pay, never after.
+					On top of the price there are caps. Currently they are one hundred
+					generations per account per day and two hundred per IP address per day
+					(an IPv6 network counts as one address), and individual endpoints are
+					rate limited as well. Every request to start a generation counts toward
+					the daily caps, including the unpaid one the site sends to fetch payment
+					details. These numbers are operational settings, not entitlements — we
+					may change them, and we will not treat a limit as a promise. Caps are
+					checked before any payment is verified or settled, so a request refused
+					for being over a cap is never charged.
 				</p>
 				<p>
 					Do not try to get around the limits: creating extra accounts for that
@@ -221,11 +258,12 @@ export default function Terms() {
 					improving the service.
 				</p>
 				<p>
-					Some actions publish deliberately: publishing a strategy to the
-					marketplace, publishing a reasoning trace on-chain, or pinning a
-					provenance record. Those make the material public, and they cannot be
-					undone. Do not publish anything you would not want permanently
-					readable by anyone.
+					Nothing you make here is published automatically: your strategies and
+					paper-trading records are private to your account, and the site does
+					not currently offer publishing to the marketplace or to a blockchain.
+					Anything that does reach a public blockchain, such as your Gateway
+					deposit, cannot be undone, so do not put anything there you would not
+					want permanently readable by anyone.
 				</p>
 				<p>
 					If you send us feedback or bug reports, we may act on them freely and
@@ -247,16 +285,18 @@ export default function Terms() {
 			<section>
 				<h2>Suspension and termination</h2>
 				<p>
-					We may suspend or close an account that breaks these terms, abuses the
-					service, or puts it or its users at risk — immediately where the risk
-					is immediate, and otherwise with notice where we reasonably can. We may
-					also stop offering the service entirely.
+					We may close an account that breaks these terms, abuses the service, or
+					puts it or its users at risk — immediately where the risk is immediate,
+					and otherwise with notice where we reasonably can. Closing an account
+					deletes it as the Privacy Policy describes. We may also stop offering
+					the service entirely.
 				</p>
 				<p>
-					You can stop using it whenever you like, and can ask us to delete your
-					data as described in the{" "}
-					<a href="/privacy">Privacy Policy</a>. Published on-chain and IPFS
-					records survive account closure — nobody can delete those.
+					You can stop using it whenever you like, and you can delete your account
+					yourself in Account Settings; the{" "}
+					<a href="/privacy">Privacy Policy</a> describes what that removes and
+					what it leaves behind. Records on a public blockchain survive account
+					closure — nobody can delete those.
 				</p>
 			</section>
 
@@ -290,11 +330,12 @@ export default function Terms() {
 			<section>
 				<h2>Changes to these terms</h2>
 				<p>
-					We will update this page as the service changes, and the &ldquo;last
-					updated&rdquo; line records when. If a change materially affects your
-					rights or what we do, we will say so plainly rather than editing
-					quietly. Continuing to use the service after a change means you accept
-					the updated terms.
+					We will update this page as the service changes. Once it is approved,
+					the &ldquo;last updated&rdquo; line will record when; until then it is
+					an undated draft. If a change materially affects your rights or what we
+					do, we will say so plainly on this page rather than editing quietly.
+					Continuing to use the service after a change means you accept the
+					updated terms.
 				</p>
 			</section>
 
@@ -316,8 +357,9 @@ export default function Terms() {
 					go to{" "}
 					<a href="mailto:privacy@archimedes-arc.com">
 						privacy@archimedes-arc.com
-					</a>{" "}
-					— a private mailbox we read.
+					</a>
+					. That address forwards to the operator&rsquo;s personal Gmail inbox;
+					the Privacy Policy explains how, and why to keep attachments out.
 				</p>
 				<p>
 					Anything you would rather raise in the open, including a mistake on
