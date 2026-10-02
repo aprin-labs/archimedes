@@ -311,7 +311,9 @@ async def test_served_manifest_omits_roadmap_gated_routes_while_the_flag_is_off(
     _set_flag(monkeypatch, None)
     gated = _roadmap_gated_routes()
     assert gated, "no roadmap-gated route found; the check below would pass vacuously"
-    assert not (await _manifest_routes()) & gated
+    manifest = await _manifest_routes()
+    assert not manifest & gated
+    assert not manifest & GATED
 
 
 async def test_served_manifest_lists_the_gated_routes_while_the_flag_is_on(monkeypatch):
