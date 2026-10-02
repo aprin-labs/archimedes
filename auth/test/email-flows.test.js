@@ -383,7 +383,7 @@ test('a refused sign-in does not silently re-send verification mail — the user
 //   4. fail-safe    — no X-Client-IP at all (a request that skipped nginx)
 //                     falls back to the shared bucket, i.e. over-limits rather
 //                     than handing the caller a key it controls.
-//   5. mechanism    — the library-level reads the four above rest on.
+//   5. mechanism    — the library-level reads the tests above rest on.
 // Test 1 is the mutation guard: revert either half of the fix and it fails.
 //
 // NOTE ON FIDELITY: these run with the process's own NODE_ENV unset, so
