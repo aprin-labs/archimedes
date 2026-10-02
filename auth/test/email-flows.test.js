@@ -506,13 +506,17 @@ test('SECURITY: nginx SETS X-Client-IP, so a spoof from a non-edge source never 
   assert.equal((conf.match(/proxy_set_header X-Client-IP/g) ?? []).length, 1)
 
   // $remote_addr is only ever influenced by X-Forwarded-For when the socket
-  // peer is a trusted proxy (in production always the ALB), and realip's
-  // recursive walk stops at the first hop outside the trusted set. That set is
-  // the VPC CIDR narrowed by AUDIT I7 (not the RFC1918 ranges, which would have
-  // let the box itself spoof) plus CloudFront's origin-facing ranges from a
-  // generated include (#1908), so the value is the viewer CloudFront saw. The
-  // include's contents are pinned by backend/tests/test_nginx_real_client_ip.py;
-  // here: no other set_real_ip_from DIRECTIVE may appear in nginx.conf itself.
+  // peer is a trusted proxy, and realip's recursive walk stops at the first hop
+  // outside the trusted set. That set is the VPC CIDR narrowed by AUDIT I7 (not
+  // the RFC1918 ranges, which would have let the box itself spoof) plus
+  // CloudFront's origin-facing ranges from a generated include (#1908), so the
+  // value is the viewer CloudFront saw. Which VPC hosts can be the peer is set
+  // by the task SG (infra/ecs.tf): the two public subnets, which hold the ALB's
+  // ENIs and also the two fck-nat instances, so the peer is not always the ALB.
+  // nginx.conf's "Who can be the socket peer" block says why the NATs are not a
+  // way to forge a hop. The include's contents are pinned by
+  // backend/tests/test_nginx_real_client_ip.py; here: no other set_real_ip_from
+  // DIRECTIVE may appear in nginx.conf itself.
   assert.match(conf, /^\s*set_real_ip_from 10\.0\.0\.0\/16;$/m)
   assert.match(conf, /^\s*include \/etc\/nginx\/cloudfront-origin-facing\.conf;$/m)
   assert.match(conf, /^\s*real_ip_header X-Forwarded-For;$/m)

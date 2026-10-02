@@ -20,6 +20,7 @@ import pytest
 from archimedes.api.limiter import limiter
 from archimedes.services import client_ip as shared
 from archimedes.services.generation_quota import GenerationQuota, client_ip, enforce_generation_quota
+from starlette.requests import Request
 
 # Two addresses in one /64 (2001:db8:1:2::/64), written differently on purpose:
 # compressed, fully expanded, upper case.
@@ -87,6 +88,28 @@ def test_unparsable_values_never_become_keys(key) -> None:
     assert key(_req(x_real_ip="not-an-ip", peer=None)) == "unknown"
     # A zone id is accepted by ipaddress but must not reach the key.
     assert key(_req(x_real_ip="fe80::1%eth0")) == "fe80::/64"
+
+
+def _starlette_req(headers: dict[str, str], peer: str = "10.0.0.2") -> Request:
+    """A real starlette Request, so header lookups are case-insensitive as in production."""
+    raw = [(k.lower().encode(), v.encode()) for k, v in headers.items()]
+    return Request({"type": "http", "method": "GET", "path": "/", "headers": raw, "client": (peer, 40000)})
+
+
+@pytest.mark.parametrize("key", KEYERS.values(), ids=KEYERS.keys())
+def test_a_forged_x_forwarded_for_is_never_the_key(key) -> None:
+    """X-Forwarded-For is never read: its leftmost hops are whatever the client sent.
+
+    nginx forwards it with ``$proxy_add_x_forwarded_for``, so the backend sees the
+    client's own entries first. X-Real-IP (set, not appended, by nginx) is the key;
+    without it, the socket peer is, never the forwarded header.
+    """
+    forged = "198.51.100.66, 2001:db8:dead::1"
+    assert key(_starlette_req({"X-Forwarded-For": forged, "X-Real-IP": "203.0.113.7"})) == "203.0.113.7"
+    assert key(_starlette_req({"X-Forwarded-For": forged, "X-Real-IP": "2001:db8:1:2::1"})) == "2001:db8:1:2::/64"
+    # No X-Real-IP: the socket peer, and a different forged header buys no new bucket.
+    assert key(_starlette_req({"X-Forwarded-For": forged}, peer="10.0.0.9")) == "10.0.0.9"
+    assert key(_starlette_req({"X-Forwarded-For": "192.0.2.1"}, peer="10.0.0.9")) == "10.0.0.9"
 
 
 async def test_generation_cap_counts_one_ipv6_64_in_one_redis_bucket(monkeypatch) -> None:

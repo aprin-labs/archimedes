@@ -15,9 +15,10 @@ with identical rules, declared on the server{} block so it REPLACES the stock
 http-level ``access_log``. These tests pin:
 
 * the format reads only the redacted variables, never the raw request/Referer;
-* it is declared once at server{} level (parsed by block, not by position in the
-  file), nothing re-adds an http-level one, and no location logs with any other
-  format (``access_log <path>;`` with no format means the unredacted ``combined``);
+* every server{} block declares it once at server level, or ``off`` (parsed by
+  block, not by position in the file, and each server{} is its own context),
+  nothing re-adds an http-level one, and no location logs with any other format
+  (``access_log <path>;`` with no format means the unredacted ``combined``);
 * limit_req rejections are logged below the stock error_log level, because each
   error-log entry carries the raw request line and Referer;
 * the map rules, executed (PCRE named groups translated to Python), redact
@@ -184,19 +185,26 @@ def test_log_format_reads_only_the_redacted_variables() -> None:
     assert not raw, f"{FORMAT} still logs raw ${raw[0]}, which carries the auth tokens"
 
 
-def _directives_in_context(conf: str) -> list[tuple[tuple[str, ...], list[str]]]:
+def _directives_in_context(
+    conf: str, blocks: list[tuple[str, ...]] | None = None
+) -> list[tuple[tuple[str, ...], list[str]]]:
     """Every directive in the fragment with the block path it sits in.
 
     ``((), ["limit_req_zone", ...])`` is http level (this file is spliced into the
-    stock ``http {}``); ``(("server",), [...])`` is server level;
-    ``(("server", "location /api/auth/"), [...])`` is inside that location. A small
+    stock ``http {}``); ``(("server[1]",), [...])`` is server level in the first
+    ``server {}`` block; ``(("server[1]", "location /api/auth/"), [...])`` is inside
+    that location. Each ``server {}`` is numbered in file order, so two server
+    blocks are two contexts: one cannot inherit the other's directives. A small
     nginx tokenizer: quotes, backslash escapes, ``#`` comments, and the
     ``${NGINX_*}`` envsubst placeholders the image renders at boot (a placeholder
-    that stands alone, like ``${NGINX_RESOLVER_LINE}``, is dropped).
+    that stands alone, like ``${NGINX_RESOLVER_LINE}``, is dropped). ``blocks``,
+    when given, collects the path of every block opened, even one with no
+    directives in it.
     """
     out: list[tuple[tuple[str, ...], list[str]]] = []
     stack: list[str] = []
     words: list[str] = []
+    servers = 0
     i, n = 0, len(conf)
     while i < n:
         c = conf[i]
@@ -209,7 +217,13 @@ def _directives_in_context(conf: str) -> list[tuple[tuple[str, ...], list[str]]]
             out.append((tuple(stack), words))
             words, i = [], i + 1
         elif c == "{":
-            stack.append(" ".join(words))
+            header = " ".join(words)
+            if header == "server":
+                servers += 1
+                header = f"server[{servers}]"
+            stack.append(header)
+            if blocks is not None:
+                blocks.append(tuple(stack))
             words, i = [], i + 1
         elif c == "}":
             assert not words, f"unterminated directive before '}}': {words}"
@@ -241,31 +255,47 @@ def _directives_in_context(conf: str) -> list[tuple[tuple[str, ...], list[str]]]
 def test_the_tokenizer_sees_the_whole_server_block() -> None:
     """Anti-vacuity for the two tests below: the parse reaches every location."""
     directives = _directives_in_context(_conf())
-    locations = {ctx[1] for ctx, _ in directives if len(ctx) >= 2 and ctx[0] == "server"}
+    locations = {ctx[1] for ctx, _ in directives if len(ctx) >= 2 and ctx[0] == "server[1]"}
     assert {"location /api/auth/", "location = /nginx-health", "location /", "location ^~ /app"} <= locations
     assert ((), ["limit_req_zone", "$binary_remote_addr", "zone=api_write:10m", "rate=20r/m"]) in directives
-    assert [ctx for ctx, args in directives if args[0] == "server_name"] == [("server",)]
+    assert [ctx for ctx, args in directives if args[0] == "server_name"] == [("server[1]",)]
+    # A second server{} is a context of its own, not merged into the first.
+    two = _directives_in_context("server { listen 1; } server { listen 2; }")
+    assert two == [(("server[1]",), ["listen", "1"]), (("server[2]",), ["listen", "2"])]
 
 
 def test_server_access_log_uses_the_redacted_format_and_replaces_the_stock_one() -> None:
-    """One redacted access_log at SERVER level, and nothing anywhere logs unredacted.
+    """Every server{} declares its own redacted access_log (or ``off``); nothing logs unredacted.
 
     Server level, not merely "first in the file": an access_log inside one
     location applies to that location only, and every other location would keep
-    inheriting the stock http-level ``access_log … main``. Inside a location the
-    only acceptable forms are ``off`` and this same format; ``access_log <path>;``
-    with no format means ``combined``, which prints the raw request and Referer.
+    inheriting the stock http-level ``access_log … main``. The same goes for a
+    second ``server {}`` block: one with no access_log of its own inherits the
+    stock one, whatever the first server declares. Inside a location the only
+    acceptable forms are ``off`` and this same format; ``access_log <path>;`` with
+    no format means ``combined``, which prints the raw request and Referer.
     """
-    logs = [(ctx, args) for ctx, args in _directives_in_context(_conf()) if args[0] == "access_log"]
+    blocks: list[tuple[str, ...]] = []
+    directives = _directives_in_context(_conf(), blocks)
+    logs = [(ctx, args) for ctx, args in directives if args[0] == "access_log"]
     assert not [args for ctx, args in logs if ctx == ()], (
         "an http-level access_log in this conf.d fragment ADDS to the base image's `access_log … main`, "
         "so every request would also be logged unredacted"
     )
-    assert [args for ctx, args in logs if ctx == ("server",)] == [
-        ["access_log", "/var/log/nginx/access.log", FORMAT]
-    ], (
-        "the redacted access_log must be declared once at server{} level, so it replaces the stock one "
-        "for every location"
+    redacted = ["access_log", "/var/log/nginx/access.log", FORMAT]
+    servers = [block[0] for block in blocks if len(block) == 1 and block[0].startswith("server[")]
+    assert servers, "no server{} block parsed"
+    for server in servers:
+        declared = [args for ctx, args in logs if ctx == (server,)]
+        assert declared in ([redacted], [["access_log", "off"]]), (
+            f"{server} declares {declared or 'no access_log'} at server level: every server{{}} must declare "
+            "the redacted access_log once (or `off`), so it replaces the stock one for every location it serves"
+        )
+    # The production server (server_name archimedes-arc.com) keeps its log, redacted.
+    production = [ctx for ctx, args in directives if args[:2] == ["server_name", "archimedes-arc.com"]]
+    assert len(production) == 1, production
+    assert [args for ctx, args in logs if ctx == production[0]] == [redacted], (
+        f"the production server {production[0][0]} must log, redacted, not turn its access log off"
     )
     nested = [(ctx, args) for ctx, args in logs if len(ctx) > 1]
     for ctx, args in nested:
