@@ -6,7 +6,7 @@ repeated::
     aiohttp.client_exceptions.ClientResponseError: 429,
         message='Too Many Requests', url='https://rpc.testnet.arc.network'
 
-web3 7.16 builds its session with ``raise_for_status=True``, so Arc's throttle
+web3 (7.16 and 8.0) builds its session with ``raise_for_status=True``, so Arc's throttle
 arrives as a ``ClientResponseError`` — a subclass of ``ClientError``, which is
 in this client's ``exception_retry_configuration``. The client therefore
 answered "you are sending too much" by sending more, immediately, on a fixed

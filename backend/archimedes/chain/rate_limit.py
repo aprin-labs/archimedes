@@ -6,8 +6,8 @@ message='Too Many Requests', url='https://rpc.testnet.arc.network'``. Everything
 the incident issue tracked was downstream of that one fact: the "VPC→RPC
 intermittent latency" was 429s plus client retries, not a slow network path.
 
-**Why a 429 is not just another transport error.** ``web3`` 7.16 opens its
-session with ``raise_for_status=True``, so a throttled response surfaces as
+**Why a 429 is not just another transport error.** ``web3`` (7.16 and 8.0)
+opens its session with ``raise_for_status=True``, so a throttled response surfaces as
 ``ClientResponseError`` — a subclass of ``ClientError``, which is in this
 client's retry set. web3 therefore already retries a 429, immediately, with a
 fixed ``backoff_factor * 2**i`` sleep and **no jitter**. Two consequences, both
