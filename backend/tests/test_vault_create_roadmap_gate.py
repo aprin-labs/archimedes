@@ -14,9 +14,13 @@ create), so a direct API caller could still get a vault deployed.
 off, which it is in every environment unless set to ``true``, each of the three
 answers 404 and nothing downstream of the gate runs: not the route's auth
 dependency, not body-schema validation, not the handler. Two things do run
-first, the app's middleware and FastAPI's JSON parse of the body, so a body
-that is not valid JSON gets FastAPI's 422 ``json_invalid`` instead; that is
-pinned here too, because the docs state it. With the flag on, each route
+first, the app's middleware and FastAPI's read of the body. A body sent with a
+JSON content type is parsed there: malformed JSON gets FastAPI's 422
+``json_invalid``, and bytes that do not decode as text (invalid UTF-8, for
+example) get its 400 ``There was an error parsing the body``. A body with any
+other content type, or none, reaches the gate and gets the 404. Nothing
+downstream of the gate runs in any of these cases. All of that is pinned here
+too, because the docs state it. With the flag on, each route
 behaves exactly as it did before. The create route's behaviour is pinned in
 this file; publish and subscribe in ``tests/api/test_marketplace_routes.py``.
 
@@ -58,13 +62,23 @@ AGENT_CARD = REPO_ROOT / "ui" / "public" / ".well-known" / "agent.json"
 
 @contextlib.contextmanager
 def _linked_wallet(app, wallet: str = WALLET):
-    """Stand in for a signed-in account with a verified linked wallet."""
+    """Stand in for a signed-in account with a verified linked wallet.
+
+    Yields a list that gets one entry per call to the stand-in, so a test can
+    assert the route's auth dependency never ran.
+    """
     from archimedes.api.wallet_routes import require_linked_wallet
 
+    calls: list[str] = []
+
+    def _resolve() -> str:
+        calls.append(wallet)
+        return wallet
+
     prev = app.dependency_overrides.get(require_linked_wallet)
-    app.dependency_overrides[require_linked_wallet] = lambda: wallet
+    app.dependency_overrides[require_linked_wallet] = _resolve
     try:
-        yield
+        yield calls
     finally:
         if prev is None:
             app.dependency_overrides.pop(require_linked_wallet, None)
@@ -167,20 +181,49 @@ async def test_flag_off_answers_404_before_auth_and_before_body_schema_validatio
     fx["deploy"].assert_not_called()
 
 
+MALFORMED_JSON = b'{"name": "V", '
+
+
+@pytest.mark.parametrize(
+    ("content", "content_type", "status", "detail"),
+    [
+        # Sent as JSON and parsed before the gate: FastAPI's 422.
+        pytest.param(MALFORMED_JSON, "application/json", 422, None, id="malformed-json"),
+        # Sent as JSON, but the bytes are not valid UTF-8: FastAPI's 400.
+        pytest.param(
+            b'{"name": "\xff"}',
+            "application/json",
+            400,
+            "There was an error parsing the body",
+            id="undecodable-bytes",
+        ),
+        # The same malformed bytes as the first case, sent as text/plain: not
+        # parsed before the gate, so the gate answers.
+        pytest.param(MALFORMED_JSON, "text/plain", 404, GATE_404["detail"], id="text-plain"),
+    ],
+)
 @pytest.mark.parametrize("route", sorted(GATED))
-async def test_flag_off_body_that_is_not_json_gets_fastapis_422_first(monkeypatch, route):
-    """The one request shape the gate does not answer first, pinned so the docs'
-    exact statement of it stays true: FastAPI parses the JSON body before it
-    resolves any dependency, so a body that does not parse is a 422
-    ``json_invalid``. Nothing downstream runs for it either."""
+async def test_flag_off_body_read_runs_before_the_gate(monkeypatch, route, content, content_type, status, detail):
+    """What FastAPI's read of the body answers before the gate, pinned so the
+    docs' exact statement of it stays true. FastAPI reads the body before it
+    resolves any dependency and parses it only when it is sent with a JSON
+    content type: malformed JSON is a 422 ``json_invalid``, and bytes that do
+    not decode as text are a 400. A body with any other content type is not
+    parsed there, so it reaches the gate and gets the 404. In every case
+    nothing downstream of the gate runs: not the auth dependency, not the
+    handler."""
     _set_flag(monkeypatch, None)
     from archimedes.main import app
 
-    with _linked_wallet(app), _create_side_effects() as fx:
-        resp = await _post_route(app, route, content=b'{"name": "V", ', headers={"Content-Type": "application/json"})
+    with _linked_wallet(app) as auth_calls, _create_side_effects() as fx:
+        resp = await _post_route(app, route, content=content, headers={"Content-Type": content_type})
 
-    assert resp.status_code == 422, resp.text
-    assert [err["type"] for err in resp.json()["detail"]] == ["json_invalid"]
+    assert resp.status_code == status, resp.text
+    if detail is None:
+        assert [err["type"] for err in resp.json()["detail"]] == ["json_invalid"]
+    else:
+        assert resp.json() == {"detail": detail}
+    assert auth_calls == []  # the route's auth dependency never ran
     fx["deploy"].assert_not_called()
     fx["rigor"].assert_not_called()
     fx["identity"].assert_not_called()

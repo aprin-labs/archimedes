@@ -82,14 +82,17 @@ unless set to `true` (`roadmap_surfaces_enabled()` in
 `404` `{"detail": "Not offered: roadmap, not shipped"}` and nothing downstream of the
 gate runs: not the auth check, not body-schema validation, not the rigor gate, not
 the chain call. The gate is a route-level dependency, so the app's middleware and
-FastAPI's own JSON parse of the body still run before it: a body that is not valid
-JSON gets FastAPI's `422` (`json_invalid`) instead of the `404`, and runs nothing
-downstream either. Neither `infra/ecs.tf` nor the CI task-definition rewrite sets
+FastAPI's read of the body still run before it. A body sent with a JSON content type
+(`application/json` or `application/*+json`) is parsed there: malformed JSON gets
+FastAPI's `422` (`json_invalid`), and bytes that do not decode as text (invalid
+UTF-8, for example) get `400` `There was an error parsing the body`. A body with any
+other content type, or none, reaches the gate and gets the `404`. Nothing downstream
+of the gate runs in any of these cases. Neither `infra/ecs.tf` nor the CI task-definition rewrite sets
 the flag. Everything below describes the route with the flag on.
 
 Request (`VaultCreateRequest`): `{name: str(1..64), symbol: str(1..16), management_fee_bps: int=0, performance_fee_bps: int(0..3000)=0, agent_assisted: bool=true, strategy_ids: [str]=[], strictness_level: int(1..5)=1}`.
 Response (`VaultCreateResponse`): `{vault_address: str, strategy_ids: [str]}`.
-Errors: `404` `Not offered: roadmap, not shipped` — the roadmap flag is off; `422` `json_invalid` — the body is not valid JSON (answered before the roadmap gate); `422` — a bound strategy fails the rigor gate at `strictness_level` (server-side enforcement, see above); `503` — chain executor unavailable; `500` `Vault deployment failed` (generic — the raw chain/DB exception is never echoed to the client).
+Errors: `404` `Not offered: roadmap, not shipped` — the roadmap flag is off; `422` `json_invalid` — a body sent with a JSON content type is malformed JSON (answered before the roadmap gate); `400` `There was an error parsing the body` — a body sent with a JSON content type does not decode as text, for example invalid UTF-8 (answered before the roadmap gate); `422` — a bound strategy fails the rigor gate at `strictness_level` (server-side enforcement, see above); `503` — chain executor unavailable; `500` `Vault deployment failed` (generic — the raw chain/DB exception is never echoed to the client).
 
 ```bash
 curl -s -X POST https://archimedes-arc.com/api/vaults/create \

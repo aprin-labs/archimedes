@@ -82,9 +82,14 @@ def require_roadmap_surfaces() -> None:
     the body against its schema, so while the flag is off nothing downstream
     of this gate runs: no auth check, no body-schema validation, no handler
     code and so no side effect. Two things do run before it: the app's
-    middleware, and FastAPI's own JSON parse of the request body. A body that
-    is not valid JSON therefore gets FastAPI's ``422`` (``json_invalid``)
-    instead of this ``404``, and that refusal also runs nothing downstream.
+    middleware, and FastAPI's read of the request body. A body sent with a JSON
+    content type (``application/json`` or ``application/*+json``) is parsed
+    there, before this gate: malformed JSON gets FastAPI's ``422``
+    (``json_invalid``), and bytes that do not decode as text (invalid UTF-8,
+    for example) get ``400`` ``There was an error parsing the body``. A body
+    with any other content type, or none, is not parsed there, so it reaches
+    this gate and gets the ``404``. In none of these cases does anything
+    downstream of the gate (auth, body-schema validation, the handler) run.
     """
     if not roadmap_surfaces_enabled():
         raise HTTPException(status_code=404, detail="Not offered: roadmap, not shipped")

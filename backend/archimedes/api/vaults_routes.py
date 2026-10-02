@@ -354,8 +354,11 @@ async def list_vaults(
     # is every environment unless it is set to "true". Route-level
     # dependencies resolve before the parameters below, so while it is off
     # nothing in this handler runs: no auth check, no body-schema validation,
-    # no rigor gate, no chain call. (A body that is not valid JSON is refused
-    # earlier still, by FastAPI's own parse: 422 json_invalid, not 404.)
+    # no rigor gate, no chain call. (A body sent with a JSON content type is
+    # parsed by FastAPI before the gate: malformed JSON gets 422 json_invalid,
+    # bytes that do not decode as text get 400 "There was an error parsing the
+    # body". A body with any other content type, or none, gets the 404. None of
+    # these runs anything downstream of the gate.)
     dependencies=[Depends(require_roadmap_surfaces)],
 )
 @limiter.limit("5/minute")

@@ -404,9 +404,12 @@ shipped"}` unless the server's `FEATURE_ROADMAP_SURFACES` flag is set to `true`
 every environment unless set, and neither `infra/ecs.tf` nor the CI task-definition
 rewrite sets it. While it is off, nothing downstream of the gate runs: not the auth
 check, not body-schema validation, not the rigor gate, not the chain call. A body
-that is not valid JSON is the one exception to the `404`: FastAPI's JSON parse runs
-before the gate, so it gets a `422` (`json_invalid`), and nothing downstream runs for
-it either. The same flag, with the same `404`, closes `POST /api/marketplace/publish`
+sent with a JSON content type (`application/json` or `application/*+json`) is parsed
+by FastAPI before the gate: malformed JSON gets a `422` (`json_invalid`), and bytes
+that do not decode as text (invalid UTF-8, for example) get a `400` `There was an
+error parsing the body`. A body with any other content type, or none, reaches the
+gate and gets the `404`. Nothing downstream of the gate runs in any of these cases.
+The same flag, with the same `404`, closes `POST /api/marketplace/publish`
 and `POST /api/marketplace/subscribe`, the two marketplace routes that also have the
 backend signer deploy a vault owned by the caller's wallet. The served manifest lists
 these routes only while the flag is on; `.well-known/agent.json` does not list them.
