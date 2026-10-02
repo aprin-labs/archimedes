@@ -51,8 +51,8 @@ metadata, or derives allocations (`POST /api/vaults/create`, `POST
 /api/vaults/metadata`, `POST /api/vaults/{address}/derive-allocations`)
 requires a Better Auth account session **and** a verified linked wallet
 (`require_linked_wallet`). `POST /api/vaults/create` has the roadmap gate in
-front of that: while the flag is off it answers `404` to every caller, signed
-in or not, because the gate runs before the route's auth dependency. `POST
+front of that: while the flag is off it answers `404` whether or not the
+caller is signed in, because the gate runs before the route's auth dependency. `POST
 /api/traces/publish` is `internal-key` (`X-Internal-Agent-Key`, `hmac.compare_digest` against
 `INTERNAL_AGENT_API_KEY` — fails closed if that env var is unset). Examples
 needing a session assume an authenticated cookie jar at `/tmp/session.jar`.

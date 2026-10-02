@@ -93,8 +93,8 @@ tracked here rather than silently absent.
   (session + a verified linked wallet) — each spends backend-signer gas or
   writes state. `POST /create` also sits behind the roadmap gate
   (`require_roadmap_surfaces`, `FEATURE_ROADMAP_SURFACES`, off unless set to
-  `true`; #1432): while it is off the route answers `404` to every caller,
-  before its auth dependency runs.
+  `true`; #1432): while it is off the route answers `404` whether or not the
+  caller is signed in, because the gate runs before its auth dependency.
 - **`strategies_router`** — curated/generated reads are public, with optional
   personalization via `get_current_user` (never mandatory). `GET /generated`
   and `PATCH /{strategy_id}` require `require_current_user`. **This router
@@ -142,8 +142,8 @@ tracked here rather than silently absent.
   `POST /subscribe` each have the backend signer deploy a vault owned by the
   caller's wallet, so they also sit behind the roadmap gate that closes
   `POST /api/vaults/create` (#1432): while `FEATURE_ROADMAP_SURFACES` is off
-  they answer `404` before their auth dependency runs. The other seven are not
-  gated.
+  they answer `404` whether or not the caller is signed in, because the gate
+  runs before their auth dependency. The other seven are not gated.
 - **`risk_router`** and **`portfolio_router`** — `GET /risk/cvar`, `GET
   /risk/greeks`, `POST /portfolio/optimize`, and `POST
   /portfolio/parameter-sweep` additionally require the `require_quant_feature`
