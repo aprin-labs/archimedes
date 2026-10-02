@@ -44,21 +44,27 @@ script reports such rows separately.
 
 (b) ``chat_messages`` rows
 --------------------------
-Per-vault chat (service, routes, UI) was deleted in 8082f150, merged to main
-in #1595 on 2026-08-31 and first deployed by deploy.yml run 33445549916
-(head 848673e0, finished 2026-08-31T22:29:30Z). No code on main reads or
-writes ``chat_messages`` rows. This revision deletes every row.
+Per-vault chat (service, routes, UI) was deleted in 8082f150 and merged to
+main in #1595 (merge b359f324) on 2026-08-31. It reached production in
+deploy.yml run 33442195659 (head b359f324, #1595's merge): that run's ECS
+rollout COMPLETED on task definition archimedes-backend:184 at
+2026-08-31T21:46:44Z. Only the run's later post-rollout latency probe
+failed, and that probe does not roll back. No code on main reads or writes
+``chat_messages`` rows. This revision deletes every row.
 
 The TABLE is kept, on purpose. ``ChatMessage`` is still mapped in
 ``models/chat.py``, so the SQLite ``create_all()`` path would recreate it.
 ``init_db()`` still issues ``ALTER TABLE chat_messages ADD COLUMN IF NOT
 EXISTS verified`` on Postgres. No request handler calls ``init_db()`` on
 main: the comment above ``main.py``'s call records that the request-handler
-calls were removed on 2026-09-03. The web process runs it at boot, once from
-``main.py`` at import and again from the lifespan's request-path warmup (on
-by default) before uvicorn listens, and batch scripts such as
-``scripts/run_paper_marks.py`` call it too. Against a dropped table that
-statement would fail, as a logged WARNING, on each of those calls. A drop
+calls were removed on 2026-09-03. The web process calls ``init_db()`` once
+at import (``backend/archimedes/main.py:838``) and, on a normal boot, twice
+more from the request-path warmup after the strategy library loads
+(``backend/archimedes/services/request_path_warmup.py:160`` and ``:171``);
+the warmup returns early without calling it if the library is unavailable.
+Batch scripts such as ``scripts/run_paper_marks.py`` call it too. Against a
+dropped table that statement would fail, as a logged WARNING, on each of
+those calls. A drop
 belongs in a change that removes the mapping and that patch in the same PR.
 A downgrade of a drop could only recreate an empty table, so it would not be
 a true reversal.
@@ -69,7 +75,7 @@ count (``alembic.runtime.migration`` logger, so the ECS migrate task's
 CloudWatch stream records the numbers this deploy changed).
 
 ORDERING. Both writers were already gone from production before this runs
-(SIWE since 2026-08-19T15:30:20Z, chat since 2026-08-31T22:29:30Z), so the
+(SIWE since 2026-08-19T15:30:20Z, chat since 2026-08-31T21:46:44Z), so the
 old containers still serving during this rollout cannot write new rows of
 either kind.
 
