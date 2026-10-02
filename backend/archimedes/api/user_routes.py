@@ -13,10 +13,16 @@ Security (Issue #181, #1908):
     email and marketing_opt_in are personal data/consent, and interests and
     attribution are the user's own answers to the welcome questions. Nothing
     reads another wallet's profile, so a non-owner GET is answered exactly
-    like a missing profile: the same 404 status, body and response headers
-    (only the measured X-Response-Time-Ms value varies), from the same branch
-    after the same lookups (the linked-wallet lookup runs before the profile
-    query, not only when a row exists). Timing is not otherwise equalized.
+    like a missing profile, from the same branch after the same lookups (the
+    linked-wallet lookup runs before the profile query, not only when a row
+    exists). For two requests that differ only in the wallet, the app returns
+    the same 404 status, body and header names, and the same header values
+    except two produced per request, whatever the profile state:
+    X-Response-Time-Ms (measured), and Set-Cookie when the request carries no
+    archimedes_vid cookie (such as an API-key client that keeps no cookies),
+    because each such response mints a fresh random visitor id. Headers added
+    after the app, such as uvicorn's Date, are outside this. Timing is not
+    otherwise equalized.
   - All log output routes through log_scrubber to prevent PII leakage; it
     redacts every profile answer, so logs carry only the wallet address.
 """
