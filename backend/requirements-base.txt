@@ -168,7 +168,7 @@ eth-account>=0.14.0
 eth-utils>=6.0.0
 cryptography>=50.0.1
 # direct import in marketplace/encoding.py (derive_pool_id); do not rely on web3 transitive.
-# Cap history: <6 went in on 2026-07-13 because eth-account 0.13 declared
+# Cap history: <6 went in on 2026-07-14 because eth-account 0.13 declared
 # `eth-abi>=4.0.0-b.2`, whose pre-release specifier let pip resolve the 6.0.0b1
 # BETA on a fresh Docker build — no betas on the funds-path ABI codec. 6.0.0
 # final shipped 2026-08-22, so the cap was lifted deliberately for web3 8. It

@@ -283,6 +283,25 @@
    "output": "0x2bc489d0b877207721394df00236d909df5b2878b6a1af43587eeca57b95f5be"
   },
   {
+   "abi": "AMMPool.json",
+   "fragment": {
+    "type": "function",
+    "name": "transferOwnership",
+    "inputs": [
+     {
+      "name": "newOwner",
+      "type": "address",
+      "internalType": "address"
+     }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+   },
+   "calldata": "0xf2fde38b00000000000000000000000042640b38b62b4776abf18be89a6c08d4445f5457",
+   "output": "0x",
+   "signed_raw": "0xf88c07852540be4000830493e094baf67f0994d7b638e3a639bc70b9809c69e5ee2480a4f2fde38b00000000000000000000000042640b38b62b4776abf18be89a6c08d4445f54578399dec7a0ac0f7eca77ea89551d0995babda06cec585b55787eef1d3c82507d61fc8ca0f2a0132d8dc8c95df38d91cf4c44ee891ec1c3b93ab898843b8de6eacf2266826f05"
+  },
+  {
    "abi": "AMMRouter.json",
    "fragment": {
     "type": "function",
@@ -460,866 +479,6 @@
    "output": "0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000013732d6566303833382dc3bc7a7a7a7a7a7a7a7a00000000000000000000000000"
   },
   {
-   "abi": "IPriceOracle.json",
-   "fragment": {
-    "type": "function",
-    "name": "getPrice",
-    "inputs": [
-     {
-      "name": "token",
-      "type": "address",
-      "internalType": "address"
-     }
-    ],
-    "outputs": [
-     {
-      "name": "price",
-      "type": "uint256",
-      "internalType": "uint256"
-     },
-     {
-      "name": "updatedAt",
-      "type": "uint256",
-      "internalType": "uint256"
-     }
-    ],
-    "stateMutability": "view"
-   },
-   "calldata": "0x41976e09000000000000000000000000b9260d62ad51b60da889dd1fbf29d84ac95b4f2c",
-   "output": "0x4cfc7dc5bd76362460488e8fcbbac732e49ec858720d863e5db17e92d8d9b2507bbf036f2aae2d33c7cf4244b12913e31b9edb5ca8cc48ade436d021e5d4499b"
-  },
-  {
-   "abi": "IPriceOracle.json",
-   "fragment": {
-    "type": "function",
-    "name": "isFresh",
-    "inputs": [
-     {
-      "name": "token",
-      "type": "address",
-      "internalType": "address"
-     },
-     {
-      "name": "maxAge",
-      "type": "uint256",
-      "internalType": "uint256"
-     }
-    ],
-    "outputs": [
-     {
-      "name": "fresh",
-      "type": "bool",
-      "internalType": "bool"
-     }
-    ],
-    "stateMutability": "view"
-   },
-   "calldata": "0xffcfa799000000000000000000000000a43f90f1c9fb9d3a91ce507872d10052f507e096ca5d7042af588d9eeb233c729c11263cb27854243ab6b40d4e82588da8ca0e7d",
-   "output": "0x0000000000000000000000000000000000000000000000000000000000000001"
-  },
-  {
-   "abi": "IReasoningTraceRegistry.json",
-   "fragment": {
-    "type": "function",
-    "name": "commit",
-    "inputs": [
-     {
-      "name": "vault",
-      "type": "address",
-      "internalType": "address"
-     },
-     {
-      "name": "contentHash",
-      "type": "bytes32",
-      "internalType": "bytes32"
-     },
-     {
-      "name": "claimedExecutionTime",
-      "type": "uint64",
-      "internalType": "uint64"
-     },
-     {
-      "name": "tradeId",
-      "type": "bytes32",
-      "internalType": "bytes32"
-     },
-     {
-      "name": "tradeIntentSummary",
-      "type": "bytes",
-      "internalType": "bytes"
-     }
-    ],
-    "outputs": [
-     {
-      "name": "traceId",
-      "type": "uint256",
-      "internalType": "uint256"
-     }
-    ],
-    "stateMutability": "nonpayable"
-   },
-   "calldata": "0x284ffa9c0000000000000000000000004c7eda5e9ba1e03fb7744b80400c05c118dc8f3fe7d4c56f0e0b6b4d72b34f7e2d7f9b1ec92f069bd3680f391e441b9bd2d3884a000000000000000000000000000000000000000000000000c5b0ffcf6433d5eb7ee5bd0d49f7d3ca1c00455524bbe130660660f6eb5730bea990803940ba277a00000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000003177b3fb410389d7ccc4a3fb8096185e306241deb31e7d99dde7e087a35f8461e727d4439190d10e7df3b169a48cbf84af77000000000000000000000000000000",
-   "output": "0x9bca217e89621ef5e310312f5c278860e6acf5084cb39f3e58fb10f333191b38",
-   "signed_raw": "0xf9016e07852540be4000830493e094baf67f0994d7b638e3a639bc70b9809c69e5ee2480b90104284ffa9c0000000000000000000000004c7eda5e9ba1e03fb7744b80400c05c118dc8f3fe7d4c56f0e0b6b4d72b34f7e2d7f9b1ec92f069bd3680f391e441b9bd2d3884a000000000000000000000000000000000000000000000000c5b0ffcf6433d5eb7ee5bd0d49f7d3ca1c00455524bbe130660660f6eb5730bea990803940ba277a00000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000003177b3fb410389d7ccc4a3fb8096185e306241deb31e7d99dde7e087a35f8461e727d4439190d10e7df3b169a48cbf84af770000000000000000000000000000008399dec8a0c27ca384df46473cb6ac140f4a2db92f64df01cc8db6251c3ed41daaaec885a2a07b60d6c6da2acee3700e663171b0f8a1c915375abc671dba1f49b5d59fe77471"
-  },
-  {
-   "abi": "IReasoningTraceRegistry.json",
-   "fragment": {
-    "type": "function",
-    "name": "getCommitment",
-    "inputs": [
-     {
-      "name": "traceId",
-      "type": "uint256",
-      "internalType": "uint256"
-     }
-    ],
-    "outputs": [
-     {
-      "name": "contentHash",
-      "type": "bytes32",
-      "internalType": "bytes32"
-     },
-     {
-      "name": "committer",
-      "type": "address",
-      "internalType": "address"
-     },
-     {
-      "name": "vault",
-      "type": "address",
-      "internalType": "address"
-     },
-     {
-      "name": "commitBlock",
-      "type": "uint256",
-      "internalType": "uint256"
-     },
-     {
-      "name": "claimedExecutionTime",
-      "type": "uint64",
-      "internalType": "uint64"
-     },
-     {
-      "name": "revealed",
-      "type": "bool",
-      "internalType": "bool"
-     },
-     {
-      "name": "revealBlock",
-      "type": "uint256",
-      "internalType": "uint256"
-     },
-     {
-      "name": "storagePointer",
-      "type": "string",
-      "internalType": "string"
-     }
-    ],
-    "stateMutability": "view"
-   },
-   "calldata": "0x69bcdb7d11aa71b025237a7444a40851d69d58dc7bd2bed4d90e46341588a786cfce6e10",
-   "output": "0xc26c13b22704b977d2668b2c82d8db42fe5daef48d58ce4868bca03a0b634936000000000000000000000000fc6fd45f635925c92847cf7d0cdfc4ad0fba8c8b000000000000000000000000bce3360e1583f2e6cf8714a65de9347c11086a76d2ad00db35333daa96e52183ea4e4be8a4a99216f6876b8310e022b0143ebb09000000000000000000000000000000000000000000000000e7d17837e8c832a400000000000000000000000000000000000000000000000000000000000000017f2f55076ee89663751d2ec0f9794b4fca27a453c5f68eb8cdcb8356b68d941a0000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000001d732d3838623266352dc3bc7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a000000"
-  },
-  {
-   "abi": "IReasoningTraceRegistry.json",
-   "fragment": {
-    "type": "function",
-    "name": "getTraceById",
-    "inputs": [
-     {
-      "name": "traceId",
-      "type": "uint256",
-      "internalType": "uint256"
-     }
-    ],
-    "outputs": [
-     {
-      "name": "agent",
-      "type": "address",
-      "internalType": "address"
-     },
-     {
-      "name": "vault",
-      "type": "address",
-      "internalType": "address"
-     },
-     {
-      "name": "traceHash",
-      "type": "bytes32",
-      "internalType": "bytes32"
-     },
-     {
-      "name": "timestamp",
-      "type": "uint256",
-      "internalType": "uint256"
-     },
-     {
-      "name": "metadata",
-      "type": "bytes",
-      "internalType": "bytes"
-     }
-    ],
-    "stateMutability": "view"
-   },
-   "calldata": "0x94b8beaf1a0b9754646b350b85e411743772944dbea19f277da7ad34e4955a4cb0bb38ab",
-   "output": "0x000000000000000000000000a42550c07bf39728dd7cd01204bc9ae6f660548b0000000000000000000000005708441b10318fbd812a73189209a67456899b6af208c985d7721e306d45f2d8d31d9dc67aa62eb0735d5f35a074bd65987317dd13a3e6304f51e38ef20b619ac1afeb05e31f9343a6466eabc5ec7b5e6bdfd27e00000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000197d19291e4991e785e2f3ad1a7bc2d5cee2c3d270f483f16eba00000000000000"
-  },
-  {
-   "abi": "IReasoningTraceRegistry.json",
-   "fragment": {
-    "type": "function",
-    "name": "getTracesByVault",
-    "inputs": [
-     {
-      "name": "vault",
-      "type": "address",
-      "internalType": "address"
-     }
-    ],
-    "outputs": [
-     {
-      "name": "traceIds",
-      "type": "uint256[]",
-      "internalType": "uint256[]"
-     }
-    ],
-    "stateMutability": "view"
-   },
-   "calldata": "0x58d64f010000000000000000000000008e90bef5705683212d4667b32d417734f5d9834d",
-   "output": "0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000001b102e00312be4e2e9f36b7f6a237d7d889c5cd594a54e2233f715363bc7e1635"
-  },
-  {
-   "abi": "IReasoningTraceRegistry.json",
-   "fragment": {
-    "type": "function",
-    "name": "pendingTradeCommitment",
-    "inputs": [
-     {
-      "name": "vault",
-      "type": "address",
-      "internalType": "address"
-     },
-     {
-      "name": "tradeId",
-      "type": "bytes32",
-      "internalType": "bytes32"
-     }
-    ],
-    "outputs": [
-     {
-      "name": "traceId",
-      "type": "uint256",
-      "internalType": "uint256"
-     }
-    ],
-    "stateMutability": "view"
-   },
-   "calldata": "0xe5574dd900000000000000000000000065372baf6aff997d63ea6cb5df0daa158757421953414ca2ef86a01fe84c03d43a9ec3a9a39accca9ad77e1a860951771501aa22",
-   "output": "0x0e8f3dcd32bce56c2d2b6b997e8563bc5827602a6b9bb2b3cc936ef819d5e4c1"
-  },
-  {
-   "abi": "IReasoningTraceRegistry.json",
-   "fragment": {
-    "type": "function",
-    "name": "publishTrace",
-    "inputs": [
-     {
-      "name": "vault",
-      "type": "address",
-      "internalType": "address"
-     },
-     {
-      "name": "traceHash",
-      "type": "bytes32",
-      "internalType": "bytes32"
-     },
-     {
-      "name": "metadata",
-      "type": "bytes",
-      "internalType": "bytes"
-     }
-    ],
-    "outputs": [
-     {
-      "name": "traceId",
-      "type": "uint256",
-      "internalType": "uint256"
-     }
-    ],
-    "stateMutability": "nonpayable"
-   },
-   "calldata": "0x7599c6ed00000000000000000000000076b5f1d8145547acce615e8f92dc9d7e1b37f469ce4703581c509e46037ab084643df910acd0d3a68d4100dc748c54a2c393411300000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000039687ad20e9457d497f9630c917594aa1d1397c0918cfc3beac4b10282e36171725f62a75e0b111b1b8eafa6dc3f1cd221303c01f365422120d300000000000000",
-   "output": "0x985c57f846ee3086422ba2bf8d105246ebef3f168e4e29cd6e6ac04e8fb5e3da",
-   "signed_raw": "0xf9012d07852540be4000830493e094baf67f0994d7b638e3a639bc70b9809c69e5ee2480b8c47599c6ed00000000000000000000000076b5f1d8145547acce615e8f92dc9d7e1b37f469ce4703581c509e46037ab084643df910acd0d3a68d4100dc748c54a2c393411300000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000039687ad20e9457d497f9630c917594aa1d1397c0918cfc3beac4b10282e36171725f62a75e0b111b1b8eafa6dc3f1cd221303c01f365422120d3000000000000008399dec7a0bbd135d8a06c328db3d58aaaf9527c37d9a7611a921b75de46b77322ed4860a4a0135d016d210daeed48a9838e9110c48837686f73ec97de2514e2feef6209df36"
-  },
-  {
-   "abi": "IReasoningTraceRegistry.json",
-   "fragment": {
-    "type": "function",
-    "name": "reveal",
-    "inputs": [
-     {
-      "name": "traceId",
-      "type": "uint256",
-      "internalType": "uint256"
-     },
-     {
-      "name": "storagePointer",
-      "type": "string",
-      "internalType": "string"
-     },
-     {
-      "name": "fullTraceContent",
-      "type": "bytes",
-      "internalType": "bytes"
-     }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-   },
-   "calldata": "0xf86565ab08e6eb100ef8d09c541cdc892298319a3c62f05ac69b1bf2d098c9d1d6558399000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000001b732d3462313039352dc3bc7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a0000000000000000000000000000000000000000000000000000000000000000000000003220b489222c99210ed5615f773e727db5eb275a3d0404f7cfa3e8bf79e4ce79e3ccea7d75c9837ae74e16518103d39d3b5ca50000000000000000000000000000",
-   "output": "0x",
-   "signed_raw": "0xf9016e07852540be4000830493e094baf67f0994d7b638e3a639bc70b9809c69e5ee2480b90104f86565ab08e6eb100ef8d09c541cdc892298319a3c62f05ac69b1bf2d098c9d1d6558399000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000001b732d3462313039352dc3bc7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a0000000000000000000000000000000000000000000000000000000000000000000000003220b489222c99210ed5615f773e727db5eb275a3d0404f7cfa3e8bf79e4ce79e3ccea7d75c9837ae74e16518103d39d3b5ca500000000000000000000000000008399dec8a08897ebd66b0ec3744f9cdbb632c238687300421db9b873bc0cf5bb380c605ba6a05fc9bceaed3482248488c30daa857c59f51ae663efd1df1c24db35875cee6a46"
-  },
-  {
-   "abi": "IReasoningTraceRegistry.json",
-   "fragment": {
-    "type": "function",
-    "name": "traceCount",
-    "inputs": [],
-    "outputs": [
-     {
-      "name": "",
-      "type": "uint256",
-      "internalType": "uint256"
-     }
-    ],
-    "stateMutability": "view"
-   },
-   "calldata": "0x67c38f18",
-   "output": "0x1cf23fa92ea895adff81af83ed99729e5e368864cd715fdaa11592b42eb18193"
-  },
-  {
-   "abi": "IStrategyRegistry.json",
-   "fragment": {
-    "type": "function",
-    "name": "getStrategy",
-    "inputs": [
-     {
-      "name": "strategyId",
-      "type": "bytes32",
-      "internalType": "bytes32"
-     }
-    ],
-    "outputs": [
-     {
-      "name": "registrar",
-      "type": "address",
-      "internalType": "address"
-     },
-     {
-      "name": "methodologyHash",
-      "type": "bytes32",
-      "internalType": "bytes32"
-     },
-     {
-      "name": "paperCorpusHash",
-      "type": "bytes32",
-      "internalType": "bytes32"
-     },
-     {
-      "name": "regimeTag",
-      "type": "bytes32",
-      "internalType": "bytes32"
-     },
-     {
-      "name": "timestamp",
-      "type": "uint256",
-      "internalType": "uint256"
-     },
-     {
-      "name": "metadataURI",
-      "type": "string",
-      "internalType": "string"
-     }
-    ],
-    "stateMutability": "view"
-   },
-   "calldata": "0x28c84bbde506767c01b4a3a913debfb252c9b194bc15dfbd0cc5f841e1576b0a3bd35335",
-   "output": "0x000000000000000000000000c06718bc057327ef3b0f28c7fae7775872322a5a4918c12cdcfd048672319205fdc089e438141259077083d3bd599ddc28b18792c39b99012f9cb0a4643e8c04a6371d6fbab798228936d4622edc01145bb578af92e242accda81cab16255993c47efb645c3a84e411cf4cff1d9386d9c62a15e39e864f134830c635878d7f3db8f6c042046899337065c02d9d1a373c7541825f00000000000000000000000000000000000000000000000000000000000000c0000000000000000000000000000000000000000000000000000000000000001c732d3337313166332dc3bc7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a00000000"
-  },
-  {
-   "abi": "IStrategyRegistry.json",
-   "fragment": {
-    "type": "function",
-    "name": "isRegistered",
-    "inputs": [
-     {
-      "name": "strategyId",
-      "type": "bytes32",
-      "internalType": "bytes32"
-     }
-    ],
-    "outputs": [
-     {
-      "name": "",
-      "type": "bool",
-      "internalType": "bool"
-     }
-    ],
-    "stateMutability": "view"
-   },
-   "calldata": "0x27258b222b36709f745a66aa44e85feff2f3dd1631f5c4109c8b0e9b4f0d96aeb230cbff",
-   "output": "0x0000000000000000000000000000000000000000000000000000000000000001"
-  },
-  {
-   "abi": "IStrategyRegistry.json",
-   "fragment": {
-    "type": "function",
-    "name": "registerStrategy",
-    "inputs": [
-     {
-      "name": "strategyId",
-      "type": "bytes32",
-      "internalType": "bytes32"
-     },
-     {
-      "name": "methodologyHash",
-      "type": "bytes32",
-      "internalType": "bytes32"
-     },
-     {
-      "name": "paperCorpusHash",
-      "type": "bytes32",
-      "internalType": "bytes32"
-     },
-     {
-      "name": "regimeTag",
-      "type": "bytes32",
-      "internalType": "bytes32"
-     },
-     {
-      "name": "metadataURI",
-      "type": "string",
-      "internalType": "string"
-     }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-   },
-   "calldata": "0x577536e0912d12f5106aca589817841be90dc5ad09daad3f46a5e7aac4a5c28475054e6267b56a23fe9424f6da89902afc8187ccf32502cf905eb3230ca9d3b9c73b47c5a691ddcf6bcbef8fb1ef1907de3d4ed2c29b32210291379a047ec3b481c4963b367767cbd34a2e16ba6d3cbf779dcd89136b1564c7f01574984b55f0ec51061000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000001e732d3461386239632dc3bc7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a0000",
-   "output": "0x",
-   "signed_raw": "0xf9014d07852540be4000830493e094baf67f0994d7b638e3a639bc70b9809c69e5ee2480b8e4577536e0912d12f5106aca589817841be90dc5ad09daad3f46a5e7aac4a5c28475054e6267b56a23fe9424f6da89902afc8187ccf32502cf905eb3230ca9d3b9c73b47c5a691ddcf6bcbef8fb1ef1907de3d4ed2c29b32210291379a047ec3b481c4963b367767cbd34a2e16ba6d3cbf779dcd89136b1564c7f01574984b55f0ec51061000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000001e732d3461386239632dc3bc7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a00008399dec8a0617ee8b738b10cb424ae6c2d72adb8c6777122b93b80d3f1591294601b2f014ca030746b9c593d81104c99edb72e2348f9e93a3462c1de53f26a13ad31f6781e28"
-  },
-  {
-   "abi": "IStrategyRegistry.json",
-   "fragment": {
-    "type": "function",
-    "name": "strategyCount",
-    "inputs": [],
-    "outputs": [
-     {
-      "name": "",
-      "type": "uint256",
-      "internalType": "uint256"
-     }
-    ],
-    "stateMutability": "view"
-   },
-   "calldata": "0x22068b44",
-   "output": "0xc2527eb77bf1db4fbeb09fa3b36838748230ec22c8154832f86d14adfaf664f4"
-  },
-  {
-   "abi": "ISyntheticFactory.json",
-   "fragment": {
-    "type": "function",
-    "name": "getPrice",
-    "inputs": [
-     {
-      "name": "synthetic",
-      "type": "address",
-      "internalType": "address"
-     }
-    ],
-    "outputs": [
-     {
-      "name": "price",
-      "type": "uint256",
-      "internalType": "uint256"
-     }
-    ],
-    "stateMutability": "view"
-   },
-   "calldata": "0x41976e09000000000000000000000000b9260d62ad51b60da889dd1fbf29d84ac95b4f2c",
-   "output": "0x4cfc7dc5bd76362460488e8fcbbac732e49ec858720d863e5db17e92d8d9b250"
-  },
-  {
-   "abi": "ISyntheticFactory.json",
-   "fragment": {
-    "type": "function",
-    "name": "getSynthetics",
-    "inputs": [],
-    "outputs": [
-     {
-      "name": "",
-      "type": "address[]",
-      "internalType": "address[]"
-     }
-    ],
-    "stateMutability": "view"
-   },
-   "calldata": "0xb96f5ad0",
-   "output": "0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000030000000000000000000000003b852529977fa0fa7491fa81963dba87106244d20000000000000000000000009c6f191d08f25f8710a01bb6b51819cea2bcd02b00000000000000000000000046f089478f2645d856a2318878e24739ade9e0c6"
-  },
-  {
-   "abi": "IVault.json",
-   "fragment": {
-    "type": "function",
-    "name": "creator",
-    "inputs": [],
-    "outputs": [
-     {
-      "name": "",
-      "type": "address",
-      "internalType": "address"
-     }
-    ],
-    "stateMutability": "view"
-   },
-   "calldata": "0x02d05d3f",
-   "output": "0x000000000000000000000000970f90399779f22ee642ee40cb90a8208ff60a4f"
-  },
-  {
-   "abi": "IVault.json",
-   "fragment": {
-    "type": "function",
-    "name": "deposit",
-    "inputs": [
-     {
-      "name": "assets",
-      "type": "uint256",
-      "internalType": "uint256"
-     },
-     {
-      "name": "receiver",
-      "type": "address",
-      "internalType": "address"
-     }
-    ],
-    "outputs": [
-     {
-      "name": "shares",
-      "type": "uint256",
-      "internalType": "uint256"
-     }
-    ],
-    "stateMutability": "nonpayable"
-   },
-   "calldata": "0x6e553f65a378f48ab792e6636e7302bcf1b04758081c48575f74cc72ec0c2bf8d6609ce0000000000000000000000000aff626b3751ce39324fbe23274a98db3c63b7537",
-   "output": "0x3a118350c496585b972f1347be857b9012599ceb5e450fb6f797448a487e2f3a",
-   "signed_raw": "0xf8ad07852540be4000830493e094baf67f0994d7b638e3a639bc70b9809c69e5ee2480b8446e553f65a378f48ab792e6636e7302bcf1b04758081c48575f74cc72ec0c2bf8d6609ce0000000000000000000000000aff626b3751ce39324fbe23274a98db3c63b75378399dec8a0e9634805e9ef590ece30634927f3c34224249394ebe88be8aaf2d57e329ffad5a050f5576c1c5e787555d6d344b61e5549c535e207bcdecbc22ab568630f7736c2"
-  },
-  {
-   "abi": "IVault.json",
-   "fragment": {
-    "type": "function",
-    "name": "getHoldings",
-    "inputs": [],
-    "outputs": [
-     {
-      "name": "tokens",
-      "type": "address[]",
-      "internalType": "address[]"
-     },
-     {
-      "name": "amounts",
-      "type": "uint256[]",
-      "internalType": "uint256[]"
-     }
-    ],
-    "stateMutability": "view"
-   },
-   "calldata": "0xd353ac7c",
-   "output": "0x000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000001000000000000000000000000e073d6c503b50d836d0378206ab71ad3107536990000000000000000000000000000000000000000000000000000000000000000"
-  },
-  {
-   "abi": "IVault.json",
-   "fragment": {
-    "type": "function",
-    "name": "getTargetAllocations",
-    "inputs": [],
-    "outputs": [
-     {
-      "name": "tokens",
-      "type": "address[]",
-      "internalType": "address[]"
-     },
-     {
-      "name": "weights",
-      "type": "uint256[]",
-      "internalType": "uint256[]"
-     }
-    ],
-    "stateMutability": "view"
-   },
-   "calldata": "0x1122f719",
-   "output": "0x000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000003000000000000000000000000c9783e96470118d519b3f5dd855e61d609a29cea000000000000000000000000742942efa7101cd67160e7df59643646d027299b0000000000000000000000009f549eee6a3d35a02573595bd74b92f4d16f39230000000000000000000000000000000000000000000000000000000000000000"
-  },
-  {
-   "abi": "IVault.json",
-   "fragment": {
-    "type": "function",
-    "name": "highWaterMark",
-    "inputs": [],
-    "outputs": [
-     {
-      "name": "",
-      "type": "uint256",
-      "internalType": "uint256"
-     }
-    ],
-    "stateMutability": "view"
-   },
-   "calldata": "0x1e8410da",
-   "output": "0x4f692a1a81b767c01eea74b3e1a1af446181c2a437ced1e5872ead22fe058694"
-  },
-  {
-   "abi": "IVault.json",
-   "fragment": {
-    "type": "function",
-    "name": "isAgentAssisted",
-    "inputs": [],
-    "outputs": [
-     {
-      "name": "",
-      "type": "bool",
-      "internalType": "bool"
-     }
-    ],
-    "stateMutability": "view"
-   },
-   "calldata": "0x2d005331",
-   "output": "0x0000000000000000000000000000000000000000000000000000000000000000"
-  },
-  {
-   "abi": "IVault.json",
-   "fragment": {
-    "type": "function",
-    "name": "managementFeeBps",
-    "inputs": [],
-    "outputs": [
-     {
-      "name": "",
-      "type": "uint16",
-      "internalType": "uint16"
-     }
-    ],
-    "stateMutability": "view"
-   },
-   "calldata": "0x3813c35a",
-   "output": "0x000000000000000000000000000000000000000000000000000000000000ae2f"
-  },
-  {
-   "abi": "IVault.json",
-   "fragment": {
-    "type": "function",
-    "name": "performanceFeeBps",
-    "inputs": [],
-    "outputs": [
-     {
-      "name": "",
-      "type": "uint16",
-      "internalType": "uint16"
-     }
-    ],
-    "stateMutability": "view"
-   },
-   "calldata": "0xb9d4e879",
-   "output": "0x000000000000000000000000000000000000000000000000000000000000002f"
-  },
-  {
-   "abi": "IVault.json",
-   "fragment": {
-    "type": "function",
-    "name": "rebalance",
-    "inputs": [
-     {
-      "name": "tokensIn",
-      "type": "address[]",
-      "internalType": "address[]"
-     },
-     {
-      "name": "amountsIn",
-      "type": "uint256[]",
-      "internalType": "uint256[]"
-     },
-     {
-      "name": "tokensOut",
-      "type": "address[]",
-      "internalType": "address[]"
-     },
-     {
-      "name": "amountsOut",
-      "type": "uint256[]",
-      "internalType": "uint256[]"
-     }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-   },
-   "calldata": "0xff1907a2000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000012000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002d1526e59ad989916b7c4a81e901d9927891f845ef8491e285957a0622fa97486ad20037612e6d75d64ece0b0ebcb354f23ec5b5af8b98903cdb055f36a17fb5e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000038c3369632eb49427e986703762266e82b7841d0a8c36cd0306512fd29d896d51ebc9aa16b6cb68523a56202184839dc5c224e049ab84b9e887a3d93245547863b00e5b47993ca0eca39ce1c5ad305079574045eeaf5838f1e3d5d92c94d5822e",
-   "output": "0x",
-   "signed_raw": "0xf9020e07852540be4000830493e094baf67f0994d7b638e3a639bc70b9809c69e5ee2480b901a4ff1907a2000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000012000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002d1526e59ad989916b7c4a81e901d9927891f845ef8491e285957a0622fa97486ad20037612e6d75d64ece0b0ebcb354f23ec5b5af8b98903cdb055f36a17fb5e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000038c3369632eb49427e986703762266e82b7841d0a8c36cd0306512fd29d896d51ebc9aa16b6cb68523a56202184839dc5c224e049ab84b9e887a3d93245547863b00e5b47993ca0eca39ce1c5ad305079574045eeaf5838f1e3d5d92c94d5822e8399dec8a019fa6a9532c358d097b833a833ced8cdac2481fb0bbc2127574dfb9f35059107a0627c9372ac7142e0e553f284f9734dc15559c60df589d77e682c8827f9dc3667"
-  },
-  {
-   "abi": "IVault.json",
-   "fragment": {
-    "type": "function",
-    "name": "setTargetAllocations",
-    "inputs": [
-     {
-      "name": "tokens",
-      "type": "address[]",
-      "internalType": "address[]"
-     },
-     {
-      "name": "weightsBps",
-      "type": "uint256[]",
-      "internalType": "uint256[]"
-     }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-   },
-   "calldata": "0xbbebbf140000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000010000000000000000000000003bf44087f6d87bfaf8faafc73cd41b2b8c47496a00000000000000000000000000000000000000000000000000000000000000023c543ad264d5a298b33765625c138f0edd4b454efe116f2b83d96530dbb3dcdc9c114c4fa19c730358c10cd28785b1a4ab1b70641db285cebac8517fcdcc30fa",
-   "output": "0x",
-   "signed_raw": "0xf9014d07852540be4000830493e094baf67f0994d7b638e3a639bc70b9809c69e5ee2480b8e4bbebbf140000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000010000000000000000000000003bf44087f6d87bfaf8faafc73cd41b2b8c47496a00000000000000000000000000000000000000000000000000000000000000023c543ad264d5a298b33765625c138f0edd4b454efe116f2b83d96530dbb3dcdc9c114c4fa19c730358c10cd28785b1a4ab1b70641db285cebac8517fcdcc30fa8399dec7a033c0e350e89debeea3df17a14d7978a49eede51bae08a1159e36ac56a470cf87a00122fa985a10e741bf9861b771f719b4b1bcb3b27970d4250ae49d8409051fcf"
-  },
-  {
-   "abi": "IVault.json",
-   "fragment": {
-    "type": "function",
-    "name": "setTokenOracles",
-    "inputs": [
-     {
-      "name": "tokens",
-      "type": "address[]",
-      "internalType": "address[]"
-     },
-     {
-      "name": "oracles",
-      "type": "address[]",
-      "internalType": "address[]"
-     }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-   },
-   "calldata": "0xa0dcd081000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000002000000000000000000000000bd845a588e40af2e44658eaa6e0df8fb6b3bd2be0000000000000000000000006405e7a1461775013a6ebaf4a6f4b581ab2d101400000000000000000000000000000000000000000000000000000000000000020000000000000000000000002d5119c07e833486478c1e419ecc153ecbcfaa51000000000000000000000000324550edc0cffa7b38a89584c3376d1b7dc60abe",
-   "output": "0x",
-   "signed_raw": "0xf9016e07852540be4000830493e094baf67f0994d7b638e3a639bc70b9809c69e5ee2480b90104a0dcd081000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000002000000000000000000000000bd845a588e40af2e44658eaa6e0df8fb6b3bd2be0000000000000000000000006405e7a1461775013a6ebaf4a6f4b581ab2d101400000000000000000000000000000000000000000000000000000000000000020000000000000000000000002d5119c07e833486478c1e419ecc153ecbcfaa51000000000000000000000000324550edc0cffa7b38a89584c3376d1b7dc60abe8399dec8a06babdc8161c7132cd6c655e24e5591c4cea25386e475deee7935c0a369c83af9a072d4ebb3fa2dccf60c8356571b122d3413b4d081584ac94305a7b886c6e64d3e"
-  },
-  {
-   "abi": "IVault.json",
-   "fragment": {
-    "type": "function",
-    "name": "tier",
-    "inputs": [],
-    "outputs": [
-     {
-      "name": "",
-      "type": "uint8",
-      "internalType": "uint8"
-     }
-    ],
-    "stateMutability": "view"
-   },
-   "calldata": "0x16f4d022",
-   "output": "0x00000000000000000000000000000000000000000000000000000000000000a8"
-  },
-  {
-   "abi": "IVault.json",
-   "fragment": {
-    "type": "function",
-    "name": "totalAssets",
-    "inputs": [],
-    "outputs": [
-     {
-      "name": "",
-      "type": "uint256",
-      "internalType": "uint256"
-     }
-    ],
-    "stateMutability": "view"
-   },
-   "calldata": "0x01e1d114",
-   "output": "0x4764d69c30788b2f5cd255aa6bd096bf9f0f92ff2a983bc00a605efc53dd4430"
-  },
-  {
-   "abi": "IVaultFactory.json",
-   "fragment": {
-    "type": "function",
-    "name": "createVault",
-    "inputs": [
-     {
-      "name": "name",
-      "type": "string",
-      "internalType": "string"
-     },
-     {
-      "name": "symbol",
-      "type": "string",
-      "internalType": "string"
-     },
-     {
-      "name": "managementFeeBps",
-      "type": "uint16",
-      "internalType": "uint16"
-     },
-     {
-      "name": "performanceFeeBps",
-      "type": "uint16",
-      "internalType": "uint16"
-     },
-     {
-      "name": "agentAssisted",
-      "type": "bool",
-      "internalType": "bool"
-     }
-    ],
-    "outputs": [
-     {
-      "name": "vault",
-      "type": "address",
-      "internalType": "address"
-     }
-    ],
-    "stateMutability": "nonpayable"
-   },
-   "calldata": "0x2d69187d00000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000001a710000000000000000000000000000000000000000000000000000000000003b570000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002a732d6162626636352dc3bc7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000025732d3234366136622dc3bc7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a000000000000000000000000000000000000000000000000000000",
-   "output": "0x000000000000000000000000cd8b65022c625e920a3529ce2887556f867117eb",
-   "signed_raw": "0xf901ce07852540be4000830493e094baf67f0994d7b638e3a639bc70b9809c69e5ee2480b901642d69187d00000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000001a710000000000000000000000000000000000000000000000000000000000003b570000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002a732d6162626636352dc3bc7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000025732d3234366136622dc3bc7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a0000000000000000000000000000000000000000000000000000008399dec8a0d01935ae2c9efa184aabba9fb44c141e3356cd9d9853e27ec4aac619c9d75200a0273203522c073ff615487cf7f8c535401131f46d477da81478ebeb5d2e7ba2aa"
-  },
-  {
-   "abi": "IVaultFactory.json",
-   "fragment": {
-    "type": "function",
-    "name": "getVaults",
-    "inputs": [],
-    "outputs": [
-     {
-      "name": "",
-      "type": "address[]",
-      "internalType": "address[]"
-     }
-    ],
-    "stateMutability": "view"
-   },
-   "calldata": "0x44d00f82",
-   "output": "0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000003000000000000000000000000ea7b8a23930644decdd283de5e398cf0ac2e9bb6000000000000000000000000ddb3c526e0f45f57a161ffc8ddcddb798f25d6ad00000000000000000000000076eeeec5d5cb9350d7bb87558b70c20771c668b0"
-  },
-  {
    "abi": "PaymentSplitter.json",
    "fragment": {
     "type": "function",
@@ -1466,6 +625,461 @@
    "output": "0xb0931c1d1eba39ac201d38034d0cbb26e6e9619c0b225b48852a4d390850b651"
   },
   {
+   "abi": "ReasoningTraceRegistry.json",
+   "fragment": {
+    "type": "function",
+    "name": "commit",
+    "inputs": [
+     {
+      "name": "vault",
+      "type": "address",
+      "internalType": "address"
+     },
+     {
+      "name": "contentHash",
+      "type": "bytes32",
+      "internalType": "bytes32"
+     },
+     {
+      "name": "claimedExecutionTime",
+      "type": "uint64",
+      "internalType": "uint64"
+     },
+     {
+      "name": "tradeId",
+      "type": "bytes32",
+      "internalType": "bytes32"
+     },
+     {
+      "name": "tradeIntentSummary",
+      "type": "bytes",
+      "internalType": "bytes"
+     }
+    ],
+    "outputs": [
+     {
+      "name": "traceId",
+      "type": "uint256",
+      "internalType": "uint256"
+     }
+    ],
+    "stateMutability": "nonpayable"
+   },
+   "calldata": "0x284ffa9c0000000000000000000000004c7eda5e9ba1e03fb7744b80400c05c118dc8f3fe7d4c56f0e0b6b4d72b34f7e2d7f9b1ec92f069bd3680f391e441b9bd2d3884a000000000000000000000000000000000000000000000000c5b0ffcf6433d5eb7ee5bd0d49f7d3ca1c00455524bbe130660660f6eb5730bea990803940ba277a00000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000003177b3fb410389d7ccc4a3fb8096185e306241deb31e7d99dde7e087a35f8461e727d4439190d10e7df3b169a48cbf84af77000000000000000000000000000000",
+   "output": "0x9bca217e89621ef5e310312f5c278860e6acf5084cb39f3e58fb10f333191b38",
+   "signed_raw": "0xf9016e07852540be4000830493e094baf67f0994d7b638e3a639bc70b9809c69e5ee2480b90104284ffa9c0000000000000000000000004c7eda5e9ba1e03fb7744b80400c05c118dc8f3fe7d4c56f0e0b6b4d72b34f7e2d7f9b1ec92f069bd3680f391e441b9bd2d3884a000000000000000000000000000000000000000000000000c5b0ffcf6433d5eb7ee5bd0d49f7d3ca1c00455524bbe130660660f6eb5730bea990803940ba277a00000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000003177b3fb410389d7ccc4a3fb8096185e306241deb31e7d99dde7e087a35f8461e727d4439190d10e7df3b169a48cbf84af770000000000000000000000000000008399dec8a0c27ca384df46473cb6ac140f4a2db92f64df01cc8db6251c3ed41daaaec885a2a07b60d6c6da2acee3700e663171b0f8a1c915375abc671dba1f49b5d59fe77471"
+  },
+  {
+   "abi": "ReasoningTraceRegistry.json",
+   "fragment": {
+    "type": "function",
+    "name": "getCommitment",
+    "inputs": [
+     {
+      "name": "traceId",
+      "type": "uint256",
+      "internalType": "uint256"
+     }
+    ],
+    "outputs": [
+     {
+      "name": "contentHash",
+      "type": "bytes32",
+      "internalType": "bytes32"
+     },
+     {
+      "name": "committer",
+      "type": "address",
+      "internalType": "address"
+     },
+     {
+      "name": "vault",
+      "type": "address",
+      "internalType": "address"
+     },
+     {
+      "name": "commitBlock",
+      "type": "uint256",
+      "internalType": "uint256"
+     },
+     {
+      "name": "claimedExecutionTime",
+      "type": "uint64",
+      "internalType": "uint64"
+     },
+     {
+      "name": "revealed",
+      "type": "bool",
+      "internalType": "bool"
+     },
+     {
+      "name": "revealBlock",
+      "type": "uint256",
+      "internalType": "uint256"
+     },
+     {
+      "name": "storagePointer",
+      "type": "string",
+      "internalType": "string"
+     }
+    ],
+    "stateMutability": "view"
+   },
+   "calldata": "0x69bcdb7d11aa71b025237a7444a40851d69d58dc7bd2bed4d90e46341588a786cfce6e10",
+   "output": "0xc26c13b22704b977d2668b2c82d8db42fe5daef48d58ce4868bca03a0b634936000000000000000000000000fc6fd45f635925c92847cf7d0cdfc4ad0fba8c8b000000000000000000000000bce3360e1583f2e6cf8714a65de9347c11086a76d2ad00db35333daa96e52183ea4e4be8a4a99216f6876b8310e022b0143ebb09000000000000000000000000000000000000000000000000e7d17837e8c832a400000000000000000000000000000000000000000000000000000000000000017f2f55076ee89663751d2ec0f9794b4fca27a453c5f68eb8cdcb8356b68d941a0000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000001d732d3838623266352dc3bc7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a000000"
+  },
+  {
+   "abi": "ReasoningTraceRegistry.json",
+   "fragment": {
+    "type": "function",
+    "name": "getTraceById",
+    "inputs": [
+     {
+      "name": "traceId",
+      "type": "uint256",
+      "internalType": "uint256"
+     }
+    ],
+    "outputs": [
+     {
+      "name": "agent",
+      "type": "address",
+      "internalType": "address"
+     },
+     {
+      "name": "vault",
+      "type": "address",
+      "internalType": "address"
+     },
+     {
+      "name": "traceHash",
+      "type": "bytes32",
+      "internalType": "bytes32"
+     },
+     {
+      "name": "timestamp",
+      "type": "uint256",
+      "internalType": "uint256"
+     },
+     {
+      "name": "metadata",
+      "type": "bytes",
+      "internalType": "bytes"
+     }
+    ],
+    "stateMutability": "view"
+   },
+   "calldata": "0x94b8beaf1a0b9754646b350b85e411743772944dbea19f277da7ad34e4955a4cb0bb38ab",
+   "output": "0x000000000000000000000000a42550c07bf39728dd7cd01204bc9ae6f660548b0000000000000000000000005708441b10318fbd812a73189209a67456899b6af208c985d7721e306d45f2d8d31d9dc67aa62eb0735d5f35a074bd65987317dd13a3e6304f51e38ef20b619ac1afeb05e31f9343a6466eabc5ec7b5e6bdfd27e00000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000197d19291e4991e785e2f3ad1a7bc2d5cee2c3d270f483f16eba00000000000000"
+  },
+  {
+   "abi": "ReasoningTraceRegistry.json",
+   "fragment": {
+    "type": "function",
+    "name": "getTracesByVault",
+    "inputs": [
+     {
+      "name": "vault",
+      "type": "address",
+      "internalType": "address"
+     }
+    ],
+    "outputs": [
+     {
+      "name": "traceIds",
+      "type": "uint256[]",
+      "internalType": "uint256[]"
+     }
+    ],
+    "stateMutability": "view"
+   },
+   "calldata": "0x58d64f010000000000000000000000008e90bef5705683212d4667b32d417734f5d9834d",
+   "output": "0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000001b102e00312be4e2e9f36b7f6a237d7d889c5cd594a54e2233f715363bc7e1635"
+  },
+  {
+   "abi": "ReasoningTraceRegistry.json",
+   "fragment": {
+    "type": "function",
+    "name": "pendingTradeCommitment",
+    "inputs": [
+     {
+      "name": "vault",
+      "type": "address",
+      "internalType": "address"
+     },
+     {
+      "name": "tradeId",
+      "type": "bytes32",
+      "internalType": "bytes32"
+     }
+    ],
+    "outputs": [
+     {
+      "name": "traceId",
+      "type": "uint256",
+      "internalType": "uint256"
+     }
+    ],
+    "stateMutability": "view"
+   },
+   "calldata": "0xe5574dd900000000000000000000000065372baf6aff997d63ea6cb5df0daa158757421953414ca2ef86a01fe84c03d43a9ec3a9a39accca9ad77e1a860951771501aa22",
+   "output": "0x0e8f3dcd32bce56c2d2b6b997e8563bc5827602a6b9bb2b3cc936ef819d5e4c1"
+  },
+  {
+   "abi": "ReasoningTraceRegistry.json",
+   "fragment": {
+    "type": "function",
+    "name": "publishTrace",
+    "inputs": [
+     {
+      "name": "vault",
+      "type": "address",
+      "internalType": "address"
+     },
+     {
+      "name": "traceHash",
+      "type": "bytes32",
+      "internalType": "bytes32"
+     },
+     {
+      "name": "metadata",
+      "type": "bytes",
+      "internalType": "bytes"
+     }
+    ],
+    "outputs": [
+     {
+      "name": "traceId",
+      "type": "uint256",
+      "internalType": "uint256"
+     }
+    ],
+    "stateMutability": "nonpayable"
+   },
+   "calldata": "0x7599c6ed00000000000000000000000076b5f1d8145547acce615e8f92dc9d7e1b37f469ce4703581c509e46037ab084643df910acd0d3a68d4100dc748c54a2c393411300000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000039687ad20e9457d497f9630c917594aa1d1397c0918cfc3beac4b10282e36171725f62a75e0b111b1b8eafa6dc3f1cd221303c01f365422120d300000000000000",
+   "output": "0x985c57f846ee3086422ba2bf8d105246ebef3f168e4e29cd6e6ac04e8fb5e3da",
+   "signed_raw": "0xf9012d07852540be4000830493e094baf67f0994d7b638e3a639bc70b9809c69e5ee2480b8c47599c6ed00000000000000000000000076b5f1d8145547acce615e8f92dc9d7e1b37f469ce4703581c509e46037ab084643df910acd0d3a68d4100dc748c54a2c393411300000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000039687ad20e9457d497f9630c917594aa1d1397c0918cfc3beac4b10282e36171725f62a75e0b111b1b8eafa6dc3f1cd221303c01f365422120d3000000000000008399dec7a0bbd135d8a06c328db3d58aaaf9527c37d9a7611a921b75de46b77322ed4860a4a0135d016d210daeed48a9838e9110c48837686f73ec97de2514e2feef6209df36"
+  },
+  {
+   "abi": "ReasoningTraceRegistry.json",
+   "fragment": {
+    "type": "function",
+    "name": "reveal",
+    "inputs": [
+     {
+      "name": "traceId",
+      "type": "uint256",
+      "internalType": "uint256"
+     },
+     {
+      "name": "storagePointer",
+      "type": "string",
+      "internalType": "string"
+     },
+     {
+      "name": "fullTraceContent",
+      "type": "bytes",
+      "internalType": "bytes"
+     }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+   },
+   "calldata": "0xf86565ab08e6eb100ef8d09c541cdc892298319a3c62f05ac69b1bf2d098c9d1d6558399000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000001b732d3462313039352dc3bc7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a0000000000000000000000000000000000000000000000000000000000000000000000003220b489222c99210ed5615f773e727db5eb275a3d0404f7cfa3e8bf79e4ce79e3ccea7d75c9837ae74e16518103d39d3b5ca50000000000000000000000000000",
+   "output": "0x",
+   "signed_raw": "0xf9016e07852540be4000830493e094baf67f0994d7b638e3a639bc70b9809c69e5ee2480b90104f86565ab08e6eb100ef8d09c541cdc892298319a3c62f05ac69b1bf2d098c9d1d6558399000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000001b732d3462313039352dc3bc7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a0000000000000000000000000000000000000000000000000000000000000000000000003220b489222c99210ed5615f773e727db5eb275a3d0404f7cfa3e8bf79e4ce79e3ccea7d75c9837ae74e16518103d39d3b5ca500000000000000000000000000008399dec8a08897ebd66b0ec3744f9cdbb632c238687300421db9b873bc0cf5bb380c605ba6a05fc9bceaed3482248488c30daa857c59f51ae663efd1df1c24db35875cee6a46"
+  },
+  {
+   "abi": "ReasoningTraceRegistry.json",
+   "fragment": {
+    "type": "function",
+    "name": "traceCount",
+    "inputs": [],
+    "outputs": [
+     {
+      "name": "",
+      "type": "uint256",
+      "internalType": "uint256"
+     }
+    ],
+    "stateMutability": "view"
+   },
+   "calldata": "0x67c38f18",
+   "output": "0x1cf23fa92ea895adff81af83ed99729e5e368864cd715fdaa11592b42eb18193"
+  },
+  {
+   "abi": "StrategyRegistry.json",
+   "fragment": {
+    "type": "function",
+    "name": "getStrategy",
+    "inputs": [
+     {
+      "name": "strategyId",
+      "type": "bytes32",
+      "internalType": "bytes32"
+     }
+    ],
+    "outputs": [
+     {
+      "name": "registrar",
+      "type": "address",
+      "internalType": "address"
+     },
+     {
+      "name": "methodologyHash",
+      "type": "bytes32",
+      "internalType": "bytes32"
+     },
+     {
+      "name": "paperCorpusHash",
+      "type": "bytes32",
+      "internalType": "bytes32"
+     },
+     {
+      "name": "regimeTag",
+      "type": "bytes32",
+      "internalType": "bytes32"
+     },
+     {
+      "name": "timestamp",
+      "type": "uint256",
+      "internalType": "uint256"
+     },
+     {
+      "name": "metadataURI",
+      "type": "string",
+      "internalType": "string"
+     }
+    ],
+    "stateMutability": "view"
+   },
+   "calldata": "0x28c84bbde506767c01b4a3a913debfb252c9b194bc15dfbd0cc5f841e1576b0a3bd35335",
+   "output": "0x000000000000000000000000c06718bc057327ef3b0f28c7fae7775872322a5a4918c12cdcfd048672319205fdc089e438141259077083d3bd599ddc28b18792c39b99012f9cb0a4643e8c04a6371d6fbab798228936d4622edc01145bb578af92e242accda81cab16255993c47efb645c3a84e411cf4cff1d9386d9c62a15e39e864f134830c635878d7f3db8f6c042046899337065c02d9d1a373c7541825f00000000000000000000000000000000000000000000000000000000000000c0000000000000000000000000000000000000000000000000000000000000001c732d3337313166332dc3bc7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a00000000"
+  },
+  {
+   "abi": "StrategyRegistry.json",
+   "fragment": {
+    "type": "function",
+    "name": "isRegistered",
+    "inputs": [
+     {
+      "name": "strategyId",
+      "type": "bytes32",
+      "internalType": "bytes32"
+     }
+    ],
+    "outputs": [
+     {
+      "name": "",
+      "type": "bool",
+      "internalType": "bool"
+     }
+    ],
+    "stateMutability": "view"
+   },
+   "calldata": "0x27258b222b36709f745a66aa44e85feff2f3dd1631f5c4109c8b0e9b4f0d96aeb230cbff",
+   "output": "0x0000000000000000000000000000000000000000000000000000000000000001"
+  },
+  {
+   "abi": "StrategyRegistry.json",
+   "fragment": {
+    "type": "function",
+    "name": "registerStrategy",
+    "inputs": [
+     {
+      "name": "strategyId",
+      "type": "bytes32",
+      "internalType": "bytes32"
+     },
+     {
+      "name": "methodologyHash",
+      "type": "bytes32",
+      "internalType": "bytes32"
+     },
+     {
+      "name": "paperCorpusHash",
+      "type": "bytes32",
+      "internalType": "bytes32"
+     },
+     {
+      "name": "regimeTag",
+      "type": "bytes32",
+      "internalType": "bytes32"
+     },
+     {
+      "name": "metadataURI",
+      "type": "string",
+      "internalType": "string"
+     }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+   },
+   "calldata": "0x577536e0912d12f5106aca589817841be90dc5ad09daad3f46a5e7aac4a5c28475054e6267b56a23fe9424f6da89902afc8187ccf32502cf905eb3230ca9d3b9c73b47c5a691ddcf6bcbef8fb1ef1907de3d4ed2c29b32210291379a047ec3b481c4963b367767cbd34a2e16ba6d3cbf779dcd89136b1564c7f01574984b55f0ec51061000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000001e732d3461386239632dc3bc7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a0000",
+   "output": "0x",
+   "signed_raw": "0xf9014d07852540be4000830493e094baf67f0994d7b638e3a639bc70b9809c69e5ee2480b8e4577536e0912d12f5106aca589817841be90dc5ad09daad3f46a5e7aac4a5c28475054e6267b56a23fe9424f6da89902afc8187ccf32502cf905eb3230ca9d3b9c73b47c5a691ddcf6bcbef8fb1ef1907de3d4ed2c29b32210291379a047ec3b481c4963b367767cbd34a2e16ba6d3cbf779dcd89136b1564c7f01574984b55f0ec51061000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000001e732d3461386239632dc3bc7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a00008399dec8a0617ee8b738b10cb424ae6c2d72adb8c6777122b93b80d3f1591294601b2f014ca030746b9c593d81104c99edb72e2348f9e93a3462c1de53f26a13ad31f6781e28"
+  },
+  {
+   "abi": "StrategyRegistry.json",
+   "fragment": {
+    "type": "function",
+    "name": "strategyCount",
+    "inputs": [],
+    "outputs": [
+     {
+      "name": "",
+      "type": "uint256",
+      "internalType": "uint256"
+     }
+    ],
+    "stateMutability": "view"
+   },
+   "calldata": "0x22068b44",
+   "output": "0xc2527eb77bf1db4fbeb09fa3b36838748230ec22c8154832f86d14adfaf664f4"
+  },
+  {
+   "abi": "SyntheticFactory.json",
+   "fragment": {
+    "type": "function",
+    "name": "getPrice",
+    "inputs": [
+     {
+      "name": "synthetic",
+      "type": "address",
+      "internalType": "address"
+     }
+    ],
+    "outputs": [
+     {
+      "name": "price",
+      "type": "uint256",
+      "internalType": "uint256"
+     }
+    ],
+    "stateMutability": "view"
+   },
+   "calldata": "0x41976e09000000000000000000000000b9260d62ad51b60da889dd1fbf29d84ac95b4f2c",
+   "output": "0x4cfc7dc5bd76362460488e8fcbbac732e49ec858720d863e5db17e92d8d9b250"
+  },
+  {
+   "abi": "SyntheticFactory.json",
+   "fragment": {
+    "type": "function",
+    "name": "getSynthetics",
+    "inputs": [],
+    "outputs": [
+     {
+      "name": "",
+      "type": "address[]",
+      "internalType": "address[]"
+     }
+    ],
+    "stateMutability": "view"
+   },
+   "calldata": "0xb96f5ad0",
+   "output": "0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000030000000000000000000000003b852529977fa0fa7491fa81963dba87106244d20000000000000000000000009c6f191d08f25f8710a01bb6b51819cea2bcd02b00000000000000000000000046f089478f2645d856a2318878e24739ade9e0c6"
+  },
+  {
    "abi": "SyntheticFactory.json",
    "fragment": {
     "type": "function",
@@ -1493,6 +1107,154 @@
    "abi": "Vault.json",
    "fragment": {
     "type": "function",
+    "name": "creator",
+    "inputs": [],
+    "outputs": [
+     {
+      "name": "",
+      "type": "address",
+      "internalType": "address"
+     }
+    ],
+    "stateMutability": "view"
+   },
+   "calldata": "0x02d05d3f",
+   "output": "0x000000000000000000000000970f90399779f22ee642ee40cb90a8208ff60a4f"
+  },
+  {
+   "abi": "Vault.json",
+   "fragment": {
+    "type": "function",
+    "name": "deposit",
+    "inputs": [
+     {
+      "name": "assets",
+      "type": "uint256",
+      "internalType": "uint256"
+     },
+     {
+      "name": "receiver",
+      "type": "address",
+      "internalType": "address"
+     }
+    ],
+    "outputs": [
+     {
+      "name": "shares",
+      "type": "uint256",
+      "internalType": "uint256"
+     }
+    ],
+    "stateMutability": "nonpayable"
+   },
+   "calldata": "0x6e553f65a378f48ab792e6636e7302bcf1b04758081c48575f74cc72ec0c2bf8d6609ce0000000000000000000000000aff626b3751ce39324fbe23274a98db3c63b7537",
+   "output": "0x3a118350c496585b972f1347be857b9012599ceb5e450fb6f797448a487e2f3a",
+   "signed_raw": "0xf8ad07852540be4000830493e094baf67f0994d7b638e3a639bc70b9809c69e5ee2480b8446e553f65a378f48ab792e6636e7302bcf1b04758081c48575f74cc72ec0c2bf8d6609ce0000000000000000000000000aff626b3751ce39324fbe23274a98db3c63b75378399dec8a0e9634805e9ef590ece30634927f3c34224249394ebe88be8aaf2d57e329ffad5a050f5576c1c5e787555d6d344b61e5549c535e207bcdecbc22ab568630f7736c2"
+  },
+  {
+   "abi": "Vault.json",
+   "fragment": {
+    "type": "function",
+    "name": "getHoldings",
+    "inputs": [],
+    "outputs": [
+     {
+      "name": "tokens",
+      "type": "address[]",
+      "internalType": "address[]"
+     },
+     {
+      "name": "amounts",
+      "type": "uint256[]",
+      "internalType": "uint256[]"
+     }
+    ],
+    "stateMutability": "view"
+   },
+   "calldata": "0xd353ac7c",
+   "output": "0x000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000001000000000000000000000000e073d6c503b50d836d0378206ab71ad3107536990000000000000000000000000000000000000000000000000000000000000000"
+  },
+  {
+   "abi": "Vault.json",
+   "fragment": {
+    "type": "function",
+    "name": "getTargetAllocations",
+    "inputs": [],
+    "outputs": [
+     {
+      "name": "tokens",
+      "type": "address[]",
+      "internalType": "address[]"
+     },
+     {
+      "name": "weights",
+      "type": "uint256[]",
+      "internalType": "uint256[]"
+     }
+    ],
+    "stateMutability": "view"
+   },
+   "calldata": "0x1122f719",
+   "output": "0x000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000003000000000000000000000000c9783e96470118d519b3f5dd855e61d609a29cea000000000000000000000000742942efa7101cd67160e7df59643646d027299b0000000000000000000000009f549eee6a3d35a02573595bd74b92f4d16f39230000000000000000000000000000000000000000000000000000000000000000"
+  },
+  {
+   "abi": "Vault.json",
+   "fragment": {
+    "type": "function",
+    "name": "highWaterMark",
+    "inputs": [],
+    "outputs": [
+     {
+      "name": "",
+      "type": "uint256",
+      "internalType": "uint256"
+     }
+    ],
+    "stateMutability": "view"
+   },
+   "calldata": "0x1e8410da",
+   "output": "0x4f692a1a81b767c01eea74b3e1a1af446181c2a437ced1e5872ead22fe058694"
+  },
+  {
+   "abi": "Vault.json",
+   "fragment": {
+    "type": "function",
+    "name": "isAgentAssisted",
+    "inputs": [],
+    "outputs": [
+     {
+      "name": "",
+      "type": "bool",
+      "internalType": "bool"
+     }
+    ],
+    "stateMutability": "view"
+   },
+   "calldata": "0x2d005331",
+   "output": "0x0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  {
+   "abi": "Vault.json",
+   "fragment": {
+    "type": "function",
+    "name": "managementFeeBps",
+    "inputs": [],
+    "outputs": [
+     {
+      "name": "",
+      "type": "uint16",
+      "internalType": "uint16"
+     }
+    ],
+    "stateMutability": "view"
+   },
+   "calldata": "0x3813c35a",
+   "output": "0x000000000000000000000000000000000000000000000000000000000000ae2f"
+  },
+  {
+   "abi": "Vault.json",
+   "fragment": {
+    "type": "function",
     "name": "paused",
     "inputs": [],
     "outputs": [
@@ -1506,11 +1268,287 @@
    },
    "calldata": "0x5c975abb",
    "output": "0x0000000000000000000000000000000000000000000000000000000000000001"
+  },
+  {
+   "abi": "Vault.json",
+   "fragment": {
+    "type": "function",
+    "name": "performanceFeeBps",
+    "inputs": [],
+    "outputs": [
+     {
+      "name": "",
+      "type": "uint16",
+      "internalType": "uint16"
+     }
+    ],
+    "stateMutability": "view"
+   },
+   "calldata": "0xb9d4e879",
+   "output": "0x000000000000000000000000000000000000000000000000000000000000002f"
+  },
+  {
+   "abi": "Vault.json",
+   "fragment": {
+    "type": "function",
+    "name": "rebalance",
+    "inputs": [
+     {
+      "name": "tokensIn",
+      "type": "address[]",
+      "internalType": "address[]"
+     },
+     {
+      "name": "amountsIn",
+      "type": "uint256[]",
+      "internalType": "uint256[]"
+     },
+     {
+      "name": "tokensOut",
+      "type": "address[]",
+      "internalType": "address[]"
+     },
+     {
+      "name": "amountsOut",
+      "type": "uint256[]",
+      "internalType": "uint256[]"
+     }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+   },
+   "calldata": "0xff1907a2000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000012000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002d1526e59ad989916b7c4a81e901d9927891f845ef8491e285957a0622fa97486ad20037612e6d75d64ece0b0ebcb354f23ec5b5af8b98903cdb055f36a17fb5e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000038c3369632eb49427e986703762266e82b7841d0a8c36cd0306512fd29d896d51ebc9aa16b6cb68523a56202184839dc5c224e049ab84b9e887a3d93245547863b00e5b47993ca0eca39ce1c5ad305079574045eeaf5838f1e3d5d92c94d5822e",
+   "output": "0x",
+   "signed_raw": "0xf9020e07852540be4000830493e094baf67f0994d7b638e3a639bc70b9809c69e5ee2480b901a4ff1907a2000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000012000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002d1526e59ad989916b7c4a81e901d9927891f845ef8491e285957a0622fa97486ad20037612e6d75d64ece0b0ebcb354f23ec5b5af8b98903cdb055f36a17fb5e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000038c3369632eb49427e986703762266e82b7841d0a8c36cd0306512fd29d896d51ebc9aa16b6cb68523a56202184839dc5c224e049ab84b9e887a3d93245547863b00e5b47993ca0eca39ce1c5ad305079574045eeaf5838f1e3d5d92c94d5822e8399dec8a019fa6a9532c358d097b833a833ced8cdac2481fb0bbc2127574dfb9f35059107a0627c9372ac7142e0e553f284f9734dc15559c60df589d77e682c8827f9dc3667"
+  },
+  {
+   "abi": "Vault.json",
+   "fragment": {
+    "type": "function",
+    "name": "setAgent",
+    "inputs": [
+     {
+      "name": "_agent",
+      "type": "address",
+      "internalType": "address"
+     }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+   },
+   "calldata": "0xbcf685ed0000000000000000000000002dea186cd7c87ee5f19267f16e89833b69804e97",
+   "output": "0x",
+   "signed_raw": "0xf88c07852540be4000830493e094baf67f0994d7b638e3a639bc70b9809c69e5ee2480a4bcf685ed0000000000000000000000002dea186cd7c87ee5f19267f16e89833b69804e978399dec7a0fc8f98322890fe9be445b30fa2f0ab1432cccf630b312e6a7c17a5500bd2dc74a023eba70814cb253bcbe791adb1fe0169278b41b694c0717987d9fc62dd86b7f0"
+  },
+  {
+   "abi": "Vault.json",
+   "fragment": {
+    "type": "function",
+    "name": "setTargetAllocations",
+    "inputs": [
+     {
+      "name": "tokens",
+      "type": "address[]",
+      "internalType": "address[]"
+     },
+     {
+      "name": "weightsBps",
+      "type": "uint256[]",
+      "internalType": "uint256[]"
+     }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+   },
+   "calldata": "0xbbebbf140000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000010000000000000000000000003bf44087f6d87bfaf8faafc73cd41b2b8c47496a00000000000000000000000000000000000000000000000000000000000000023c543ad264d5a298b33765625c138f0edd4b454efe116f2b83d96530dbb3dcdc9c114c4fa19c730358c10cd28785b1a4ab1b70641db285cebac8517fcdcc30fa",
+   "output": "0x",
+   "signed_raw": "0xf9014d07852540be4000830493e094baf67f0994d7b638e3a639bc70b9809c69e5ee2480b8e4bbebbf140000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000010000000000000000000000003bf44087f6d87bfaf8faafc73cd41b2b8c47496a00000000000000000000000000000000000000000000000000000000000000023c543ad264d5a298b33765625c138f0edd4b454efe116f2b83d96530dbb3dcdc9c114c4fa19c730358c10cd28785b1a4ab1b70641db285cebac8517fcdcc30fa8399dec7a033c0e350e89debeea3df17a14d7978a49eede51bae08a1159e36ac56a470cf87a00122fa985a10e741bf9861b771f719b4b1bcb3b27970d4250ae49d8409051fcf"
+  },
+  {
+   "abi": "Vault.json",
+   "fragment": {
+    "type": "function",
+    "name": "setTokenOracles",
+    "inputs": [
+     {
+      "name": "tokens",
+      "type": "address[]",
+      "internalType": "address[]"
+     },
+     {
+      "name": "oracles",
+      "type": "address[]",
+      "internalType": "address[]"
+     }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+   },
+   "calldata": "0xa0dcd081000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000002000000000000000000000000bd845a588e40af2e44658eaa6e0df8fb6b3bd2be0000000000000000000000006405e7a1461775013a6ebaf4a6f4b581ab2d101400000000000000000000000000000000000000000000000000000000000000020000000000000000000000002d5119c07e833486478c1e419ecc153ecbcfaa51000000000000000000000000324550edc0cffa7b38a89584c3376d1b7dc60abe",
+   "output": "0x",
+   "signed_raw": "0xf9016e07852540be4000830493e094baf67f0994d7b638e3a639bc70b9809c69e5ee2480b90104a0dcd081000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000002000000000000000000000000bd845a588e40af2e44658eaa6e0df8fb6b3bd2be0000000000000000000000006405e7a1461775013a6ebaf4a6f4b581ab2d101400000000000000000000000000000000000000000000000000000000000000020000000000000000000000002d5119c07e833486478c1e419ecc153ecbcfaa51000000000000000000000000324550edc0cffa7b38a89584c3376d1b7dc60abe8399dec8a06babdc8161c7132cd6c655e24e5591c4cea25386e475deee7935c0a369c83af9a072d4ebb3fa2dccf60c8356571b122d3413b4d081584ac94305a7b886c6e64d3e"
+  },
+  {
+   "abi": "Vault.json",
+   "fragment": {
+    "type": "function",
+    "name": "tier",
+    "inputs": [],
+    "outputs": [
+     {
+      "name": "",
+      "type": "uint8",
+      "internalType": "uint8"
+     }
+    ],
+    "stateMutability": "view"
+   },
+   "calldata": "0x16f4d022",
+   "output": "0x00000000000000000000000000000000000000000000000000000000000000a8"
+  },
+  {
+   "abi": "Vault.json",
+   "fragment": {
+    "type": "function",
+    "name": "totalAssets",
+    "inputs": [],
+    "outputs": [
+     {
+      "name": "",
+      "type": "uint256",
+      "internalType": "uint256"
+     }
+    ],
+    "stateMutability": "view"
+   },
+   "calldata": "0x01e1d114",
+   "output": "0x4764d69c30788b2f5cd255aa6bd096bf9f0f92ff2a983bc00a605efc53dd4430"
+  },
+  {
+   "abi": "VaultFactory.json",
+   "fragment": {
+    "type": "function",
+    "name": "createVault",
+    "inputs": [
+     {
+      "name": "name",
+      "type": "string",
+      "internalType": "string"
+     },
+     {
+      "name": "symbol",
+      "type": "string",
+      "internalType": "string"
+     },
+     {
+      "name": "managementFeeBps",
+      "type": "uint16",
+      "internalType": "uint16"
+     },
+     {
+      "name": "performanceFeeBps",
+      "type": "uint16",
+      "internalType": "uint16"
+     },
+     {
+      "name": "agentAssisted",
+      "type": "bool",
+      "internalType": "bool"
+     }
+    ],
+    "outputs": [
+     {
+      "name": "vault",
+      "type": "address",
+      "internalType": "address"
+     }
+    ],
+    "stateMutability": "nonpayable"
+   },
+   "calldata": "0x2d69187d00000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000001a710000000000000000000000000000000000000000000000000000000000003b570000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002a732d6162626636352dc3bc7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000025732d3234366136622dc3bc7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a000000000000000000000000000000000000000000000000000000",
+   "output": "0x000000000000000000000000cd8b65022c625e920a3529ce2887556f867117eb",
+   "signed_raw": "0xf901ce07852540be4000830493e094baf67f0994d7b638e3a639bc70b9809c69e5ee2480b901642d69187d00000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000001a710000000000000000000000000000000000000000000000000000000000003b570000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002a732d6162626636352dc3bc7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000025732d3234366136622dc3bc7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a0000000000000000000000000000000000000000000000000000008399dec8a0d01935ae2c9efa184aabba9fb44c141e3356cd9d9853e27ec4aac619c9d75200a0273203522c073ff615487cf7f8c535401131f46d477da81478ebeb5d2e7ba2aa"
+  },
+  {
+   "abi": "VaultFactory.json",
+   "fragment": {
+    "type": "function",
+    "name": "getVaults",
+    "inputs": [],
+    "outputs": [
+     {
+      "name": "",
+      "type": "address[]",
+      "internalType": "address[]"
+     }
+    ],
+    "stateMutability": "view"
+   },
+   "calldata": "0x44d00f82",
+   "output": "0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000003000000000000000000000000ea7b8a23930644decdd283de5e398cf0ac2e9bb6000000000000000000000000ddb3c526e0f45f57a161ffc8ddcddb798f25d6ad00000000000000000000000076eeeec5d5cb9350d7bb87558b70c20771c668b0"
+  },
+  {
+   "abi": "IPriceOracle.json",
+   "fragment": {
+    "type": "function",
+    "name": "getPrice",
+    "inputs": [
+     {
+      "name": "token",
+      "type": "address",
+      "internalType": "address"
+     }
+    ],
+    "outputs": [
+     {
+      "name": "price",
+      "type": "uint256",
+      "internalType": "uint256"
+     },
+     {
+      "name": "updatedAt",
+      "type": "uint256",
+      "internalType": "uint256"
+     }
+    ],
+    "stateMutability": "view"
+   },
+   "calldata": "0x41976e09000000000000000000000000b9260d62ad51b60da889dd1fbf29d84ac95b4f2c",
+   "output": "0x4cfc7dc5bd76362460488e8fcbbac732e49ec858720d863e5db17e92d8d9b2507bbf036f2aae2d33c7cf4244b12913e31b9edb5ca8cc48ade436d021e5d4499b"
+  },
+  {
+   "abi": "IPriceOracle.json",
+   "fragment": {
+    "type": "function",
+    "name": "isFresh",
+    "inputs": [
+     {
+      "name": "token",
+      "type": "address",
+      "internalType": "address"
+     },
+     {
+      "name": "maxAge",
+      "type": "uint256",
+      "internalType": "uint256"
+     }
+    ],
+    "outputs": [
+     {
+      "name": "fresh",
+      "type": "bool",
+      "internalType": "bool"
+     }
+    ],
+    "stateMutability": "view"
+   },
+   "calldata": "0xffcfa799000000000000000000000000a43f90f1c9fb9d3a91ce507872d10052f507e096ca5d7042af588d9eeb233c729c11263cb27854243ab6b40d4e82588da8ca0e7d",
+   "output": "0x0000000000000000000000000000000000000000000000000000000000000001"
   }
  ],
  "events": [
   {
-   "abi": "IReasoningTraceRegistry.json",
+   "abi": "ReasoningTraceRegistry.json",
    "fragment": {
     "type": "event",
     "name": "TraceCommitted",
@@ -1563,7 +1601,7 @@
    "data": "0x000000000000000000000000e24c1fec8e0ef09be39ed1c3d0345bfd4cbd5ad8640bf5afc4a12bb4c2d0383cfd0d60541d07e289e1ed7daf4069792334f82e270000000000000000000000000000000000000000000000009f96d9a0405d781f"
   },
   {
-   "abi": "IReasoningTraceRegistry.json",
+   "abi": "ReasoningTraceRegistry.json",
    "fragment": {
     "type": "event",
     "name": "TracePublished",
@@ -1610,7 +1648,7 @@
    "data": "0xd813b838b0022e14cbeffbeee8594d25d6ac9173dc3dde2ce2ee478a56bff74742623c25a4ee91b1dd32bdab1b4961022ba4e4a6dbbe3dac4c07a1afe8f390e1"
   },
   {
-   "abi": "IReasoningTraceRegistry.json",
+   "abi": "ReasoningTraceRegistry.json",
    "fragment": {
     "type": "event",
     "name": "TraceRevealed",
@@ -1643,7 +1681,7 @@
    "data": "0x0000000000000000000000000000000000000000000000000000000000000040a6664887973d76b775b3116448c771ce1d18aa7b79b29277a8f5cbba81cc7f6a0000000000000000000000000000000000000000000000000000000000000022732d6330386632382dc3bc7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a000000000000000000000000000000000000000000000000000000000000"
   },
   {
-   "abi": "IVaultFactory.json",
+   "abi": "VaultFactory.json",
    "fragment": {
     "type": "event",
     "name": "VaultCreated",

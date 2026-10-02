@@ -22,13 +22,21 @@ recorded in the file). Every vector must stay byte-identical:
   ``api/_erc6492.py`` ``["address", "bytes32", "bytes"]``,
   ``scripts/deploy_contracts.py``'s constructor-arg lists, and the
   ``["string"]`` encode + decode in ``scripts/register_erc8004_identity.py``.
-* ``functions`` -- every contract function the backend calls through web3
-  (``graft grep "\\.functions\\.[A-Za-z_]+" --in backend/archimedes``: 54 names,
-  59 distinct signature/output shapes across ``contracts/abis``): calldata from
-  ``build_transaction``, the raw signed transaction for state-changing calls, and
-  the call-result encoding plus its decode through ``w3.codec``.
+* ``functions`` -- every contract function the backend calls through web3, read
+  from ``backend/archimedes``'s AST by ``_backend_usage``: each
+  ``<contract>.functions.<name>`` plus the names dispatched through
+  ``getattr(<contract>.functions, ...)`` (``setAgent`` / ``transferOwnership`` in
+  ``chain/executor.py``), 56 names. Every shape of those names in the ABI files
+  the backend loads (``_backend_usage`` again: ``Vault.json``,
+  ``ReasoningTraceRegistry.json``, ... -- not the ``I*`` interfaces it never
+  loads) is pinned, 61 distinct signature/output/mutability shapes: calldata
+  from ``build_transaction``, the raw signed transaction for state-changing
+  calls, and the call-result encoding plus its decode through ``w3.codec``.
 * ``events`` -- the four events the backend decodes with ``process_log``
   (``TraceCommitted``, ``TracePublished``, ``TraceRevealed``, ``VaultCreated``).
+
+A drift check fails when a loaded ABI file gains a backend-called entry with no
+pinned shape, or a pinned fragment leaves the file it was captured from.
 
 Argument values are not in the fixture. The direct cases list theirs explicitly
 below; function and event values come from ``_gen``, a SHA-256 of the signature,
@@ -53,6 +61,7 @@ and say in the PR which environment produced it.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import sys
@@ -72,28 +81,137 @@ from web3.providers.base import BaseProvider
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ABI_DIR = REPO_ROOT / "contracts" / "abis"
+BACKEND_SRC = REPO_ROOT / "backend" / "archimedes"
 GOLDEN_PATH = Path(__file__).resolve().parents[1] / "fixtures" / "abi_codec_golden.json"
 
-# Contract functions the backend calls via ``contract.functions.<name>`` and the
-# events it decodes via ``process_log``. Every ABI entry with one of these names
-# is pinned (an interface and its implementation can share a name with
-# different types, so all shapes are kept, deduplicated by signature + outputs).
-BACKEND_FUNCTIONS = frozenset(
-    {
-        # funds path: writes
-        "approve", "commit", "createPool", "createVault", "deposit", "publishTrace", "rebalance",
-        "registerStrategy", "reveal", "setTargetAllocations", "setTokenOracles",
-        # reads
-        "balanceOf", "creator", "decimals", "getAllPools", "getAmountOut", "getCommitment", "getHoldings",
-        "getPool", "getPrice", "getStrategy", "getSynthetics", "getTargetAllocations", "getTraceById",
-        "getTracesByVault", "getVaults", "highWaterMark", "isAgentAssisted", "isFresh", "isRegistered",
-        "lastUpdated", "managementFeeBps", "name", "owner", "ownerOf", "paused", "pendingTradeCommitment",
-        "performanceFeeBps", "pools", "price", "reserve0", "reserve1", "strategyCount", "swapFeeBps", "symbol",
-        "tier", "token0", "token1", "tokenURI", "tokenVault", "totalAssets", "totalSupply", "traceCount",
-        "vaultCount",
-    }
-)  # fmt: skip
-BACKEND_EVENTS = frozenset({"TraceCommitted", "TracePublished", "TraceRevealed", "VaultCreated"})
+# The two ABI loaders: ``ContractLoader._load_abi`` (chain/contracts.py, reached
+# through ``_contract(address, "<Name>")``) and ``scripts/deploy_contracts.py``'s
+# ``load_abi("<Name>")``. The ABI-name argument is the first positional one.
+_ABI_LOADERS = frozenset({"_load_abi", "load_abi"})
+
+# ABI names the backend passes to a loader that have no file in contracts/abis.
+# ``marketplace/service.py`` ``_usdc_balance_of`` asks ``ContractLoader._contract``
+# for "IERC20" and there is no ``contracts/abis/IERC20.json``, so ``_load_abi``
+# raises FileNotFoundError there before anything is encoded. Listed so that any
+# OTHER unknown name still fails the scan.
+_KNOWN_MISSING_ABIS = frozenset({"IERC20"})
+
+
+def _backend_usage() -> tuple[frozenset[str], frozenset[str], tuple[str, ...], frozenset[str], tuple[str, ...]]:
+    """What ``backend/archimedes`` does with contracts, read from its AST.
+
+    Returns ``(functions, events, abis, missing_abis, unresolved)``:
+
+    * functions -- every ``<contract>.functions.<name>``, plus every name that
+      reaches a ``getattr(<contract>.functions, <arg>)`` (executor.py's
+      ``_send_vault_admin_tx`` dispatches ``setAgent`` / ``transferOwnership``
+      this way);
+    * events -- every ``<contract>.events.<Name>`` (and ``getattr`` form);
+    * abis -- the ``contracts/abis`` files the backend loads, in capture order:
+      first every name that reaches an ``_ABI_LOADERS`` call (so every
+      ``_contract(..., "<Name>")``), then every other ``"<Name>.json"`` literal
+      the code opens itself (``IPriceOracle.json`` in asset_market_service.py,
+      ``IVault.json`` / ``IVaultFactory.json`` in scripts/verify_arc_e2e.py);
+    * missing_abis -- loader names with no file in ``contracts/abis``;
+    * unresolved -- ``file:line`` of a dispatch or loader argument this scan
+      cannot pin to string literals. Must stay empty, or the lists above are
+      incomplete.
+
+    A non-literal argument is resolved when it is a parameter of the enclosing
+    function: it then takes the literal values every call of that function
+    passes for it (followed through further parameters, a few levels deep).
+    """
+    trees = {p: ast.parse(p.read_text(encoding="utf-8")) for p in sorted(BACKEND_SRC.rglob("*.py"))}
+    parent: dict[ast.AST, ast.AST] = {}
+    where: dict[ast.AST, str] = {}
+    calls: dict[str, list[ast.Call]] = {}
+    for path, tree in trees.items():
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parent[child] = node
+            if isinstance(node, ast.Call):
+                where[node] = f"{path.relative_to(REPO_ROOT)}:{node.lineno}"
+                f = node.func
+                name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
+                if name:
+                    calls.setdefault(name, []).append(node)
+
+    def literals(arg: ast.AST | None, at: ast.AST, depth: int = 0) -> set[str] | None:
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            return {arg.value}
+        if not isinstance(arg, ast.Name) or depth > 4:
+            return None
+        fn = parent.get(at)
+        while fn is not None and not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
+            fn = parent.get(fn)
+        if fn is None:
+            return None
+        positional = [a.arg for a in fn.args.posonlyargs + fn.args.args]
+        if arg.id not in positional + [a.arg for a in fn.args.kwonlyargs] or not calls.get(fn.name):
+            return None
+        out: set[str] = set()
+        for call in calls[fn.name]:
+            value = next((k.value for k in call.keywords if k.arg == arg.id), None)
+            if value is None and arg.id in positional:
+                i = positional.index(arg.id)
+                if positional[0] in ("self", "cls") and isinstance(call.func, ast.Attribute):
+                    i -= 1
+                value = call.args[i] if 0 <= i < len(call.args) else None
+            got = literals(value, call, depth + 1)
+            if got is None:
+                return None
+            out |= got
+        return out
+
+    abi_files = {p.stem for p in ABI_DIR.glob("*.json")}
+    functions: set[str] = set()
+    events: set[str] = set()
+    loaded: set[str] = set()
+    opened: set[str] = set()
+    missing: set[str] = set()
+    unresolved: list[str] = []
+    for tree in trees.values():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Attribute):
+                if node.value.attr == "functions":
+                    functions.add(node.attr)
+                elif node.value.attr == "events":
+                    events.add(node.attr)
+            elif (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and node.value.endswith(".json")
+                and node.value.removesuffix(".json") in abi_files
+            ):
+                opened.add(node.value.removesuffix(".json"))
+            if not isinstance(node, ast.Call):
+                continue
+            f = node.func
+            name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
+            first = isinstance(node.args[0], ast.Attribute) and node.args[0].attr if node.args else None
+            if name == "getattr" and first in ("functions", "events") and len(node.args) > 1:
+                got = literals(node.args[1], node)
+                if got is None:
+                    unresolved.append(where[node])
+                else:
+                    (functions if first == "functions" else events).update(got)
+            elif name in _ABI_LOADERS:
+                got = literals(node.args[0] if node.args else None, node)
+                if got is None:
+                    unresolved.append(where[node])
+                else:
+                    loaded.update(got & abi_files)
+                    missing.update(got - abi_files)
+    abis = tuple(sorted(loaded)) + tuple(sorted(opened - loaded))
+    return frozenset(functions), frozenset(events), abis, frozenset(missing), tuple(unresolved)
+
+
+# Contract functions the backend calls, events it decodes via ``process_log``,
+# and the ABI files it loads -- all derived from the source above, not kept by
+# hand. Every shape (``_shape``) of these names in these files is pinned: an
+# interface and its implementation, or two contracts, can share a name with
+# different types.
+BACKEND_FUNCTIONS, BACKEND_EVENTS, BACKEND_ABIS, MISSING_ABIS, UNRESOLVED = _backend_usage()
 
 # Fixed signing context for the raw-transaction vectors: the explicit tx-dict
 # shape the backend's executor and trace publisher pass to build_transaction.
@@ -254,6 +372,25 @@ def _function_vector(fragment: dict) -> dict[str, str]:
     return vector
 
 
+def _shape(entry: dict) -> str:
+    """The codec-relevant part of an ABI entry (what its vectors encode/decode)."""
+    if entry["type"] == "event":
+        indexed = "".join("i" if p.get("indexed") else "-" for p in entry["inputs"])
+        return f"event {_sig(entry)} [{indexed}]{' anonymous' if entry.get('anonymous') else ''}"
+    outputs = ",".join(_type_str(o) for o in entry.get("outputs", []))
+    return f"{_sig(entry)} -> ({outputs}) {entry.get('stateMutability')}"
+
+
+def _backend_entries(abi: list[dict]) -> list[dict]:
+    """The entries of one ABI that the backend calls (functions) or decodes (events)."""
+    return [
+        e
+        for e in abi
+        if (e.get("type") == "function" and e["name"] in BACKEND_FUNCTIONS)
+        or (e.get("type") == "event" and e["name"] in BACKEND_EVENTS)
+    ]
+
+
 def _capture() -> dict:
     """Build the fixture from the CURRENT environment (see module docstring)."""
     import eth_abi
@@ -265,23 +402,21 @@ def _capture() -> dict:
         "functions": [],
         "events": [],
     }
-    seen: set[tuple[str, str]] = set()
-    for abi_file, abi in _load_abis().items():
-        for entry in abi:
-            if entry.get("type") == "function" and entry["name"] in BACKEND_FUNCTIONS:
-                key = (_sig(entry), ",".join(_type_str(o) for o in entry.get("outputs", [])))
-                if key in seen:
-                    continue
-                seen.add(key)
-                fragment = _fragment(entry)
+    abis = _load_abis()
+    seen: set[str] = set()
+    for abi_file in (f"{name}.json" for name in BACKEND_ABIS):
+        for entry in _backend_entries(abis[abi_file]):
+            if _shape(entry) in seen:
+                continue
+            seen.add(_shape(entry))
+            fragment = _fragment(entry)
+            if entry["type"] == "function":
                 golden["functions"].append({"abi": abi_file, "fragment": fragment, **_function_vector(fragment)})
-            elif entry.get("type") == "event" and entry["name"] in BACKEND_EVENTS:
+            else:
                 sig = _sig(entry)
-                if any(e["fragment"]["name"] == entry["name"] for e in golden["events"]):
-                    continue
                 values = [_gen(p, f"event {sig}:{i}") for i, p in enumerate(entry["inputs"])]
                 topics, data = _event_log(entry, values)
-                golden["events"].append({"abi": abi_file, "fragment": _fragment(entry), "topics": topics, "data": data})
+                golden["events"].append({"abi": abi_file, "fragment": fragment, "topics": topics, "data": data})
     return golden
 
 
@@ -338,6 +473,9 @@ def test_warm_codec_cache_stays_byte_identical() -> None:
 
 
 def test_fixture_covers_every_backend_function_and_event() -> None:
+    """Every function the backend calls (including the ``getattr`` dispatch) and
+    every event it decodes, as read from the source by ``_backend_usage``."""
+    assert not UNRESOLVED, f"cannot resolve these dispatch/ABI-loader arguments to literals: {UNRESOLVED}"
     names = {v["fragment"]["name"] for v in GOLDEN["functions"]}
     events = {v["fragment"]["name"] for v in GOLDEN["events"]}
     assert names == BACKEND_FUNCTIONS, sorted(names ^ BACKEND_FUNCTIONS)
@@ -382,14 +520,31 @@ def test_event_vectors_round_trip(vector: dict) -> None:
     }
 
 
-def test_pinned_fragments_still_match_contracts_abis() -> None:
-    """The vectors pin the types the backend uses TODAY. If a checked-in ABI
-    changes one of these entries, the vector is testing a stale shape: re-capture
-    (module docstring) rather than letting this pass on the old types."""
+def test_pinned_vectors_match_the_abis_the_backend_loads() -> None:
+    """The vectors pin the types the backend uses TODAY, so they are checked
+    against the ABI files the backend actually loads (``BACKEND_ABIS``, read from
+    the source: e.g. ``ReasoningTraceRegistry.json`` and ``Vault.json``, not the
+    ``I*`` interfaces). Every pinned fragment must still be in the file it was
+    captured from, and every backend-called entry in every loaded file must have
+    a pinned shape. On a failure, re-capture (module docstring) rather than keep
+    testing a stale shape."""
+    assert MISSING_ABIS == _KNOWN_MISSING_ABIS, sorted(MISSING_ABIS ^ _KNOWN_MISSING_ABIS)
     abis = _load_abis()
-    for vector in GOLDEN["functions"] + GOLDEN["events"]:
+    vectors = GOLDEN["functions"] + GOLDEN["events"]
+    for vector in vectors:
+        assert vector["abi"].removesuffix(".json") in BACKEND_ABIS, (
+            f"{_fn_id(vector)}: the backend does not load this ABI"
+        )
         live = [_fragment(e) for e in abis[vector["abi"]] if e.get("name") == vector["fragment"]["name"]]
         assert vector["fragment"] in live, f"{_fn_id(vector)} no longer matches contracts/abis/{vector['abi']}"
+    pinned = {_shape(v["fragment"]) for v in vectors}
+    unpinned = sorted(
+        f"{name}.json: {_shape(e)}"
+        for name in BACKEND_ABIS
+        for e in _backend_entries(abis[f"{name}.json"])
+        if _shape(e) not in pinned
+    )
+    assert not unpinned, f"backend-loaded ABI entries with no golden vector: {unpinned}"
 
 
 if __name__ == "__main__":
