@@ -112,12 +112,16 @@ Independently of enforcement, disposable accounts are bounded by three layers:
    `X-Client-IP` from its realip-resolved `$remote_addr` and `advanced.ipAddress.
    ipAddressHeaders` points the resolver at that one header, which is the same trusted
    value layers 2 and 3 key on. Because `proxy_set_header` overwrites, a client-supplied
-   `X-Client-IP` cannot reach the auth service. **Stated exactly: nginx trusts only the ALB
-   CIDR, so behind CloudFront this address is the CloudFront *edge* that relayed the
-   request, not the viewer** — buckets are per-edge (unspoofable, no longer global, coarser
-   than one caller). Sharpening that further means trusting CloudFront's published edge
-   ranges, which is deliberately not done: that list changes and a stale one degrades
-   silently.
+   `X-Client-IP` cannot reach the auth service. **Stated exactly: since
+   [#1908](https://github.com/aprin-labs/archimedes/issues/1908) nginx trusts the ALB's VPC
+   CIDR plus CloudFront's origin-facing ranges, so this address is the viewer CloudFront
+   saw** — buckets are per viewer IPv4 address, or per IPv6 /64 (`ipv6Subnet: 64`; a host
+   can use any address in its /64, so a per-address key would let one caller rotate past
+   the limit), and viewers behind one NAT share one. The ranges are a
+   generated, checked-in file (`nginx/cloudfront-origin-facing.conf`, refreshed by
+   `scripts/refresh_cloudfront_origin_ranges.py`); a range missing from a stale copy falls
+   back to that edge's shared bucket, not open. Until #1908 only the VPC was trusted and
+   buckets were per CloudFront edge.
 2. nginx's `/api/auth/` `limit_req` zone.
 3. Decisively: the **per-IP daily generation cap**
    (`backend/archimedes/services/generation_quota.py`). Generation is the

@@ -47,7 +47,6 @@ nginx ``limit_req`` zones, Better Auth's own ``/sign-up/email`` rate limit
 
 from __future__ import annotations
 
-import ipaddress
 import logging
 import os
 from datetime import UTC, datetime
@@ -55,6 +54,15 @@ from datetime import UTC, datetime
 import redis.asyncio as aioredis
 from fastapi import HTTPException
 from starlette.requests import Request
+
+# The per-IP bucket key (``ip:{client_ip}`` above): X-Real-IP, which nginx sets
+# (never X-Forwarded-For, whose first hop is client-supplied: Copilot #792), else
+# the socket peer, else "unknown". IPv4 is keyed on the address and IPv6 on its
+# /64, so one IPv6 caller cannot rotate through its own /64 to dodge the cap
+# (#1908). The same function is api/limiter.py's slowapi key. It is imported
+# into this module's namespace on purpose: account_usage_routes.py and the tests
+# import ``client_ip`` from here.
+from archimedes.services.client_ip import client_ip
 
 logger = logging.getLogger(__name__)
 
@@ -84,41 +92,6 @@ def user_daily_cap() -> int:
 def ip_daily_cap() -> int:
     """Per-IP daily generation cap. ``<= 0`` disables that layer."""
     return _cap_from_env("GENERATION_DAILY_CAP_PER_IP", _DEFAULT_IP_DAILY_CAP)
-
-
-def _valid_ip(value: str) -> bool:
-    """True iff ``value`` parses as an IPv4/IPv6 address."""
-    try:
-        ipaddress.ip_address(value)
-        return True
-    except ValueError:
-        return False
-
-
-def client_ip(request: Request) -> str:
-    """Resolve the real client IP behind nginx/ALB for the per-IP cap key.
-
-    Uses ONLY trustworthy sources — a spoofed value must not let a caller rotate
-    the quota key:
-      1. ``X-Real-IP`` — set by nginx from its ``real_ip``-resolved ``$remote_addr``
-         (it OVERWRITES any client-supplied value and binds ``real_ip_header`` to
-         the trusted ALB CIDR), so it is not client-spoofable.
-      2. the socket peer (``request.client.host``) — for local/non-proxied runs.
-
-    ``X-Forwarded-For`` is DELIBERATELY NOT used: its first hop is the original
-    client-supplied value, which an attacker could forge to dodge the cap.
-    (Copilot #792). Every candidate is validated as a real IP before use, so a
-    malformed header can't create arbitrary Redis keys; falls back to ``"unknown"``
-    (a single shared bucket — still capped, just coarser).
-    """
-    xri = (request.headers.get("x-real-ip") or "").strip()
-    if xri and _valid_ip(xri):
-        return xri
-    client = request.client
-    host = (client.host if client and client.host else "").strip()
-    if host and _valid_ip(host):
-        return host
-    return "unknown"
 
 
 class GenerationQuota:
