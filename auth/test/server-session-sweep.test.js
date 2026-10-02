@@ -11,27 +11,49 @@ import test from 'node:test'
 import { startServer } from '../server.js'
 import { authWithSessions, env, remainingTokens, settle } from './fixtures/sessions.js'
 
-const HOUR_MS = 60 * 60 * 1000
+const MINUTE_MS = 60 * 1000
+const HOUR_MS = 60 * MINUTE_MS
 
-test('the running auth server deletes expired sessions within an hour, and keeps doing it', async t => {
+test('the running auth server deletes expired sessions within an hour, then again on every hour of uptime', async t => {
   const database = new DatabaseSync(':memory:')
-  const { liveTokens } = await authWithSessions(database, { live: 1, expired: 2 })
-  assert.equal(remainingTokens(database).length, 3)
+  const { liveTokens } = await authWithSessions(database, { live: 2, expired: 2 })
+  const [laterA, laterB] = [...liveTokens].sort()
+  assert.equal(remainingTokens(database).length, 4)
 
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] })
   const server = startServer({ ...env, PORT: '0' }, { database })
   t.after(() => new Promise(resolve => server.close(resolve)))
   await once(server, 'listening')
 
-  t.mock.timers.tick(HOUR_MS)
-  await settle(() => remainingTokens(database).length === 1)
-  assert.deepEqual(remainingTokens(database), liveTokens, 'expired sessions survived the first hour of uptime')
+  // The clock moves through the first minute and then the rest of the hour,
+  // as it does in production. (One tick of a whole hour would run every timer
+  // with the clock already at 1 h, so a timer armed by the first run would be
+  // indistinguishable from one armed at boot.)
+  t.mock.timers.tick(MINUTE_MS)
+  await settle(() => remainingTokens(database).length === 2)
+  t.mock.timers.tick(HOUR_MS - MINUTE_MS)
+  await settle(() => remainingTokens(database).length === 2)
+  // Let the run due at 1 h finish before the clock moves on.
+  await settle(() => remainingTokens(database).length < 2)
+  assert.deepEqual(remainingTokens(database), [laterA, laterB], 'expired sessions survived the first hour of uptime')
 
-  // The live session expires later; the next scheduled run must take it too.
-  database.prepare('UPDATE auth_sessions SET expiresAt = ?').run(new Date(Date.now() - 1000).toISOString())
-  t.mock.timers.tick(HOUR_MS)
-  await settle(() => remainingTokens(database).length === 0)
-  assert.deepEqual(remainingTokens(database), [], 'the sweep ran once and never again')
+  // Sessions keep expiring after boot. The schedule the PR states is a run on
+  // every hour of uptime (the hourly timer counts from boot), so a session
+  // that has expired by then goes at the next whole hour, not before and not
+  // later: one at 2 h of uptime, the other at 3 h.
+  for (const [hour, token] of [[2, laterA], [3, laterB]]) {
+    const left = remainingTokens(database).length
+    database.prepare('UPDATE auth_sessions SET expiresAt = ? WHERE token = ?').run(new Date(Date.now() - 1000).toISOString(), token)
+
+    t.mock.timers.tick(HOUR_MS - 1)
+    await settle(() => remainingTokens(database).length !== left)
+    assert.ok(remainingTokens(database).includes(token), `a run came before ${hour} h of uptime`)
+
+    t.mock.timers.tick(1)
+    await settle(() => !remainingTokens(database).includes(token))
+    assert.ok(!remainingTokens(database).includes(token), `no run at ${hour} h of uptime`)
+    assert.equal(remainingTokens(database).length, left - 1)
+  }
 })
 
 test('the running auth server first sweeps 60 seconds after boot, not before', async t => {
