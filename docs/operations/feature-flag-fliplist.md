@@ -2,7 +2,7 @@
 
 > **status:** current
 > **owner:** Dan Browne
-> **updated:** 2026-09-03
+> **updated:** 2026-10-02
 > **superseded-by:** —
 
 **Scope:** every feature flag in the tree, what it gates, what the committed
@@ -109,6 +109,7 @@ safe. **Owner is Dan** unless stated; nothing here flips in a drive-by PR.
 | 9 | `VITE_KNOWLEDGE_GRAPH_TAB` | `false` in `ui/.env.example`; **no build arg** → pinned OFF in every built image | same as row 8 | #1090 (KB pipeline artifact) + #1092 (Postgres backfill). `kg_entities`/`kg_relations` are 0 rows today, so the tab would offer an empty capability. |
 | 10 | `RUNNER_DEPLOY_ENABLED` | GitHub repo variable, unset → both jobs skip | repo variable → `true` | The runner infrastructure must exist first (#1065 step 2 `terraform apply` + step 3 on-chain verify). [`deploy-runners.yml`](../../.github/workflows/deploy-runners.yml) has a third layer of runtime existence checks, so an early flip no-ops loudly rather than erroring — but it is still an early flip. |
 | 11 | `TF_DRIFT_ENABLED` | GitHub repo variable, unset → the [`terraform-drift.yml`](../../.github/workflows/terraform-drift.yml) job skips | repo variable → `true` | Not tied to launch — tied to one AWS operation. The read-only plan role must exist first (`infra/scripts/setup-github-plan-role.sh --apply`), plus the `TF_PLAN_ROLE_ARN` variable and the `TF_VAR_ALARM_EMAIL` secret. Flipping early makes the job red on every `infra/**` PR at the OIDC step, which is how a gate gets ignored. The gate is advisory and never a required check. Full procedure: [`../runbooks/terraform-apply-and-task-definition-ownership.md`](../runbooks/terraform-apply-and-task-definition-ownership.md). |
+| 12 | `FEATURE_ROADMAP_SURFACES` | not set in `infra/ecs.tf`, the CI task-def rewrite, `.env.example` (blank) or either compose file → code default **OFF in every environment** (no `APP_ENV` dependence, unlike `FEATURE_QUANT`) | backend container env. Since #1799 the CI rewrite ([`ecs_rewrite_task_def.py`](../../.github/scripts/ecs_rewrite_task_def.py)) is the only writer of `containerDefinitions`, so a durable flip is a pin there plus its `infra/ecs.tf` twin, the `PAPER_ADVANCE_ENABLED` pattern. Flip together with row 8. | Same scope decision as row 8 ([#1266](https://github.com/aprin-labs/archimedes/issues/1266)): vault deployment returns to scope, and the public pages that say it is not offered (the Privacy and Terms pages of [#1432](https://github.com/aprin-labs/archimedes/pull/1432)) change first. Reader: `roadmap_surfaces_enabled()` — [`feature_flags.py`](../../backend/archimedes/feature_flags.py). Only the word `true` (any case) enables; anything else, a typo included, is OFF, and the gate never answers 500. While off, `require_roadmap_surfaces()` 404s `POST /api/vaults/create` before auth, body validation, the rigor gate and any chain call, and `GET /api/agent/manifest` drops the route. Not reported by `GET /api/features`: the UI's roadmap gate is build-time by design. **Load-bearing while off:** it is what makes "vault deployment is not offered" true for a direct API caller and not only in the UI. |
 
 ---
 

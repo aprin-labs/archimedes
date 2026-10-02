@@ -2,7 +2,7 @@
 
 > **status:** current
 > **owner:** Dan Browne
-> **updated:** 2026-08-31
+> **updated:** 2026-10-02
 
 The marketplace's on-chain surface: vault discovery and creation, off-chain
 vault metadata (display name, strategy bindings), reasoning-trace publish/
@@ -57,11 +57,21 @@ curl -s "https://archimedes-arc.com/api/vaults/?tier=1&sort_by=aum&limit=20"
 
 ### POST /api/vaults/create
 Deploy a new vault on Arc via `VaultFactory`. | **Auth**: linked-wallet |
-**Flags**: rate limit `5/minute` (disabled under `TESTING`)
+**Flags**: `FEATURE_ROADMAP_SURFACES` (off unless set to `true`; see below); rate
+limit `5/minute` (disabled under `TESTING`)
+
+**Roadmap-gated (#1432).** Vault deployment is roadmap, not shipped. While the
+server's `FEATURE_ROADMAP_SURFACES` flag is off, which it is in every environment
+unless set to `true` (`roadmap_surfaces_enabled()` in
+[`feature_flags.py`](../../backend/archimedes/feature_flags.py)), this route answers
+`404` `{"detail": "Not offered: roadmap, not shipped"}` before authentication, body
+validation, the rigor gate, or any chain call. Neither `infra/ecs.tf` nor the CI
+task-definition rewrite sets the flag. Everything below describes the route with the
+flag on.
 
 Request (`VaultCreateRequest`): `{name: str(1..64), symbol: str(1..16), management_fee_bps: int=0, performance_fee_bps: int(0..3000)=0, agent_assisted: bool=true, strategy_ids: [str]=[], strictness_level: int(1..5)=1}`.
 Response (`VaultCreateResponse`): `{vault_address: str, strategy_ids: [str]}`.
-Errors: `422` — a bound strategy fails the rigor gate at `strictness_level` (server-side enforcement, see above); `503` — chain executor unavailable; `500` `Vault deployment failed` (generic — the raw chain/DB exception is never echoed to the client).
+Errors: `404` `Not offered: roadmap, not shipped` — the roadmap flag is off; `422` — a bound strategy fails the rigor gate at `strictness_level` (server-side enforcement, see above); `503` — chain executor unavailable; `500` `Vault deployment failed` (generic — the raw chain/DB exception is never echoed to the client).
 
 ```bash
 curl -s -X POST https://archimedes-arc.com/api/vaults/create \

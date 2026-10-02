@@ -17,8 +17,9 @@ Honesty note (mirrors docs/agent-api.md): READ — including the rigor readback
 AUTH, WALLETLINK, GENERATE, ACCOUNT, RIGOR, and PAPER (simulated deployments, no chain,
 no funds) are live today. DEPLOY, marketplace PUBLISH/SUBSCRIBE, and MONITOR exist as
 routes but are **not a public surface**: vault execute/monitor is roadmap (no user vault
-has ever been created; the UI journey is gated off every shipped build), and marketplace
-is not a product a visitor can use. This manifest makes no claim about marketplace
+has ever been created; the UI journey is gated off every shipped build, and the DEPLOY
+route answers 404 unless the server's ``FEATURE_ROADMAP_SURFACES`` flag is on), and
+marketplace is not a product a visitor can use. This manifest makes no claim about marketplace
 payment/billing settlement.
 
 The ``erc8004`` block (#1527) is the on-chain identity leg and is deliberately the
@@ -42,6 +43,10 @@ inline there.
 Every route string here is asserted to resolve against the running app's OpenAPI in
 ``backend/tests/test_agent_discovery.py`` — a manifest that advertises a 404 is worse
 than one that omits the endpoint, so the drift is caught in CI rather than by the agent.
+A feature-gated route still appears in OpenAPI while it 404s, so that check cannot see
+one. ``POST /api/vaults/create`` is gated by ``FEATURE_ROADMAP_SURFACES`` (#1432) and is
+listed only while that flag is on; ``backend/tests/test_vault_create_roadmap_gate.py``
+checks this manifest and the static card against every roadmap-gated route.
 That file also asserts that every route shared with the static
 ``ui/public/.well-known/agent.json`` card carries the SAME auth flag on both surfaces:
 two discovery documents that disagree about whether a call needs a session send the
@@ -56,6 +61,7 @@ from fastapi import APIRouter
 
 from archimedes.api.rigor_verify_routes import _MIN_RETURN_ROWS as _MIN_VERIFY_WINDOW_BARS
 from archimedes.api.wallet_routes import WALLET_PROVIDERS
+from archimedes.feature_flags import roadmap_surfaces_enabled
 
 agent_manifest_router = APIRouter(prefix="/api/agent", tags=["agent"])
 
@@ -295,15 +301,14 @@ async def get_agent_manifest():
                     "stop": "POST /api/paper/deployments/{deployment_id}/stop",
                 },
             },
-            # Roadmap, not a public surface. create_vault calls the deployed
-            # VaultFactory, but the journey is gated off every shipped UI and
-            # no user vault has ever been created.
+            # Roadmap, not a public surface. The journey is gated off every
+            # shipped UI and no user vault has ever been created. The route
+            # itself 404s unless FEATURE_ROADMAP_SURFACES is on (#1432), so it
+            # is listed only then: off, the group stays and names no route.
             "deploy": {
                 "status": "roadmap",
                 "auth_required": True,
-                "routes": {
-                    "create_vault": "POST /api/vaults/create",
-                },
+                "routes": ({"create_vault": "POST /api/vaults/create"} if roadmap_surfaces_enabled() else {}),
             },
             # Marketplace is not a public surface. Route strings exist; do not
             # present publish/subscribe as a shipped journey. Billing settlement

@@ -370,6 +370,9 @@ const PRE_1650_MACHINE_CLAIMS = [
 ];
 
 //: The route/id segments the exemption exists for, verbatim from agent.json.
+//: `createVault` left the card when #1432 put the route behind the server's
+//: roadmap flag; it stays here as an example of a route row's shape, which is
+//: all this list is used to check.
 //: If a rename made these stop matching, the exemption would be dead weight and
 //: the guard would fail on them for the wrong reason — loudly, but confusingly.
 const EXEMPT_SEGMENT_EXAMPLES = [

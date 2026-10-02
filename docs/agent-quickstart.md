@@ -876,8 +876,9 @@ quote attached and step 6b is still yours to perform.
 - **Do not confuse the two verdicts.** Step 8's is generation-time; step 9's is the stored
   verdict of record. Cite step 9.
 - **Do not assume a paper deployment is an on-chain position.** It is simulated: no chain,
-  no funds, no gas. The real vault is `POST /api/vaults/create`, needs a linked wallet, and
-  is documented in [`agent-api.md`](agent-api.md#deploy--create-a-vault-from-the-generated-strategy).
+  no funds, no gas. A real vault is roadmap, not shipped: `POST /api/vaults/create` answers
+  `404` unless the server's `FEATURE_ROADMAP_SURFACES` flag is on (it is off by default),
+  and is documented in [`agent-api.md`](agent-api.md#deploy--create-a-vault-from-the-generated-strategy).
 - **Do not read `erc8004` as an identity claim.** `status: registration_pending` means no
   `register()` transaction has been confirmed for this deployment's wallet. Read
   `erc8004_verification.source` alongside it — `unavailable` means nobody could ask the

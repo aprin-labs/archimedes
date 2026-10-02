@@ -12,6 +12,7 @@ from archimedes.api.account_auth import require_current_user
 from archimedes.api.limiter import limiter
 from archimedes.api.wallet_routes import require_linked_wallet
 from archimedes.chain.strategy_publisher import strategy_publisher
+from archimedes.feature_flags import require_roadmap_surfaces
 from archimedes.services.log_scrubber import sanitize_log_value
 
 logger = logging.getLogger(__name__)
@@ -346,7 +347,15 @@ async def list_vaults(
     return await vault_svc.list_vaults(tier=tier, sort_by=sort_by, order=order, limit=limit, offset=offset)
 
 
-@vaults_router.post("/create", response_model=VaultCreateResponse)
+@vaults_router.post(
+    "/create",
+    response_model=VaultCreateResponse,
+    # Roadmap-gated (#1432): 404 while FEATURE_ROADMAP_SURFACES is off, which
+    # is every environment unless it is set to "true". Route-level
+    # dependencies resolve before the parameters below, so the 404 comes
+    # before auth, body validation, the rigor gate and any chain call.
+    dependencies=[Depends(require_roadmap_surfaces)],
+)
 @limiter.limit("5/minute")
 async def create_vault(
     req: VaultCreateRequest,
@@ -355,6 +364,11 @@ async def create_vault(
     wallet: str = Depends(require_linked_wallet),
 ):
     """Deploy a new vault on Arc via VaultFactory.
+
+    Roadmap-gated: vault deployment is not offered, so this answers 404 unless
+    the server's ``FEATURE_ROADMAP_SURFACES`` flag is on (see
+    ``feature_flags.roadmap_surfaces_enabled``). That matches the UI, which
+    keeps every vault surface behind its own build-time roadmap flag.
 
     Account + linked-wallet gated: creation spends backend signer gas and assigns
     on-chain ownership to caller's cryptographically verified wallet.

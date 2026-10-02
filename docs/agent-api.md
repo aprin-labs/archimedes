@@ -395,6 +395,18 @@ python scripts/fund_agent_wallet.py --to 0x<agent-wallet> --mode faucet --execut
 
 ### DEPLOY — create a vault from the generated strategy
 
+**Vault deployment is roadmap, not shipped, and the route says so.** `POST
+/api/vaults/create` answers `404` with `{"detail": "Not offered: roadmap, not
+shipped"}` unless the server's `FEATURE_ROADMAP_SURFACES` flag is set to `true`
+([#1432](https://github.com/aprin-labs/archimedes/pull/1432); reader
+`roadmap_surfaces_enabled()` in
+[`feature_flags.py`](../backend/archimedes/feature_flags.py)). The flag is off in
+every environment unless set, and neither `infra/ecs.tf` nor the CI task-definition
+rewrite sets it. The 404 comes before authentication, body validation, the rigor
+gate, and any chain call. The served manifest lists this route only while the flag
+is on; `.well-known/agent.json` does not list it. The rest of this section is how
+the route behaves on a stack that has turned the flag on.
+
 With account session and verified linked wallet established, call `POST
 /api/vaults/create`. Reference implementation:
 `build_vault_create_payload` / `step_deploy` in
@@ -444,10 +456,12 @@ stays OFF, but the original reason no longer holds: the T3.2 redeploy landed
 2026-07-09 and issue
 [#588](https://github.com/aprin-labs/archimedes/issues/588) (whether the repo's
 cached ABI matches the live deployed bytecode) closed 2026-07-14. The
-`deploy` group has been `live` in the served manifest since
-[#1447](https://github.com/aprin-labs/archimedes/pull/1447). It stays OFF now for
-the ordinary reason: this call spends gas and creates a real on-chain vault,
-so it should be an explicit act, not a default.
+`deploy` group was `live` in the served manifest from
+[#1447](https://github.com/aprin-labs/archimedes/pull/1447) until the 2026-09-01
+copy-honesty pass moved it to `roadmap`. It stays OFF now for the ordinary
+reason: this call spends gas and creates a real on-chain vault, so it should be
+an explicit act, not a default. With the server's roadmap flag off, `--deploy`
+gets the `404` described above and creates nothing.
 
 ### MONITOR — read vault health back
 
