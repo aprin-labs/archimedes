@@ -20,8 +20,11 @@ One row per settled payment, keyed to the account that paid
 (``user_id`` — canonical Better Auth id, matching every other owner-scoped
 table in this codebase, e.g. ``paper_deployments.owner_user_id``).
 ``job_id`` is nullable: it names the generation the payment funded, but the
-receipt is a record of the CHARGE, not of the job succeeding, so a future
-call site that cannot resolve a job id yet must still be able to write one.
+receipt is a record of the CHARGE, not of the job succeeding. The route
+writes the row the moment the payment settles, before any job exists, and
+fills ``job_id`` in once the job is queued (``link_payment_receipt_job``,
+#1908). A settled payment whose job never queued keeps its receipt with
+``job_id`` NULL rather than losing it.
 """
 
 from __future__ import annotations
@@ -114,6 +117,25 @@ def record_payment_receipt(
     session.add(record)
     session.flush()
     return record
+
+
+def link_payment_receipt_job(session: Session, receipt_id: int, job_id: str) -> bool:
+    """Name the generation an already-written receipt's payment funded.
+
+    The receipt is written the moment the payment settles, before a job id
+    exists (#1908), and linked here once the job is queued. One conditional
+    UPDATE: only a receipt that names no job yet is touched, so a repeat call
+    is a no-op and can never re-point a receipt at a different job. Returns
+    whether a row was linked.
+    """
+    if not job_id:
+        return False
+    updated = (
+        session.query(PaymentReceiptRecord)
+        .filter(PaymentReceiptRecord.id == receipt_id, PaymentReceiptRecord.job_id.is_(None))
+        .update({PaymentReceiptRecord.job_id: job_id}, synchronize_session=False)
+    )
+    return bool(updated)
 
 
 def list_payment_receipts(session: Session, user_id: str, *, limit: int = MAX_RECEIPTS) -> list[dict[str, Any]]:
