@@ -620,6 +620,37 @@ def effective_settings(job: str, step: dict, text: str | None = None) -> dict[st
     return settings
 
 
+def effective_probe_ceiling_s(workflow_text: str, steps: list[dict]) -> int:
+    """The answer probe's wall-clock ceiling as the deploy-ecs step actually runs it.
+
+    The script default (MAX_TOTAL_SECONDS in post_rollout_probe.sh), then any
+    override in workflow env, job env, the probe step's env, or an inline
+    ``MAX_TOTAL_SECONDS=<n>`` on its run line: the same layering as
+    effective_settings() gives the render check, so raising the probe's
+    ceiling anywhere is counted against the tail reserve.
+    """
+    ceiling = int(re.search(r'MAX_TOTAL_SECONDS="\$\{MAX_TOTAL_SECONDS:-(\d+)\}"', PROBE_SH.read_text()).group(1))
+    workflow = yaml.safe_load(workflow_text)
+
+    def invokes_probe(step: dict) -> bool:
+        return any(
+            "post_rollout_probe.sh" in line and not line.lstrip().startswith("#")
+            for line in str(step.get("run", "")).splitlines()
+        )
+
+    probe_steps = [st for st in steps if invokes_probe(st)]
+    assert len(probe_steps) == 1, f"expected exactly one probe step in deploy-ecs, found {len(probe_steps)}"
+    probe = probe_steps[0]
+    for env in (workflow.get("env"), workflow["jobs"]["deploy-ecs"].get("env"), probe.get("env")):
+        if env and "MAX_TOTAL_SECONDS" in env:
+            ceiling = int(env["MAX_TOTAL_SECONDS"])
+    code = "\n".join(line for line in str(probe.get("run", "")).splitlines() if not line.lstrip().startswith("#"))
+    inline = re.findall(r"\bMAX_TOTAL_SECONDS=(\d+)", code)
+    if inline:
+        ceiling = int(inline[-1])
+    return ceiling
+
+
 def tail_reserve_problems(text: str | None = None) -> list[str]:
     """What the steps after the rollout poll can take, against the reserve it holds back.
 
@@ -630,10 +661,8 @@ def tail_reserve_problems(text: str | None = None) -> list[str]:
     """
     workflow_text = text if text is not None else DEPLOY_YML.read_text(encoding="utf-8")
     reserve_s = int(re.search(r"JOB_TIMEOUT_SECONDS - (\d+)", workflow_text).group(1))
-    probe_ceiling_s = int(
-        re.search(r'MAX_TOTAL_SECONDS="\$\{MAX_TOTAL_SECONDS:-(\d+)\}"', PROBE_SH.read_text()).group(1)
-    )
     steps, smoke = _gate_step("deploy-ecs", "https://archimedes-arc.com/", _steps("deploy-ecs", workflow_text))
+    probe_ceiling_s = effective_probe_ceiling_s(workflow_text, steps)
     settings = effective_settings("deploy-ecs", steps[smoke], workflow_text)
     problems: list[str] = []
     # The render step's worst case is its RENDER_CHECK_MAX_SECONDS: the script
@@ -838,3 +867,34 @@ class TestTheWiringCheckRejects:
         real = DEPLOY_YML.read_text(encoding="utf-8")
         assert real.count(old) == 1, f"{old!r} moved; update this test"
         assert tail_reserve_problems(real.replace(old, new)), new
+
+
+class TestTheProbeCeilingCountsEveryOverride:
+    """The tail reserve must see the probe's ceiling however it is raised (#1906 review)."""
+
+    PROBE_RUN = "bash .github/scripts/post_rollout_probe.sh"
+
+    def _mutate(self, how: str) -> str:
+        text = DEPLOY_YML.read_text(encoding="utf-8")
+        if how == "step-env":
+            i = text.index(self.PROBE_RUN)
+            line_start = text.rfind("\n", 0, text.rfind("run: |", 0, i)) + 1
+            indent = text[line_start : len(text) - len(text[line_start:].lstrip())]
+            return text[:line_start] + f'{indent}env:\n{indent}  MAX_TOTAL_SECONDS: "900"\n' + text[line_start:]
+        if how == "inline":
+            return text.replace(self.PROBE_RUN, "MAX_TOTAL_SECONDS=900 " + self.PROBE_RUN, 1)
+        if how == "job-env":
+            marker = "  deploy-ecs:\n"
+            assert marker in text
+            return text.replace(marker, marker + '    env:\n      MAX_TOTAL_SECONDS: "900"\n', 1)
+        raise AssertionError(how)
+
+    def test_the_real_workflow_fits(self) -> None:
+        assert tail_reserve_problems() == []
+
+    @pytest.mark.parametrize("how", ["step-env", "inline", "job-env"])
+    def test_raising_the_probe_ceiling_anywhere_breaks_the_reserve(self, how: str) -> None:
+        mutated = self._mutate(how)
+        assert mutated != DEPLOY_YML.read_text(encoding="utf-8")
+        problems = tail_reserve_problems(mutated)
+        assert any("probe 900s" in prob for prob in problems), problems
