@@ -227,16 +227,19 @@ def _format_receipt_usd(amount_base_units: int) -> str:
     return f"${Decimal(amount_base_units) / Decimal(10**_RECEIPT_USDC_DECIMALS):.2f}"
 
 
-def _write_payment_receipt(*, user_id: str, payment, job_id: str) -> None:
+def _write_payment_receipt(*, user_id: str, payment) -> int:
     """The persistence boundary — no try/except here. The caller
     (``_persist_payment_receipt``) wraps this; tests patch this exact name to
-    exercise the fail-safe path without reaching into the DB layer."""
+    exercise the fail-safe path without reaching into the DB layer.
+
+    Writes with no ``job_id``: this runs at the settle, before a job exists
+    (#1908). Returns the receipt id so the job can be linked once queued."""
     from archimedes.db import get_session
     from archimedes.models.payment_receipt import record_payment_receipt
 
     amount_base_units = int(payment.amount)
     with get_session() as session:
-        record_payment_receipt(
+        record = record_payment_receipt(
             session,
             user_id=user_id,
             payer_wallet=payment.payer,
@@ -244,27 +247,58 @@ def _write_payment_receipt(*, user_id: str, payment, job_id: str) -> None:
             price_usd=_format_receipt_usd(amount_base_units),
             network=payment.network,
             settlement_ref=payment.transaction,
-            job_id=job_id,
         )
+        receipt_id = record.id
         session.commit()
+    return receipt_id
 
 
-def _persist_payment_receipt(*, user_id: str, payment, job_id: str) -> None:
+def _persist_payment_receipt(*, user_id: str, payment) -> int | None:
     """Persist one settled generation payment as a receipt (Dan's directive:
-    "we must provide people with their receipts").
+    "we must provide people with their receipts"). Returns the receipt id, or
+    None when the write failed.
+
+    Called the moment the payment settles, before the entitlement gate and the
+    enqueue (#1908). Either of those can raise; written after them, the receipt
+    was lost whenever they did, while the money had already moved.
 
     FAIL-SAFE, deliberately: the payment already cleared by the time this
     runs — the user already paid. A receipt-write failure must never fail or
     delay the paid generation, so every exception is swallowed here and only
-    logged. This is the ONE place in this module that name is true; every
-    other write on the happy path (job enqueue, funnel, identity event) is
-    allowed to matter to the response.
+    logged. ``_link_payment_receipt_job`` follows the same rule.
     """
     try:
-        _write_payment_receipt(user_id=user_id, payment=payment, job_id=job_id)
+        return _write_payment_receipt(user_id=user_id, payment=payment)
     except Exception:
         logger.warning(
-            "payment receipt write failed for job %s (payment already settled — no user impact)",
+            "payment receipt write failed for settlement %s (payment already settled — no user impact)",
+            sanitize_log_value(str(payment.transaction)),
+            exc_info=True,
+        )
+        return None
+
+
+def _write_payment_receipt_job(*, receipt_id: int, job_id: str) -> None:
+    """Persistence boundary for the receipt → job link, unwrapped like
+    ``_write_payment_receipt`` and patched by tests for the same reason."""
+    from archimedes.db import get_session
+    from archimedes.models.payment_receipt import link_payment_receipt_job
+
+    with get_session() as session:
+        link_payment_receipt_job(session, receipt_id, job_id)
+        session.commit()
+
+
+def _link_payment_receipt_job(*, receipt_id: int, job_id: str) -> None:
+    """Name the queued job on the receipt written at the settle. Fail-safe for
+    the same reason as the write: a failure leaves the receipt in place with no
+    job named, which is still a true record of the charge."""
+    try:
+        _write_payment_receipt_job(receipt_id=receipt_id, job_id=job_id)
+    except Exception:
+        logger.warning(
+            "payment receipt %s could not be linked to job %s (receipt kept, unlinked — no user impact)",
+            receipt_id,
             sanitize_log_value(job_id),
             exc_info=True,
         )
@@ -456,10 +490,11 @@ async def start_generation(
     # quote-approval flow for humans and agents alike. Paper trading stays free.
     # None under flag-off / dry-run (see enforce_generation_payment); a real
     # settled PaymentInfo only when the flag is on and the payment cleared —
-    # that is also the ONLY case a payment receipt is persisted (below, once
-    # job_id exists).
+    # that is also the ONLY case a payment receipt is persisted (immediately
+    # after the settle, and linked to its job once one is queued).
     payment = None
     credit_id = None
+    receipt_id = None
     free_grant_id = None
     if generation_payment.payment_required():
         # FREE PATH (#1643 — the owner's 2026-08-31 product review REVERSES the
@@ -535,6 +570,14 @@ async def start_generation(
                 )
             payment, credit_id = await _paywall_with_credit(request, linked_wallet, user.id)
             if payment is not None:
+                # Payment receipt, written FIRST (#1908). `payment` is non-None
+                # only when this request is what settled, so this runs once per
+                # charge: a retry served from the #1441 credit gets `payment`
+                # None and writes no second receipt. It has no job_id yet; the
+                # job is linked below once queued. Before #1908 this ran after
+                # the enqueue, so a 402 from the entitlement gate or an enqueue
+                # error left the money moved and no receipt behind it.
+                receipt_id = _persist_payment_receipt(user_id=user.id, payment=payment)
                 # Surface the settlement receipt (PAYMENT-RESPONSE) to the payer.
                 for name, value in (payment.response_headers or {}).items():
                     response.headers[name] = value
@@ -600,12 +643,11 @@ async def start_generation(
     if free_grant_id is not None:
         free_generations.stamp_job(free_grant_id, job_id=job_id)
 
-    # Payment receipt (Dan's directive: "we must provide people with their
-    # receipts"). Only when a real settled PaymentInfo exists — flag-off and
-    # dry-run leave `payment` None and nothing is written. Deliberately AFTER
-    # enqueue succeeds, so the receipt carries a real job_id.
-    if payment is not None:
-        _persist_payment_receipt(user_id=user.id, payment=payment, job_id=job_id)
+    # The receipt (written at the settle, above) now names the job its payment
+    # funded. Only once the enqueue has succeeded, so a receipt never points at
+    # a job that does not exist.
+    if receipt_id is not None:
+        _link_payment_receipt_job(receipt_id=receipt_id, job_id=job_id)
 
     # The credit is spent only now, once the job is queued — that is what makes
     # every failure before this point cost the payer nothing (#1441).
