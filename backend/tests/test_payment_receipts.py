@@ -222,6 +222,47 @@ class TestRecordPaymentReceipt:
             rows = list_payment_receipts(session, "user-a")
         assert [r["job_id"] for r in rows] == ["job-first"]
 
+    def test_linking_a_job_leaves_every_other_unlinked_receipt_alone(self):
+        """#1908: two settled payments whose jobs never queued leave two
+        unlinked receipts. Linking one of them names a job on that receipt
+        only; the other keeps ``job_id`` NULL."""
+        from archimedes.models.payment_receipt import link_payment_receipt_job
+
+        with get_session() as session:
+            bystander = record_payment_receipt(
+                session,
+                user_id="user-b",
+                payer_wallet=PAYER_B,
+                amount_base_units=2_000_000,
+                price_usd="$2.00",
+                network="eip155:5042002",
+                settlement_ref="ref-bystander",
+            )
+            target = record_payment_receipt(
+                session,
+                user_id="user-a",
+                payer_wallet=PAYER_A,
+                amount_base_units=2_000_000,
+                price_usd="$2.00",
+                network="eip155:5042002",
+                settlement_ref="ref-target",
+            )
+            session.commit()
+            bystander_id, target_id = bystander.id, target.id
+        assert bystander.job_id is None and target.job_id is None
+
+        with get_session() as session:
+            assert link_payment_receipt_job(session, target_id, "job-target") is True
+            session.commit()
+        with get_session() as session:
+            linked = {
+                r.id: r.job_id
+                for r in session.query(PaymentReceiptRecord).filter(
+                    PaymentReceiptRecord.id.in_([bystander_id, target_id])
+                )
+            }
+        assert linked == {target_id: "job-target", bystander_id: None}
+
     def test_missing_identity_is_refused(self):
         with get_session() as session:
             with pytest.raises(ValueError, match="user_id"):
