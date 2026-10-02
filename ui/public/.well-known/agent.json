@@ -122,11 +122,8 @@
     "marketplace": {
       "status": "roadmap",
       "authRequired": true,
-      "routes": {
-        "publish": "POST /api/marketplace/publish",
-        "subscribe": "POST /api/marketplace/subscribe"
-      },
-      "note": "Marketplace is not a public surface. `status: \"roadmap\"` means do not present publish/subscribe as a shipped journey. The route strings exist and are wired, but they are not a product a visitor can use. This card also does not assert that a subscription's recurring USDC charge settles for real \u2014 that rides PAYMENTS_DRY_RUN, a DIFFERENT switch from the one the generation paywall reports."
+      "routes": {},
+      "note": "Marketplace is not a public surface. `status: \"roadmap\"` means do not present publish/subscribe as a shipped journey. This group lists no route on purpose: `POST /api/marketplace/publish` and `POST /api/marketplace/subscribe` answer 404 while the server's FEATURE_ROADMAP_SURFACES flag is off, which it is unless an operator sets it to true, because publishing and subscribing are roadmap, not shipped. This card also does not assert that a subscription's recurring USDC charge settles for real \u2014 that rides PAYMENTS_DRY_RUN, a DIFFERENT switch from the one the generation paywall reports."
     },
     "monitor": {
       "status": "roadmap",
@@ -165,13 +162,13 @@
     {
       "id": "publish",
       "name": "Publish (roadmap)",
-      "description": "Publishing a strategy to a nanopayment marketplace is roadmap, not shipped. Marketplace is not a public surface.",
+      "description": "Publishing a strategy to a nanopayment marketplace is roadmap, not shipped. Marketplace is not a public surface, and `POST /api/marketplace/publish` answers 404 while the server's roadmap flag is off (its default).",
       "status": "roadmap"
     },
     {
       "id": "subscribe",
       "name": "Subscribe (roadmap)",
-      "description": "Subscribing to a published strategy via sub-cent USDC nanopayments is roadmap, not shipped. Marketplace is not a public surface.",
+      "description": "Subscribing to a published strategy via sub-cent USDC nanopayments is roadmap, not shipped. Marketplace is not a public surface, and `POST /api/marketplace/subscribe` answers 404 while the server's roadmap flag is off (its default).",
       "status": "roadmap"
     }
   ]

@@ -402,10 +402,16 @@ shipped"}` unless the server's `FEATURE_ROADMAP_SURFACES` flag is set to `true`
 `roadmap_surfaces_enabled()` in
 [`feature_flags.py`](../backend/archimedes/feature_flags.py)). The flag is off in
 every environment unless set, and neither `infra/ecs.tf` nor the CI task-definition
-rewrite sets it. The 404 comes before authentication, body validation, the rigor
-gate, and any chain call. The served manifest lists this route only while the flag
-is on; `.well-known/agent.json` does not list it. The rest of this section is how
-the route behaves on a stack that has turned the flag on.
+rewrite sets it. While it is off, nothing downstream of the gate runs: not the auth
+check, not body-schema validation, not the rigor gate, not the chain call. A body
+that is not valid JSON is the one exception to the `404`: FastAPI's JSON parse runs
+before the gate, so it gets a `422` (`json_invalid`), and nothing downstream runs for
+it either. The same flag, with the same `404`, closes `POST /api/marketplace/publish`
+and `POST /api/marketplace/subscribe`, the two marketplace routes that also have the
+backend signer deploy a vault owned by the caller's wallet. The served manifest lists
+these routes only while the flag is on; `.well-known/agent.json` does not list them.
+The rest of this section is how the create route behaves on a stack that has turned
+the flag on.
 
 With account session and verified linked wallet established, call `POST
 /api/vaults/create`. Reference implementation:

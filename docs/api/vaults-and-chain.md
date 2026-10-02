@@ -4,24 +4,37 @@
 > **owner:** Dan Browne
 > **updated:** 2026-10-02
 
-The marketplace's on-chain surface: vault discovery and creation, off-chain
-vault metadata (display name, strategy bindings), reasoning-trace publish/
-verify, the AMM swap preview, deployed contract addresses, and the health/
-root endpoints operators and CI probe. Every route here was checked directly
-against its router source (`vaults_routes.py`, `traces_routes.py`,
+The marketplace's on-chain surface: vault discovery, vault creation (roadmap,
+not shipped: the route answers `404` while the server's roadmap flag is off,
+see below), off-chain vault metadata (display name, strategy bindings),
+reasoning-trace publish/verify, the AMM swap preview, deployed contract
+addresses, and the health/root endpoints operators and CI probe. Every
+route here was checked directly against its router source (`vaults_routes.py`, `traces_routes.py`,
 `swap_routes.py`, `config_routes.py`, `main.py`) — no undocumented route was
 found in their scope.
 
-**Vaults are non-custodial by design.** `POST /api/vaults/create` deploys the
-vault with the backend signer, then transfers on-chain `Ownable` ownership to
-the caller's verified linked wallet and pins the backend only as the
-rebalance-only agent — so `owner == user` and `agent == backend`. A
-compromised backend/agent key can rebalance but cannot re-point the oracle,
-widen slippage, pause, or otherwise drain the vault.
+**Vault deployment through this API is roadmap-gated (#1432).** `POST
+/api/vaults/create` answers `404` `{"detail": "Not offered: roadmap, not
+shipped"}` while the server's `FEATURE_ROADMAP_SURFACES` flag is off, which it
+is in every environment unless set to `true` (`roadmap_surfaces_enabled()` in
+[`feature_flags.py`](../../backend/archimedes/feature_flags.py)). Neither
+`infra/ecs.tf` nor the CI task-definition rewrite sets the flag. The same gate
+closes the two marketplace routes that also have the backend signer deploy a
+vault owned by the caller's wallet, `POST /api/marketplace/publish` and `POST
+/api/marketplace/subscribe`. Where this page describes what the create route
+does, it describes the route with the flag on.
+
+**Vaults are non-custodial by design.** With the roadmap flag on, `POST
+/api/vaults/create` deploys the vault with the backend signer, then transfers
+on-chain `Ownable` ownership to the caller's verified linked wallet and pins
+the backend only as the rebalance-only agent — so `owner == user` and `agent
+== backend`. A compromised backend/agent key can rebalance but cannot
+re-point the oracle, widen slippage, pause, or otherwise drain the vault.
 
 **Server-side rigor enforcement, not just a UI gate.** Every path that binds
-a strategy to a vault — `POST /api/vaults/create`, `POST
-/api/vaults/metadata` — re-checks each strategy against the live rigor gate
+a strategy to a vault — `POST /api/vaults/create` (while the roadmap flag is
+on; off, it binds nothing), `POST /api/vaults/metadata` — re-checks each
+strategy against the live rigor gate
 at the caller's chosen `strictness_level` **before** spending gas or
 persisting the link, and refuses (`422`) any strategy that hasn't passed at
 that level. The always-on correctness floors (look-ahead audit, positive OOS,
@@ -37,8 +50,10 @@ root endpoints) are anonymous. Anything that spends gas, writes vault
 metadata, or derives allocations (`POST /api/vaults/create`, `POST
 /api/vaults/metadata`, `POST /api/vaults/{address}/derive-allocations`)
 requires a Better Auth account session **and** a verified linked wallet
-(`require_linked_wallet`). `POST /api/traces/publish` is `internal-key`
-(`X-Internal-Agent-Key`, `hmac.compare_digest` against
+(`require_linked_wallet`). `POST /api/vaults/create` has the roadmap gate in
+front of that: while the flag is off it answers `404` to every caller, signed
+in or not, because the gate runs before the route's auth dependency. `POST
+/api/traces/publish` is `internal-key` (`X-Internal-Agent-Key`, `hmac.compare_digest` against
 `INTERNAL_AGENT_API_KEY` — fails closed if that env var is unset). Examples
 needing a session assume an authenticated cookie jar at `/tmp/session.jar`.
 
@@ -64,14 +79,17 @@ limit `5/minute` (disabled under `TESTING`)
 server's `FEATURE_ROADMAP_SURFACES` flag is off, which it is in every environment
 unless set to `true` (`roadmap_surfaces_enabled()` in
 [`feature_flags.py`](../../backend/archimedes/feature_flags.py)), this route answers
-`404` `{"detail": "Not offered: roadmap, not shipped"}` before authentication, body
-validation, the rigor gate, or any chain call. Neither `infra/ecs.tf` nor the CI
-task-definition rewrite sets the flag. Everything below describes the route with the
-flag on.
+`404` `{"detail": "Not offered: roadmap, not shipped"}` and nothing downstream of the
+gate runs: not the auth check, not body-schema validation, not the rigor gate, not
+the chain call. The gate is a route-level dependency, so the app's middleware and
+FastAPI's own JSON parse of the body still run before it: a body that is not valid
+JSON gets FastAPI's `422` (`json_invalid`) instead of the `404`, and runs nothing
+downstream either. Neither `infra/ecs.tf` nor the CI task-definition rewrite sets
+the flag. Everything below describes the route with the flag on.
 
 Request (`VaultCreateRequest`): `{name: str(1..64), symbol: str(1..16), management_fee_bps: int=0, performance_fee_bps: int(0..3000)=0, agent_assisted: bool=true, strategy_ids: [str]=[], strictness_level: int(1..5)=1}`.
 Response (`VaultCreateResponse`): `{vault_address: str, strategy_ids: [str]}`.
-Errors: `404` `Not offered: roadmap, not shipped` — the roadmap flag is off; `422` — a bound strategy fails the rigor gate at `strictness_level` (server-side enforcement, see above); `503` — chain executor unavailable; `500` `Vault deployment failed` (generic — the raw chain/DB exception is never echoed to the client).
+Errors: `404` `Not offered: roadmap, not shipped` — the roadmap flag is off; `422` `json_invalid` — the body is not valid JSON (answered before the roadmap gate); `422` — a bound strategy fails the rigor gate at `strictness_level` (server-side enforcement, see above); `503` — chain executor unavailable; `500` `Vault deployment failed` (generic — the raw chain/DB exception is never echoed to the client).
 
 ```bash
 curl -s -X POST https://archimedes-arc.com/api/vaults/create \

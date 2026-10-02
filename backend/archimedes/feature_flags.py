@@ -52,7 +52,11 @@ def roadmap_surfaces_enabled(environ: Mapping[str, str] | None = None) -> bool:
     The UI keeps out-of-scope surfaces (vaults, marketplace, publish, ...) out
     of every shipped build behind ``VITE_ROADMAP_SURFACES``; this keeps the
     backend routes behind those surfaces equally closed, so a direct API call
-    cannot reach what the site says it does not offer.
+    cannot reach what the site says it does not offer. Today it gates exactly
+    the three mounted routes that have the backend signer deploy a vault owned
+    by the caller's wallet: ``POST /api/vaults/create``, ``POST
+    /api/marketplace/publish`` and ``POST /api/marketplace/subscribe``
+    (pinned by ``backend/tests/test_vault_create_roadmap_gate.py``).
 
     Only the word ``true`` (any case, surrounding space ignored) enables it.
     Unset, blank, ``false`` and anything else, a typo included, is OFF in every
@@ -73,9 +77,14 @@ def roadmap_surfaces_enabled(environ: Mapping[str, str] | None = None) -> bool:
 def require_roadmap_surfaces() -> None:
     """Route dependency: 404 while roadmap surfaces are off.
 
-    Put it in the route's ``dependencies=[...]`` so FastAPI resolves it before
-    the endpoint's own parameters: a caller gets this 404 before any auth
-    check, body validation, or side effect.
+    Put it in the route's ``dependencies=[...]``. FastAPI resolves route-level
+    dependencies before the endpoint's own dependencies and before validating
+    the body against its schema, so while the flag is off nothing downstream
+    of this gate runs: no auth check, no body-schema validation, no handler
+    code and so no side effect. Two things do run before it: the app's
+    middleware, and FastAPI's own JSON parse of the request body. A body that
+    is not valid JSON therefore gets FastAPI's ``422`` (``json_invalid``)
+    instead of this ``404``, and that refusal also runs nothing downstream.
     """
     if not roadmap_surfaces_enabled():
         raise HTTPException(status_code=404, detail="Not offered: roadmap, not shipped")

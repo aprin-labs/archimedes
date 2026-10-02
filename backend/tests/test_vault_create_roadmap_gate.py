@@ -1,24 +1,31 @@
-"""``POST /api/vaults/create`` answers the same way the pages do: not offered (#1432).
+"""Vault deployment through the API answers the same way the pages do: not offered (#1432).
 
-The UI keeps every vault surface behind its build-time roadmap flag
-(``ROADMAP_SURFACES_ENABLED`` in ``ui/src/featureFlags.js``, off unless
+The UI keeps every vault and marketplace surface behind its build-time roadmap
+flag (``ROADMAP_SURFACES_ENABLED`` in ``ui/src/featureFlags.js``, off unless
 ``VITE_ROADMAP_SURFACES=true``), and the Privacy and Terms pages tell a reader
-that vault deployment is not offered. The backend route did not agree. It was
-mounted unconditionally and gated only by an account, a linked wallet and the
-rigor gate, so a direct API caller could still have the backend signer deploy a
-testnet vault and transfer it to their wallet.
+that vault deployment is not offered. The backend did not agree. Three mounted
+routes have the backend signer deploy a testnet vault owned by the caller's
+wallet: ``POST /api/vaults/create``, ``POST /api/marketplace/publish`` (when no
+``vault_address`` is given) and ``POST /api/marketplace/subscribe`` (always).
+Each was gated only by an account and a linked wallet (plus the rigor gate on
+create), so a direct API caller could still get a vault deployed.
 
 ``FEATURE_ROADMAP_SURFACES`` is the server-side twin of the UI flag. While it is
-off, which it is in every environment unless set to ``true``, the route answers
-404 before authentication, before body validation, before the rigor gate and
-before any chain call. With it on, the route behaves exactly as it did before.
+off, which it is in every environment unless set to ``true``, each of the three
+answers 404 and nothing downstream of the gate runs: not the route's auth
+dependency, not body-schema validation, not the handler. Two things do run
+first, the app's middleware and FastAPI's JSON parse of the body, so a body
+that is not valid JSON gets FastAPI's 422 ``json_invalid`` instead; that is
+pinned here too, because the docs state it. With the flag on, each route
+behaves exactly as it did before. The create route's behaviour is pinned in
+this file; publish and subscribe in ``tests/api/test_marketplace_routes.py``.
 
-The discovery surfaces follow the route. A manifest that advertises a route that
-404s sends an agent into a retry loop it cannot diagnose, and
+The discovery surfaces follow the routes. A manifest that advertises a route
+that 404s sends an agent into a retry loop it cannot diagnose, and
 ``test_agent_discovery.py`` cannot catch that here: a feature-gated route stays
 in the OpenAPI document. So the last block finds every roadmap-gated route by
-walking the live app's dependency trees, and checks both discovery surfaces
-against that set.
+walking the live app's dependency trees, pins that set to exactly the three
+routes above, and checks both discovery surfaces against it.
 """
 
 from __future__ import annotations
@@ -34,6 +41,13 @@ from httpx import ASGITransport, AsyncClient
 V = "archimedes.api.vaults_routes"
 FLAG = "FEATURE_ROADMAP_SURFACES"
 CREATE = "POST /api/vaults/create"
+PUBLISH = "POST /api/marketplace/publish"
+SUBSCRIBE = "POST /api/marketplace/subscribe"
+#: Every mounted route that has the backend signer deploy a vault owned by the
+#: caller's wallet, and nothing else. A route added to the gate, or dropped
+#: from it, must change this set and say why in the same change.
+GATED = {CREATE, PUBLISH, SUBSCRIBE}
+GATE_404 = {"detail": "Not offered: roadmap, not shipped"}
 WALLET = "0x000000000000000000000000000000000000dEaD"
 BODY = {"name": "V", "symbol": "V", "strategy_ids": ["passing"]}
 DEPLOYED = "0xVaultDeployedAddress"
@@ -119,20 +133,57 @@ async def test_flag_off_refuses_create_before_any_chain_call(monkeypatch, value)
     fx["invalidate"].assert_not_called()
 
 
-async def test_flag_off_answers_404_before_auth_and_before_body_validation(monkeypatch):
-    """No session and an empty body: still 404, not 401 and not 422.
+# A body each route's own schema rejects: create declares VaultCreateRequest
+# (an empty object is missing name/symbol), publish and subscribe declare
+# ``dict`` (a JSON array is not one).
+SCHEMA_INVALID_BODY = {CREATE: {}, PUBLISH: ["not", "an", "object"], SUBSCRIBE: ["not", "an", "object"]}
+
+
+async def _post_route(app, route: str, **kwargs):
+    method, path = route.split(" ", 1)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        return await client.request(method, path, **kwargs)
+
+
+@pytest.mark.parametrize("route", sorted(GATED))
+async def test_flag_off_answers_404_before_auth_and_before_body_schema_validation(monkeypatch, route):
+    """No session and a body the route's schema rejects: still 404, not 401 and
+    not 422. With the flag on, the same request is refused by auth (401).
 
     A route that is not offered must not tell an anonymous caller what it
     would need to use it.
     """
-    _set_flag(monkeypatch, None)
     from archimedes.main import app
 
     with _create_side_effects() as fx:
-        resp = await _post(app, body={})
+        _set_flag(monkeypatch, None)
+        off = await _post_route(app, route, json=SCHEMA_INVALID_BODY[route])
+        _set_flag(monkeypatch, "true")
+        on = await _post_route(app, route, json=SCHEMA_INVALID_BODY[route])
 
-    assert resp.status_code == 404, resp.text
+    assert off.status_code == 404, off.text
+    assert off.json() == GATE_404
+    assert on.status_code == 401, on.text
     fx["deploy"].assert_not_called()
+
+
+@pytest.mark.parametrize("route", sorted(GATED))
+async def test_flag_off_body_that_is_not_json_gets_fastapis_422_first(monkeypatch, route):
+    """The one request shape the gate does not answer first, pinned so the docs'
+    exact statement of it stays true: FastAPI parses the JSON body before it
+    resolves any dependency, so a body that does not parse is a 422
+    ``json_invalid``. Nothing downstream runs for it either."""
+    _set_flag(monkeypatch, None)
+    from archimedes.main import app
+
+    with _linked_wallet(app), _create_side_effects() as fx:
+        resp = await _post_route(app, route, content=b'{"name": "V", ', headers={"Content-Type": "application/json"})
+
+    assert resp.status_code == 422, resp.text
+    assert [err["type"] for err in resp.json()["detail"]] == ["json_invalid"]
+    fx["deploy"].assert_not_called()
+    fx["rigor"].assert_not_called()
+    fx["identity"].assert_not_called()
 
 
 # ── flag on: existing behaviour, unchanged ───────────────────────────────────
@@ -235,15 +286,24 @@ async def _manifest_routes() -> set[str]:
     return {route for group in resp.json()["endpoints"].values() for route in group["routes"].values()}
 
 
-def test_create_route_sits_behind_the_roadmap_gate():
-    """Guard on the guards below: an empty gated set would pass them vacuously."""
-    assert CREATE in _roadmap_gated_routes()
+def test_the_roadmap_gate_covers_exactly_the_vault_deploying_routes():
+    """The gated set is exactly the three routes that deploy a vault for the
+    caller: not fewer (one left open makes the Privacy page false for a direct
+    API caller) and not more (a gated exit route, such as unsubscribe, would
+    strand an existing subscriber's refund). Also the guard on the guards
+    below: an empty gated set would pass them vacuously."""
+    from archimedes import main
+
+    assert main.marketplace_router is not None, (
+        "the marketplace router is not mounted (its circlekit import failed), so this walk would see a partial app"
+    )
+    assert _roadmap_gated_routes() == GATED
 
 
 def test_static_agent_card_advertises_no_roadmap_gated_route():
     """The card is a committed file, so it describes production, where the flag is off."""
     card = _card_routes()
-    assert CREATE not in card
+    assert not card & GATED
     assert not card & _roadmap_gated_routes()
 
 
@@ -254,8 +314,8 @@ async def test_served_manifest_omits_roadmap_gated_routes_while_the_flag_is_off(
     assert not (await _manifest_routes()) & gated
 
 
-async def test_served_manifest_lists_create_while_the_flag_is_on(monkeypatch):
+async def test_served_manifest_lists_the_gated_routes_while_the_flag_is_on(monkeypatch):
     """The served manifest follows the server's own flag, so a preview stack that
-    turns the route on still finds it, filed under the roadmap group."""
+    turns the routes on still finds them, filed under their roadmap groups."""
     _set_flag(monkeypatch, "true")
-    assert CREATE in await _manifest_routes()
+    assert await _manifest_routes() >= GATED

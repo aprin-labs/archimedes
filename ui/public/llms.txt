@@ -46,7 +46,9 @@ operations. Circle wallet passkeys control Circle wallets; they do not log in to
    `GET /api/paper/deployments/{deployment_id}` to read performance and
    `POST /api/paper/deployments/{deployment_id}/stop` to end it.
 6. **Wallet operations** — first link wallet using proof flow below. Publish/subscribe
-   are not a public surface — marketplace is roadmap, not shipped. Deploying into a
+   are not a public surface — marketplace is roadmap, not shipped, and
+   `POST /api/marketplace/publish` and `POST /api/marketplace/subscribe` answer 404 while
+   the server's `FEATURE_ROADMAP_SURFACES` flag is off (its default). Deploying into a
    vault is roadmap, not shipped: its contracts are deployed, but the journey is gated off
    every shipped surface, `POST /api/vaults/create` answers 404 while the server's
    `FEATURE_ROADMAP_SURFACES` flag is off (its default), and no user vault has ever been

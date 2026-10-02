@@ -17,10 +17,11 @@ Honesty note (mirrors docs/agent-api.md): READ — including the rigor readback
 AUTH, WALLETLINK, GENERATE, ACCOUNT, RIGOR, and PAPER (simulated deployments, no chain,
 no funds) are live today. DEPLOY, marketplace PUBLISH/SUBSCRIBE, and MONITOR exist as
 routes but are **not a public surface**: vault execute/monitor is roadmap (no user vault
-has ever been created; the UI journey is gated off every shipped build, and the DEPLOY
-route answers 404 unless the server's ``FEATURE_ROADMAP_SURFACES`` flag is on), and
-marketplace is not a product a visitor can use. This manifest makes no claim about marketplace
-payment/billing settlement.
+has ever been created and the UI journey is gated off every shipped build), and
+marketplace is not a product a visitor can use. The DEPLOY, PUBLISH and SUBSCRIBE routes
+each have the backend signer deploy a vault owned by the caller's wallet, so all three
+answer 404 unless the server's ``FEATURE_ROADMAP_SURFACES`` flag is on (#1432). This
+manifest makes no claim about marketplace payment/billing settlement.
 
 The ``erc8004`` block (#1527) is the on-chain identity leg and is deliberately the
 weakest claim in this document: the spec-typed registration file is published, and
@@ -44,10 +45,11 @@ Every route string here is asserted to resolve against the running app's OpenAPI
 ``backend/tests/test_agent_discovery.py`` — a manifest that advertises a 404 is worse
 than one that omits the endpoint, so the drift is caught in CI rather than by the agent.
 A feature-gated route still appears in OpenAPI while it 404s, so that check cannot see
-one. ``POST /api/vaults/create`` is gated by ``FEATURE_ROADMAP_SURFACES`` (#1432) and is
+one. ``POST /api/vaults/create``, ``POST /api/marketplace/publish`` and ``POST
+/api/marketplace/subscribe`` are gated by ``FEATURE_ROADMAP_SURFACES`` (#1432) and are
 listed only while that flag is on; ``backend/tests/test_vault_create_roadmap_gate.py``
 checks this manifest and the static card against every roadmap-gated route.
-That file also asserts that every route shared with the static
+``test_agent_discovery.py`` also asserts that every route shared with the static
 ``ui/public/.well-known/agent.json`` card carries the SAME auth flag on both surfaces:
 two discovery documents that disagree about whether a call needs a session send the
 agent into a retry loop it cannot diagnose.
@@ -149,6 +151,9 @@ async def get_agent_manifest():
     limiter's default_limits apply, matching e.g. /api/config/contracts).
     """
     erc8004_block, erc8004_verification = await erc8004_identity()
+    # Read once per request: the deploy and marketplace groups both list their
+    # roadmap-gated routes only while the gate would let a call through.
+    roadmap = roadmap_surfaces_enabled()
     return {
         "name": "Archimedes",
         # Byte-identical to .well-known/agent.json's `description` — the two are
@@ -308,18 +313,25 @@ async def get_agent_manifest():
             "deploy": {
                 "status": "roadmap",
                 "auth_required": True,
-                "routes": ({"create_vault": "POST /api/vaults/create"} if roadmap_surfaces_enabled() else {}),
+                "routes": ({"create_vault": "POST /api/vaults/create"} if roadmap else {}),
             },
-            # Marketplace is not a public surface. Route strings exist; do not
-            # present publish/subscribe as a shipped journey. Billing settlement
-            # rides PAYMENTS_DRY_RUN and is not claimed here.
+            # Marketplace is not a public surface; do not present
+            # publish/subscribe as a shipped journey. Both routes have the
+            # backend signer deploy a vault owned by the caller's wallet, so
+            # both 404 unless FEATURE_ROADMAP_SURFACES is on (#1432) and are
+            # listed only then. Billing settlement rides PAYMENTS_DRY_RUN and
+            # is not claimed here.
             "marketplace": {
                 "status": "roadmap",
                 "auth_required": True,
-                "routes": {
-                    "publish": "POST /api/marketplace/publish",
-                    "subscribe": "POST /api/marketplace/subscribe",
-                },
+                "routes": (
+                    {
+                        "publish": "POST /api/marketplace/publish",
+                        "subscribe": "POST /api/marketplace/subscribe",
+                    }
+                    if roadmap
+                    else {}
+                ),
             },
             # Roadmap: the health route resolves, but with no user vault there
             # is no live position of a user's to read.

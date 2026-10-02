@@ -352,8 +352,10 @@ async def list_vaults(
     response_model=VaultCreateResponse,
     # Roadmap-gated (#1432): 404 while FEATURE_ROADMAP_SURFACES is off, which
     # is every environment unless it is set to "true". Route-level
-    # dependencies resolve before the parameters below, so the 404 comes
-    # before auth, body validation, the rigor gate and any chain call.
+    # dependencies resolve before the parameters below, so while it is off
+    # nothing in this handler runs: no auth check, no body-schema validation,
+    # no rigor gate, no chain call. (A body that is not valid JSON is refused
+    # earlier still, by FastAPI's own parse: 422 json_invalid, not 404.)
     dependencies=[Depends(require_roadmap_surfaces)],
 )
 @limiter.limit("5/minute")

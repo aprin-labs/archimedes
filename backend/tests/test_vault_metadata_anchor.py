@@ -251,8 +251,9 @@ class TestVaultMetadataAuth:
 def test_create_vault_requires_auth(monkeypatch):
     """Vault creation spends the backend signer's gas → must be SIWE-gated.
 
-    With the roadmap flag on: while it is off the route 404s before auth
-    (#1432, test_vault_create_roadmap_gate.py)."""
+    With the roadmap flag on: while it is off, the route's auth check never
+    runs, because the gate answers 404 first (or, for a body that is not
+    valid JSON, FastAPI's 422 does; #1432, test_vault_create_roadmap_gate.py)."""
     monkeypatch.setenv("FEATURE_ROADMAP_SURFACES", "true")
     resp = client.post(
         "/api/vaults/create",
