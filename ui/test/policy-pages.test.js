@@ -258,14 +258,19 @@ test("the privacy policy describes the self-service deletion that exists", () =>
 // and the Arc RPC are browser calls too), then "linked, but blocked" (stale:
 // the rebrand deleted the preconnects and the css2 link from ui/index.html, so
 // this site requests nothing from Google at all). What IS true is that the
-// docs site linked from every page, docs.archimedes-arc.com (mkdocs-material),
-// loads Google Fonts and calls api.github.com from the visitor's browser, with
-// no CSP. The guard pins the true text for both sites and forbids the stale one.
+// docs site, docs.archimedes-arc.com (mkdocs-material), loads Google Fonts and
+// calls api.github.com from the visitor's browser, with no CSP. It is linked
+// from PublicLayout's header and footer only: the /app shell's footer links
+// just /privacy and /terms, and the auth pages render outside PublicLayout, so
+// "linked from every page" was false. The guard pins the true text for both
+// sites and forbids the stale ones.
 test("the third-party disclosure matches what each site actually loads", () => {
 	const path = sectionBody(privacy, "Who else is in the path");
 	assert.match(path, /serves its typefaces from our own domain/, "this site's self-hosted fonts must be stated");
 	assert.doesNotMatch(path, /linked, but blocked/i, "stale: ui/index.html no longer links the font CDN at all");
 	assert.match(path, /docs\.archimedes-arc\.com/, "the docs site's third parties must be disclosed");
+	assert.match(path, /linked from the header and footer of our public pages/, "where the docs site is linked");
+	assert.doesNotMatch(path, /linked from every page/, "false: only PublicLayout links the docs site");
 	assert.match(path, /loads its typefaces from Google Fonts/, "the docs site really does load Google Fonts");
 	assert.match(path, /GitHub&rsquo;s API/, "the docs site's in-browser GitHub API call must be disclosed");
 	assert.match(path, /Arc testnet RPC endpoint/i, "the browser's own RPC calls must be disclosed");
@@ -296,7 +301,22 @@ test("the privacy policy discloses the payment records the paywall creates", () 
 	// writes a free_generation_grants row (no FK to auth_users).
 	assert.match(receipts, /free_generation_grants/, "the free-generation ledger must be named");
 	// #1908 (#1910): the receipt is written at the settle, before the enqueue.
-	assert.match(receipts, /written, at that moment/, "the receipt is written when the payment settles");
+	// But _persist_payment_receipt swallows a failed write (generate_routes.py),
+	// so "every payment that settles is written" was false; the sentence now
+	// names its exception and the exception must stay on the page.
+	assert.match(
+		receipts,
+		/row\s+at that moment \(the one exception is described below\)/,
+		"the receipt is written when the payment settles, with the exception flagged",
+	);
+	assert.match(receipts, /a\s+payment can settle without a receipt row/, "the swallowed-write exception must be stated");
+	assert.doesNotMatch(receipts, /Every payment that settles is written/, "false: a failed receipt write is swallowed");
+	// The grant row carries user_id (no FK), which is why it is personal data.
+	assert.match(
+		receipts,
+		/<code>free_generation_grants<\/code> with your account id/,
+		"the free-generation record must say it carries the account id",
+	);
 });
 
 // payment_receipts.user_id and generation_credits.user_id carry no FK to
@@ -434,11 +454,19 @@ test("the terms disclose the real generation charge without over-claiming the ma
 //   - the daily caps are 100 per account and 200 per IP
 //     (GENERATION_DAILY_CAP_PER_USER/_PER_IP); 10 and 20 are only the code
 //     fallbacks in services/generation_quota.py.
+// The allowance is three per account, lifetime, spendable only while the email
+// is verified (services/free_generations.py). An unverified account pays for
+// its first runs, so "your first three generations are free" was imprecise.
 test("the terms state the free allowance, the Gateway flow and the live caps", () => {
-	assert.match(terms, /first three generations are free/, "the free allowance must be stated");
+	assert.match(
+		terms,
+		/Each account gets three free generations once its email address is\s+verified/,
+		"the free allowance must be stated per account",
+	);
+	assert.doesNotMatch(terms, /first three generations are free/, "imprecise: unverified accounts pay for their first runs");
 	assert.match(
 		sectionBody(terms, "Limits and fair use"),
-		/After your three free generations/,
+		/Beyond the free allowance/,
 		"the price sentence must not read as unconditional",
 	);
 	assert.match(terms, /Circle&rsquo;s Gateway contract/, "the deposit step must be disclosed");
@@ -446,9 +474,17 @@ test("the terms state the free allowance, the Gateway flow and the live caps", (
 	assert.doesNotMatch(terms, /leaves your wallet and arrives in ours/i, "false: settlement moves Gateway balances");
 	assert.doesNotMatch(terms, /charged to\s+your linked wallet/i, "false: the charge comes from the Gateway balance");
 	const limits = sectionBody(terms, "Limits and fair use");
-	assert.match(limits, /one hundred\s+generations per account per day/, "the live per-account cap");
-	assert.match(limits, /two hundred per IP address per day/, "the live per-IP cap");
+	// The caps count POST /start requests (enforce_generation_quota runs first,
+	// on every one), not generations: the UI's unpaid 402 fetch counts too.
+	assert.match(limits, /one hundred requests to start a generation per day/, "the live per-account cap");
+	assert.match(limits, /each IP\s+address two hundred/, "the live per-IP cap");
+	assert.match(limits, /a paid\s+generation normally uses two/, "what one paid generation costs against the cap");
+	assert.doesNotMatch(limits, /one hundred\s+generations per account per day/, "imprecise: the cap counts requests");
 	assert.doesNotMatch(terms, /ten\s+generations per account per day/i, "stale: 10/20 are only code fallbacks");
+	// services/client_ip.py keys IPv6 on the /64, not on whatever network a
+	// caller holds; a delegated /56 is 256 keys.
+	assert.match(limits, /each \/64 block/, "the IPv6 key is the /64");
+	assert.doesNotMatch(terms, /an IPv6 network counts as one address/, "imprecise: a larger IPv6 network is many keys");
 });
 
 // Paper trading is a database replay (services/paper_trading.py) and the live
@@ -563,4 +599,95 @@ test("the operator line does not imply a company that does not exist", () => {
 		assert.match(page, /not a registered company/, `${name} must not leave incorporation implied`);
 		assert.doesNotMatch(page, /operated by APRIN/, `${name} must not imply APRIN Labs is a company`);
 	}
+});
+
+// ── The second 2026-10-01 audit pass ────────────────────────────────────
+//
+// Each guard below pins a sentence the auditor found false or imprecise
+// against main 3591cd79 plus the live stack, in both directions: the true
+// text must be present and the old text must not come back.
+
+// How a payment actually moves (ui/src/components/Generate.jsx pay paths,
+// ui/src/x402.js depositToGateway, ui/src/payment-session.js):
+//   - a deposit happens whenever the Gateway balance is short or unreadable
+//     (`bal == null || bal < need`), not only on the first payment;
+//   - a passkey deposit is CREDITED to the device key's Gateway balance; the
+//     funds never sit in the browser, only the signing key does, and losing
+//     the browser's storage strands what is left;
+//   - on the passkey path nobody signs: the device key signs without a prompt;
+//   - unlink_wallet refuses (409) once the key backs a strategy, because the
+//     paid run stamps owner_wallet with it (wallet_routes._wallet_has_owned_data).
+test("both pages describe the deposit, the device key and unlinking as they work", () => {
+	for (const [name, page] of [
+		["Privacy", privacy],
+		["Terms", terms],
+	]) {
+		const body = rendered(page);
+		assert.match(body, /Whenever your Gateway balance is too low for a payment/, `${name}: when a deposit happens`);
+		assert.doesNotMatch(body, /Your first payment includes a deposit/, `${name}: a deposit is not tied to the first payment`);
+		assert.match(body, /credited to a\s+device payment key/, `${name}: the deposit is credited, not sent to the browser`);
+		assert.doesNotMatch(body, /deposit goes instead\s+to a device/, `${name}: the funds never go to the browser`);
+		assert.match(body, /can no longer be\s+spent from the site/, `${name}: cleared storage strands the remainder`);
+		assert.match(body, /device payment key\s+signs it without a prompt/, `${name}: the passkey path signs without the user`);
+		assert.doesNotMatch(body, /For each generation you sign a payment authorisation/, `${name}: a credit or a device key means no user signature`);
+		assert.match(body, /it can no longer be\s+unlinked/, `${name}: the 409 on unlink must be disclosed`);
+		assert.doesNotMatch(body, /you can unlink it in Account Settings|where\s+you can remove it/, `${name}: false once the key backs a strategy`);
+		assert.match(body, /when you go back from\s+the\s+run&rsquo;s live view/, `${name}: where the settlement receipt appears`);
+	}
+	assert.doesNotMatch(terms, /site shows a settlement reference when a payment completes/, "the stream view replaces the page on success");
+	// generation_payment.py verifies and settles against the price on the paid
+	// request, not against the quote the user saw; only the signed amount holds.
+	const limits = sectionBody(terms, "Limits and fair use");
+	assert.match(limits, /never charged more\s+than the amount your payment authorisation names/, "the true price guarantee");
+	assert.doesNotMatch(limits, /quote you are\s+shown before you pay is the price that applies/, "false in the price-change window");
+});
+
+test("the privacy policy states the second audit's infrastructure facts", () => {
+	// better-auth's rate limiter counts EVERY auth request in auth_rate_limits
+	// (onRequestRateLimit runs on each one, keyed ip|path), get-session on page
+	// load included; deleteExpiredRows keeps rows 60s past their last request.
+	const logs = sectionBody(privacy, "IP addresses and logs");
+	assert.match(logs, /counts every request it receives against your IP\s+address/, "the sign-in service's per-request IP rows");
+	assert.match(logs, /a minute or more after its last request/, "when those rows are deleted");
+	// The managed rules (IP reputation included) sit only on the regional ACL
+	// at the ALB, which sees the CloudFront peer, not the visitor.
+	assert.match(logs, /a second firewall at our load balancer/, "the two firewalls must be told apart");
+	assert.doesNotMatch(logs, /including an IP-reputation list/, "the reputation list never sees a CDN visitor's IP");
+	assert.match(logs, /and to diagnose problems/, "the logs are operational, not security-only");
+	assert.doesNotMatch(logs, /All of this exists to keep accounts secure/, "the purpose list was narrower than the uses");
+
+	// The vid cookie is minted by the FastAPI middleware, so it arrives on the
+	// first /api/ response (App.jsx fetches /api/features on every load).
+	const visitors = sectionBody(privacy, "Counting visitors");
+	assert.match(visitors, /The first time a page calls our server&rsquo;s API/, "when the vid cookie is set");
+	assert.doesNotMatch(visitors, /On its first response/, "the HTML response sets no cookie");
+	assert.match(visitors, /deploying a vault through our API/, "vaults_routes records vault_deployed server-side");
+
+	// GitHub's default scopes are read:user and user:email (@better-auth/core).
+	const oauth = sectionBody(privacy, "If you sign in with Google or GitHub");
+	assert.match(oauth, /from GitHub, read access to your\s+profile and your email addresses/, "GitHub's real scopes");
+	assert.doesNotMatch(oauth, /contacts or anything else/, "read:user and user:email are more than name and avatar");
+
+	// persist_proposal runs after the winner is saved and backtested, so a run
+	// cancelled, crashed or timed out before then keeps no candidates.
+	const made = sectionBody(privacy, "What you make on Archimedes");
+	assert.match(made, /gets as far as saving its strategy and\s+backtesting it/, "when candidates are kept");
+	assert.doesNotMatch(made, /gets as far as producing candidates/, "false: runs with candidates can still end before the write");
+
+	// POST /api/vaults/create is mounted unconditionally; the UI flag hides
+	// only the modal. Until the route is disabled, the page must say so.
+	const chain = sectionBody(privacy, "What goes on a public blockchain");
+	assert.match(chain, /our API still accepts a vault-deployment request/, "the live vault-create route must be disclosed");
+	assert.match(chain, /names\s+that wallet as its owner/, "what that on-chain record reveals");
+});
+
+// chat_messages (models/chat.py) keeps the historical per-vault chat rows,
+// keyed by wallet with no FK to auth_users, so neither expiry nor account
+// deletion reaches them. Nobody counted the prod rows; "any" covers zero.
+test("the retention and deletion lists name the historical per-vault chat rows", () => {
+	const deletion = sectionBody(privacy, "How long we keep things, and how to get them deleted");
+	assert.match(deletion, /any messages posted in the\s+per-vault chat we removed in August 2026/, "no-expiry list");
+	const untouched = deletion.match(/<strong>Not touched:<\/strong>([\s\S]*?)<\/li>/);
+	assert.ok(untouched, "the Not touched bullet must exist");
+	assert.match(untouched[1], /messages you posted in that per-vault chat/, "account deletion does not reach chat rows");
 });

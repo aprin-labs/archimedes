@@ -28,8 +28,9 @@ const SECTION_ORDER = [
 // the table: these are ids looked up in the shared inventory below, and a
 // missing one renders a loud failure instead of a quietly shorter page. The
 // three are named because they are the ones a reader is most likely to be
-// looking for — the two auth sessions and the analytics id — and losing one
-// from the disclosure is the specific regression worth failing on.
+// looking for — the current auth session, the retired wallet-sign-in session
+// (now listed as legacy) and the analytics id — and losing one from the
+// disclosure is the specific regression worth failing on.
 export const REQUIRED_COOKIES = [
 	"better-auth.session_token",
 	"archimedes_session",

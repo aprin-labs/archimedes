@@ -26,11 +26,13 @@
 //                choice has to precede that choice being enforceable. It is
 //                the one key written without asking, and it is disclosed
 //                here rather than hidden.
-//   legacy     — keys the current code only ever REMOVES. Nothing writes
-//                them; they are listed so a reader who finds one left over
-//                from an older build knows what it was. `canStore()`
-//                returns false for them, so a future write would be
-//                suppressed AND caught by the test.
+//   legacy     — keys the live site never writes. The browser-storage ones
+//                are only ever REMOVED by current code; the one cookie
+//                (archimedes_session) belongs to the retired SIWE router,
+//                which main.py mounts only under TESTING. They are listed so
+//                a reader who finds one left over from an older build knows
+//                what it was. `canStore()` returns false for them, so a
+//                future write would be suppressed AND caught by the test.
 //
 // DEFAULT BEFORE A CHOICE IS MADE: optional categories are OFF. An
 // undecided visitor is treated exactly like one who pressed Reject, so the
@@ -59,7 +61,7 @@ export const CATEGORY_LABELS = {
 	[FUNCTIONAL]: "Functional",
 	[ANALYTICS]: "Analytics",
 	[CONSENT]: "Consent record",
-	[LEGACY]: "Legacy (cleared, never written)",
+	[LEGACY]: "Legacy (no longer written)",
 };
 
 export const CATEGORY_SUMMARIES = {
@@ -72,7 +74,7 @@ export const CATEGORY_SUMMARIES = {
 	[CONSENT]:
 		"The record of the choice you make here. Written whatever you choose, because a choice that is not stored cannot be honoured on your next visit.",
 	[LEGACY]:
-		"Written by older builds only. Current code never sets these; it deletes them when it finds them.",
+		"Written by older builds only. The live site never sets these. It deletes the browser-storage ones when it finds them; the cookie expired a day after it was set.",
 };
 
 // ── The inventory ───────────────────────────────────────────────────────
@@ -102,23 +104,11 @@ export const STORAGE_INVENTORY = [
 		category: NECESSARY,
 		source: "docs/account-authentication.md",
 		purpose:
-			"Double-submit CSRF state for a Google/GitHub sign-in round trip. Library-managed, short-lived (600s), only present while a link/sign-in redirect is in flight.",
+			"Double-submit CSRF state for a Google/GitHub sign-in round trip. Library-managed, short-lived (300s), only present while a link/sign-in redirect is in flight.",
 		reveals:
 			"A random handshake token for one OAuth attempt. Nothing about you.",
 		onReject:
 			"Strictly necessary — without it a social sign-in cannot be verified as yours.",
-	},
-	{
-		name: "archimedes_session",
-		store: "cookie",
-		category: NECESSARY,
-		source: "backend/archimedes/api/auth_siwe.py",
-		purpose:
-			"SIWE wallet-proof session issued after you sign the challenge. HttpOnly, Secure, SameSite=strict, 24-hour max-age.",
-		reveals:
-			"Your wallet address, signed by the server. It is the proof that this browser controls that address.",
-		onReject:
-			"Strictly necessary — rejecting it would break every wallet-gated action.",
 	},
 	{
 		name: "archimedes_vid",
@@ -128,9 +118,9 @@ export const STORAGE_INVENTORY = [
 		purpose:
 			"Anonymous funnel id: 16 random bytes, 180-day max-age, HttpOnly. Exists so drop-off between landing, generating, connecting a wallet and deploying can be counted per browser instead of per request.",
 		reveals:
-			"A random opaque token — no name, email or address in the value. Honest caveat: it stays anonymous only until you prove a wallet. At SIWE verify the server writes an identity_events row carrying both this id and the wallet (auth_siwe.verify_signature), which links the two from that moment on.",
+			"A random opaque token — no name, email or address in the value. The live site never links it to an account or wallet; the Privacy page describes the one past exception, from summer 2026.",
 		onReject:
-			"The cookie itself is set by the server on the first response and this page cannot delete it. What rejecting DOES stop is the browser-side reporting: the client stops sending funnel events (App.jsx) and stops writing the archimedes_landed marker.",
+			"The cookie itself is set by the server on the first API response and this page cannot delete it. What rejecting DOES stop is the browser-side reporting: the client stops sending funnel events (App.jsx) and stops writing the archimedes_landed marker.",
 	},
 
 	// ── localStorage ────────────────────────────────────────────────────
@@ -289,7 +279,18 @@ export const STORAGE_INVENTORY = [
 			"Strictly necessary — it is the guard against signing as the wrong wallet.",
 	},
 
-	// ── Legacy: current code only removes these ─────────────────────────
+	// ── Legacy: the live site never writes these ────────────────────────
+	{
+		name: "archimedes_session",
+		store: "cookie",
+		category: LEGACY,
+		source: "backend/archimedes/api/auth_siwe.py",
+		purpose:
+			"The wallet sign-in (SIWE) session from the sign-in system Archimedes used before its current one. The live site no longer offers that sign-in (its route is mounted only in test builds), so nothing on the live site sets this cookie. It had a 24-hour max-age, so any an older build left behind has expired.",
+		reveals:
+			"Your wallet address, signed by the server, only if an older build set it.",
+		onReject: "Never set by the live site.",
+	},
 	{
 		name: "archimedes_circle_username",
 		store: "localStorage",

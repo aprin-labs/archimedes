@@ -31,9 +31,20 @@ import PolicyBanner from "./PolicyBanner";
 //     settlement. Paper trading is a database replay (services/paper_trading.py)
 //     with anchoring off (PAPER_TRACE_ANCHOR unset). The live agent runner
 //     takes AGENT_DRY_RUN from SSM and logs "DRY RUN" lines, so it signs
-//     nothing. Vault deployment and on-chain trace publishing are behind
-//     ROADMAP_SURFACES_ENABLED. IPFS pinning never ran in production
+//     nothing. Vault deployment is behind ROADMAP_SURFACES_ENABLED in the UI
+//     (CreateVaultModal mounts only under it), but POST /api/vaults/create is
+//     still mounted for an account with a linked wallet; Privacy.jsx discloses
+//     that, and this page only claims what the SITE offers. On-chain trace
+//     publishing has no UI at all: POST /api/traces/publish needs the internal
+//     agent key, paper anchoring is off, and the house agent runs with
+//     AGENT_DRY_RUN. IPFS pinning never ran in production
 //     (docs/adr/ipfs-pinning-not-live.md).
+//   - the passkey device key: Generate.jsx sends it as X-Wallet-Address, so a
+//     run it pays for stamps owner_wallet with it, and unlink_wallet then
+//     refuses with 409 (_wallet_has_owned_data). Do not promise an unlink.
+//   - the price check: generation_payment.py verifies and settles against the
+//     price on the paid request, not the quote the user saw; only the signed
+//     amount bounds the charge.
 export default function Terms() {
 	return (
 		<div className="page-content policy-page">
@@ -71,8 +82,8 @@ export default function Terms() {
 				</p>
 				<p>
 					<strong>
-						Your first three generations are free once your email address is
-						verified. After that, generating a strategy is behind a paywall, and
+						Each account gets three free generations once its email address is
+						verified. Beyond that, generating a strategy is behind a paywall, and
 						that paywall settles for real.
 					</strong>{" "}
 					Each paid generation currently costs $2.00 in testnet USDC. Payment
@@ -80,16 +91,20 @@ export default function Terms() {
 				</p>
 				<ul>
 					<li>
-						Your first payment includes a deposit: your wallet approves and
+						Whenever your Gateway balance is too low for a payment (or cannot be
+						read), the payment starts with a deposit: your wallet approves and
 						deposits test USDC (20 by default; you can change the amount) into
 						Circle&rsquo;s Gateway contract, where it is held as a balance for
-						your address. With a Circle passkey wallet, the deposit goes instead
-						to a device payment key kept in your browser, and each deposit to it
-						is capped at $50.
+						your address. With a Circle passkey wallet, the deposit is instead
+						credited to a device payment key: a signing key the site creates and
+						keeps, unencrypted, in your browser. Each deposit to it is
+						capped at $50. If that browser&rsquo;s site data is cleared, whatever
+						is left under that key can no longer be spent from the site.
 					</li>
 					<li>
-						For each generation you sign a payment authorisation with a wallet
-						linked to your account. We verify it and settle it through
+						For each payment, a payment authorisation is signed by a wallet
+						linked to your account (with a passkey wallet, the device payment key
+						signs it without a prompt). We verify it and settle it through
 						Circle&rsquo;s payment facilitator, and $2.00 of test USDC moves from
 						your Gateway balance to ours. That is a real transfer, not a
 						simulated one.
@@ -103,10 +118,12 @@ export default function Terms() {
 				<p>
 					Because the currency is test USDC you obtained free from a faucet,
 					nothing of monetary value leaves you — but do not read
-					&ldquo;testnet&rdquo; as &ldquo;the payment step is fake&rdquo;. The
-					site shows a settlement reference when a payment completes. That is
-					Circle&rsquo;s reference, not a chain transaction hash; Circle performs
-					the on-chain settlement on its own schedule. The records we keep of
+					&ldquo;testnet&rdquo; as &ldquo;the payment step is fake&rdquo;. After
+					a payment completes, the Generate page shows the settlement receipt
+					Circle returned (an encoded record; you see it when you go back from
+					the run&rsquo;s live view). It contains Circle&rsquo;s own reference,
+					not a chain transaction hash; Circle performs the on-chain settlement
+					on its own schedule. The records we keep of
 					your payments are described in the{" "}
 					<a href="/privacy">Privacy Policy</a>.
 				</p>
@@ -185,7 +202,9 @@ export default function Terms() {
 						Linking a wallet or a sign-in provider happens only through something
 						you do, and we never merge accounts on your behalf. Paying from a
 						Circle passkey wallet links that wallet&rsquo;s device payment key to
-						your account; you can unlink it in Account Settings.
+						your account, and it is listed in Account Settings. Once it has paid
+						for a generation that produced a strategy, it can no longer be
+						unlinked.
 					</li>
 					<li>Tell us if you think your account has been compromised.</li>
 				</ul>
@@ -196,24 +215,26 @@ export default function Terms() {
 				<p>
 					Generation costs us real compute, so it is both priced and capped.{" "}
 					<strong>
-						After your three free generations, each generation currently costs
+						Beyond the free allowance, each generation currently costs
 						$2.00 in testnet USDC, taken from your Circle Gateway balance before
 						the work starts.
 					</strong>{" "}
-					An unspent credit from a paid run that failed is used first. The price
-					is an operational setting we may change; when we do, the quote you are
-					shown before you pay is the price that applies.
+					An unspent credit from a paid run that failed is used before you are
+					charged again. The price is an operational setting we may change. You
+					are shown the price before you pay, and you are never charged more
+					than the amount your payment authorisation names.
 				</p>
 				<p>
-					On top of the price there are caps. Currently they are one hundred
-					generations per account per day and two hundred per IP address per day
-					(an IPv6 network counts as one address), and individual endpoints are
-					rate limited as well. Every request to start a generation counts toward
-					the daily caps, including the unpaid one the site sends to fetch payment
-					details. These numbers are operational settings, not entitlements — we
-					may change them, and we will not treat a limit as a promise. Caps are
-					checked before any payment is verified or settled, so a request refused
-					for being over a cap is never charged.
+					On top of the price there are caps. Currently each account may send
+					one hundred requests to start a generation per day, and each IP
+					address two hundred (for IPv6, each /64 block, the range one
+					connection is normally given, counts as one address); individual
+					endpoints are rate limited as well. Every request counts, including
+					the unpaid one the site sends to fetch payment details, so a paid
+					generation normally uses two. These numbers are operational settings,
+					not entitlements — we may change them, and we will not treat a limit as
+					a promise. Caps are checked before any payment is verified or settled,
+					so a request refused for being over a cap is never charged.
 				</p>
 				<p>
 					Do not try to get around the limits: creating extra accounts for that

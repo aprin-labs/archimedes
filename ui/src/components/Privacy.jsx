@@ -38,11 +38,22 @@ import PolicyBanner from "./PolicyBanner";
 //   - Backups: Aurora's automated retention is 7 days (infra/aurora.tf). The
 //     manual Aurora snapshots were deleted on 2026-10-01; the one remaining
 //     snapshot is the EBS image of the decommissioned EC2 server.
-//   - Not offered today, so not described as running: vault deployment,
-//     on-chain trace publication, marketplace publishing (all behind
-//     ROADMAP_SURFACES_ENABLED), IPFS pinning (docs/adr/ipfs-pinning-not-live.md),
-//     per-vault chat (deleted), Google Fonts on this site (removed from
-//     ui/index.html in the rebrand). The live agent runner runs in dry-run.
+//   - Not offered on the site today, so not described as running: vault
+//     deployment and marketplace publishing (their UI is behind
+//     ROADMAP_SURFACES_ENABLED, which is a UI build flag only), on-chain trace
+//     publication (no UI; POST /api/traces/publish needs the internal agent
+//     key), IPFS pinning (docs/adr/ipfs-pinning-not-live.md), Google Fonts on
+//     this site (removed from ui/index.html in the rebrand). The live agent
+//     runner runs in dry-run. Marketplace publishing is also off server-side
+//     (ARCHIMEDES_TREASURY_WALLET is empty, so the route answers 503).
+//   - POST /api/vaults/create is STILL MOUNTED (main.py includes vaults_router
+//     unconditionally), gated only by an account, a linked wallet and the
+//     rigor gate, and it transfers the deployed vault to that wallet. The
+//     blockchain section discloses it; if the route is disabled, drop that
+//     sentence in the same change.
+//   - Per-vault chat was deleted on 2026-08-31, but its chat_messages rows
+//     (keyed by wallet, no FK to auth_users) were not; the retention and
+//     deletion lists name them. Nobody counted the prod rows for this page.
 export default function Privacy() {
 	return (
 		<div className="page-content policy-page">
@@ -147,9 +158,10 @@ export default function Privacy() {
 			<section>
 				<h2>If you sign in with Google or GitHub</h2>
 				<p>
-					We ask the provider only for the default sign-in scopes: enough to
-					learn your email address, your name and your avatar. We do not request
-					access to your files, repositories, contacts or anything else.
+					We ask each provider only for its default sign-in scopes: from Google,
+					your email address, name and avatar; from GitHub, read access to your
+					profile and your email addresses. We do not request access to your
+					files, repositories or contacts.
 				</p>
 				<p>
 					We store the provider&rsquo;s identifier for your account, the scope it
@@ -196,51 +208,57 @@ export default function Privacy() {
 					your account, so deleting your account does not remove it.
 				</p>
 				<p>
-					If you pay from a Circle passkey wallet, your first payment also links
-					that browser&rsquo;s device payment key (see the next section) to your
-					account as a second wallet. It is listed in Account Settings, where
-					you can remove it.
+					Paying from a Circle passkey wallet also links that browser&rsquo;s
+					device payment key (see the next section) to your account, and it is
+					listed in Account Settings. Once it has paid for a generation that
+					produced a strategy, it can no longer be unlinked.
 				</p>
 			</section>
 
 			<section>
 				<h2>Free generations and payments</h2>
 				<p>
-					Once your email address is verified, your first three generations are
-					free, with no wallet and no payment. Each one is recorded in{" "}
-					<code>free_generation_grants</code>: which run used it, and when. A
-					free run that fails to produce a strategy is handed back. That record
-					has no database link to your account, so deleting your account does
-					not remove it.
+					Each account gets three free generations once its email address is
+					verified, with no wallet and no payment. Each one is recorded in{" "}
+					<code>free_generation_grants</code> with your account id, which run
+					used it, and when. A free run that fails to produce a strategy is
+					handed back. That record has no database link to your account, so
+					deleting your account does not remove it.
 				</p>
 				<p>
-					After that, a generation currently costs $2.00 in testnet USDC, and the
-					payment really settles. It works through Circle&rsquo;s Gateway:
+					Beyond the free allowance, a generation currently costs $2.00 in
+					testnet USDC, and the payment really settles. It works through
+					Circle&rsquo;s Gateway:
 				</p>
 				<ul>
 					<li>
-						Your first payment includes a deposit. Your wallet approves and
+						Whenever your Gateway balance is too low for a payment (or cannot be
+						read), the payment starts with a deposit. Your wallet approves and
 						deposits test USDC (20 by default; you can change the amount) into
 						Circle&rsquo;s Gateway contract, where it is held as a balance for
 						your address.
 					</li>
 					<li>
-						With a Circle passkey wallet, the deposit goes instead to a device
-						payment key that your browser generates and keeps, unencrypted, in
-						its local storage. Anything that can read that storage can spend what
-						is left of the deposit, which is why each deposit to the key is
-						capped at $50.
+						With a Circle passkey wallet, the deposit is instead credited to a
+						device payment key: a signing key that your browser generates and
+						keeps, unencrypted, in its local storage. Anything that can read that
+						storage can spend what is left of the deposit, which is why each
+						deposit to the key is capped at $50. If that browser&rsquo;s site
+						data is cleared, whatever is left under that key can no longer be
+						spent from the site.
 					</li>
 					<li>
-						For each generation you sign a payment authorisation with a wallet
-						linked to your account. Our server sends it to Circle&rsquo;s payment
-						service, which verifies it and moves $2.00 from your Gateway balance
-						to ours.
+						For each payment, a payment authorisation is signed by a wallet
+						linked to your account (with a passkey wallet, the device payment key
+						signs it without a prompt). Our server sends it to Circle&rsquo;s
+						payment service, which verifies it and moves $2.00 from your Gateway
+						balance to ours.
 					</li>
 				</ul>
 				<p>
-					Every payment that settles is written, at that moment, to a{" "}
-					<code>payment_receipts</code> row. Each row holds:
+					When a payment settles, we write a <code>payment_receipts</code> row
+					at that moment (the one exception is described below). Each row
+					holds:
 				</p>
 				<ul>
 					<li>your account id, and the wallet address that paid;</li>
@@ -268,13 +286,14 @@ export default function Privacy() {
 				</p>
 				<p>
 					Receipts and credits belong to your account, and no other account can
-					read them. The site shows a payment&rsquo;s settlement reference when
-					it completes; your full receipt history is not yet shown on the site,
-					but your signed-in account can read it from our API, or you can ask us
-					for it. Writing the receipt is never allowed to block the generation
-					you paid for, so if our database fails at that moment a payment can
-					settle without a receipt row. A missing receipt is a gap in the
-					record, not evidence that no charge happened.
+					read them. After a payment completes, the Generate page shows the
+					settlement receipt Circle returned when you go back from the
+					run&rsquo;s live view. Your full receipt history is not yet shown on
+					the site, but your signed-in account can read it from our API, or you
+					can ask us for it. Writing the receipt is never allowed to block the
+					generation you paid for, so if our database fails at that moment a
+					payment can settle without a receipt row. A missing receipt is a gap
+					in the record, not evidence that no charge happened.
 				</p>
 				<p>
 					These records have no expiry date, and deleting your account does not
@@ -295,13 +314,13 @@ export default function Privacy() {
 					to your account; nothing on the site publishes them.
 				</p>
 				<p>
-					For every generation run that gets as far as producing candidates, we
-					keep each candidate, including the ones that fail the rigor gate and
-					the alternates ranked below the winner, with your brief, the strategy
-					specification and its verdict. A run that stops earlier (an invalid
-					brief, the model unavailable, no candidates) leaves no candidate
-					records; its brief stays only in a job record in our cache, deleted an
-					hour after the run ends.
+					When a generation run gets as far as saving its strategy and
+					backtesting it, we also keep each candidate it considered, including
+					the ones that fail the rigor gate and the alternates ranked below the
+					winner, with your brief, the strategy specification and its verdict. A
+					run that ends before that point leaves no candidate records. If it
+					produced no strategy, its brief stays only in a job record in our
+					cache, deleted an hour after the run ends.
 				</p>
 				<p>
 					For each run that produces a strategy we also record what it consumed
@@ -332,10 +351,11 @@ export default function Privacy() {
 				</p>
 				<ul>
 					<li>
-						On its first response, our server gives your browser a random,
-						opaque id in a cookie named <code>archimedes_vid</code>. It is not
-						derived from your IP address, your device or anything about you. It
-						lasts 180 days and cannot be read by JavaScript. The server sets it
+						The first time a page calls our server&rsquo;s API (every page does
+						as it loads), the server gives your browser a random, opaque id in a
+						cookie named <code>archimedes_vid</code>. It is not derived from your
+						IP address, your device or anything about you. It lasts 180 days and
+						cannot be read by JavaScript. The server sets it
 						whether or not you allow analytics.
 					</li>
 					<li>
@@ -343,9 +363,10 @@ export default function Privacy() {
 						(HyperLogLog), which count how many different visitors reached each
 						step but cannot be read back as a list of ids. Some steps are counted
 						by our server whatever you choose in the consent banner: being asked
-						to connect a wallet, and starting a generation (and whether it was a
-						free one). Your browser reports that you landed on the site only if
-						you allow analytics.
+						to connect a wallet, starting a generation (and whether it was a free
+						one), and deploying a vault through our API (see the blockchain
+						section below). Your browser reports that you landed on the site only
+						if you allow analytics.
 					</li>
 					<li>
 						When that landing report is sent, we also count your country and
@@ -384,19 +405,21 @@ export default function Privacy() {
 					</li>
 					<li>
 						It is the key for our rate limits and for the daily cap on
-						generations per address. For IPv6, the key is the first half of the
-						address rather than the whole of it. The API rate-limit counters and
-						the daily cap live in our cache and expire on their own, the counters
-						within an hour and the cap within 36 hours. Limits on signing in,
-						signing up, password resets and verification emails are counted in
-						our database, and those rows are deleted once their time window has
-						passed, when a later request triggers the clean-up.
+						generation requests per address. For IPv6, the key is the first half
+						of the address rather than the whole of it. The API rate-limit
+						counters and the daily cap live in our cache and expire on their own,
+						the counters within an hour and the cap within 36 hours. Our sign-in
+						service also counts every request it receives against your IP
+						address in a database table, which is how the limits on signing in,
+						signing up, password resets and verification emails work; each row
+						is deleted a minute or more after its last request, when a later
+						request triggers the clean-up.
 					</li>
 					<li>
-						Amazon&rsquo;s web application firewall, in front of the site,
-						rate-limits requests per IP address and checks them against
-						Amazon&rsquo;s managed rules, including an IP-reputation list. We keep
-						no firewall logs; AWS keeps a small sample of recent requests,
+						Amazon&rsquo;s web application firewall rate-limits requests per IP
+						address at our CDN, and a second firewall at our load balancer
+						screens requests with Amazon&rsquo;s managed rules. We keep no
+						firewall logs; AWS keeps a small sample of recent requests,
 						including their IP addresses, for up to three hours.
 					</li>
 					<li>
@@ -418,9 +441,9 @@ export default function Privacy() {
 					</li>
 				</ul>
 				<p>
-					All of this exists to keep accounts secure and to stop one person from
-					draining a shared resource. None of it is used to profile you or shared
-					with advertisers.
+					We use this to keep accounts secure, to stop one person from draining
+					a shared resource, and to diagnose problems. None of it is used to
+					profile you or shared with advertisers.
 				</p>
 			</section>
 
@@ -495,14 +518,20 @@ export default function Privacy() {
 					deletion request reaches our database; it cannot reach a blockchain.
 				</p>
 				<p>
-					Today, the on-chain records you create here are your wallet&rsquo;s
-					transactions funding Circle&rsquo;s Gateway: a token approval and a
-					deposit. Circle then settles payments made from that balance on-chain,
-					on its own schedule. Paper trading is simulated and writes nothing to a
-					chain. The site does not currently offer vault deployment, on-chain
-					publication of reasoning traces or marketplace publishing, and we do
-					not pin anything to IPFS. If that changes, this page will say what gets
-					published before the feature is switched on.
+					Through the site, the on-chain records you create are your
+					wallet&rsquo;s transactions funding Circle&rsquo;s Gateway: a token
+					approval and a deposit. Circle then settles payments made from that
+					balance on-chain, on its own schedule. Paper trading is simulated and
+					writes nothing to a chain. The site does not currently offer vault
+					deployment, on-chain publication of reasoning traces or marketplace
+					publishing, and we do not pin anything to IPFS; if that changes, this
+					page will say what gets published before the feature is switched on.
+				</p>
+				<p>
+					One exception: our API still accepts a vault-deployment request from
+					an account with a linked wallet, for a strategy that passes the rigor
+					gate. A vault deployed that way is a public on-chain record that names
+					that wallet as its owner.
 				</p>
 				<p>
 					<strong>A wallet address is pseudonymous, not anonymous.</strong> It is
@@ -562,10 +591,10 @@ export default function Privacy() {
 					</li>
 					<li>
 						<strong>Our documentation site,</strong> docs.archimedes-arc.com,
-						linked from every page here. It loads its typefaces from Google Fonts
-						and asks GitHub&rsquo;s API for our repository&rsquo;s details from
-						your browser, so Google and GitHub see your IP address when you open
-						it.
+						linked from the header and footer of our public pages. It
+						loads its typefaces from Google Fonts and asks GitHub&rsquo;s API for
+						our repository&rsquo;s details from your browser, so Google and GitHub
+						see your IP address when you open it.
 					</li>
 				</ul>
 				<p>
@@ -626,7 +655,8 @@ export default function Privacy() {
 					Everything else has no expiry date today: your account and profile,
 					your strategies and every stored generation candidate, your
 					paper-trading records, your payment receipts and credits, your
-					free-generation record, the wallet ledger, the email log, API keys,
+					free-generation record, the wallet ledger, any messages posted in the
+					per-vault chat we removed in August 2026, the email log, API keys,
 					wallet-link challenges, and running visitor totals.
 				</p>
 				<p>
@@ -656,9 +686,10 @@ export default function Privacy() {
 					</li>
 					<li>
 						<strong>Not touched:</strong> your payment receipts, your credit
-						ledger, your free-generation record and the wallet ledger, because
-						none of them has a database link to your account; and nothing on a
-						blockchain.
+						ledger, your free-generation record, the wallet ledger, and any
+						messages you posted in that per-vault chat (they are stored by wallet
+						address), because none of them has a database link to your account;
+						and nothing on a blockchain.
 					</li>
 				</ul>
 				<p>
