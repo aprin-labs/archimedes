@@ -43,8 +43,17 @@ export default class ErrorBoundary extends Component {
 		// wrong" card with no way out — a blank-but-polite fallback is the
 		// same outage with better manners.
 		const detail = error instanceof Error ? error.message : String(error);
+		// data-error-boundary="crashed" is the stable marker the deploy's
+		// headless-Chrome render gate (.github/scripts/spa_render_check.mjs)
+		// fails on: this card fills #root, so "#root has children" alone
+		// would call a crashed app rendered.
 		return (
-			<div className="card error" role="alert" style={{ margin: 16 }}>
+			<div
+				className="card error"
+				role="alert"
+				data-error-boundary="crashed"
+				style={{ margin: 16 }}
+			>
 				<h2 style={{ marginTop: 0 }}>
 					{this.props.label ? `${this.props.label} crashed` : "This page crashed"}
 				</h2>
