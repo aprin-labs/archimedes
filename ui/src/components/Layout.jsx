@@ -489,6 +489,18 @@ export default function Layout({
 					)}
 					{children}
 				</main>
+				{/* Layout-bottom footer, shared by every /app page (Layout wraps them
+				    all — App.jsx). Signed-in users need the same policy links the
+				    public shell carries; a policy reachable only from the logged-out
+				    site is not reachable by the people it actually governs. Plain
+				    <a> hrefs, not client-side nav: /privacy and /terms are public
+				    routes outside the app shell. */}
+				<footer className="app-footer">
+					<nav className="policy-links" aria-label="Policies">
+						<a href="/privacy">Privacy</a>
+						<a href="/terms">Terms</a>
+					</nav>
+				</footer>
 			</div>
 		</div>
 	);
