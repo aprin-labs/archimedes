@@ -134,6 +134,12 @@ async def test_agent_manifest_endpoint_groups_present():
         assert "status" in endpoints[group]
         assert "routes" in endpoints[group]
         assert "auth_required" in endpoints[group], f"{group} must state whether a session is needed"
+        if group in ("deploy", "marketplace"):
+            # Their routes (create_vault; publish, subscribe) 404 while
+            # FEATURE_ROADMAP_SURFACES is off, so these groups name no route
+            # then (#1432). Both states are pinned in
+            # test_vault_create_roadmap_gate.py.
+            continue
         assert endpoints[group]["routes"], f"{group} routes must be non-empty"
 
 

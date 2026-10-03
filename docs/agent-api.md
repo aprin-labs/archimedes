@@ -395,6 +395,27 @@ python scripts/fund_agent_wallet.py --to 0x<agent-wallet> --mode faucet --execut
 
 ### DEPLOY — create a vault from the generated strategy
 
+**Vault deployment is roadmap, not shipped, and the route says so.** `POST
+/api/vaults/create` answers `404` with `{"detail": "Not offered: roadmap, not
+shipped"}` unless the server's `FEATURE_ROADMAP_SURFACES` flag is set to `true`
+([#1432](https://github.com/aprin-labs/archimedes/pull/1432); reader
+`roadmap_surfaces_enabled()` in
+[`feature_flags.py`](../backend/archimedes/feature_flags.py)). The flag is off in
+every environment unless set, and neither `infra/ecs.tf` nor the CI task-definition
+rewrite sets it. While it is off, nothing downstream of the gate runs: not the auth
+check, not body-schema validation, not the rigor gate, not the chain call. A body
+sent with a JSON content type (`application/json` or `application/*+json`) is parsed
+by FastAPI before the gate: malformed JSON gets a `422` (`json_invalid`), and bytes
+that do not decode as text (invalid UTF-8, for example) get a `400` `There was an
+error parsing the body`. A body with any other content type, or none, reaches the
+gate and gets the `404`. Nothing downstream of the gate runs in any of these cases.
+The same flag, with the same `404`, closes `POST /api/marketplace/publish`
+and `POST /api/marketplace/subscribe`, the two marketplace routes that also have the
+backend signer deploy a vault owned by the caller's wallet. The served manifest lists
+these routes only while the flag is on; `.well-known/agent.json` does not list them.
+The rest of this section is how the create route behaves on a stack that has turned
+the flag on.
+
 With account session and verified linked wallet established, call `POST
 /api/vaults/create`. Reference implementation:
 `build_vault_create_payload` / `step_deploy` in
@@ -444,10 +465,12 @@ stays OFF, but the original reason no longer holds: the T3.2 redeploy landed
 2026-07-09 and issue
 [#588](https://github.com/aprin-labs/archimedes/issues/588) (whether the repo's
 cached ABI matches the live deployed bytecode) closed 2026-07-14. The
-`deploy` group has been `live` in the served manifest since
-[#1447](https://github.com/aprin-labs/archimedes/pull/1447). It stays OFF now for
-the ordinary reason: this call spends gas and creates a real on-chain vault,
-so it should be an explicit act, not a default.
+`deploy` group was `live` in the served manifest from
+[#1447](https://github.com/aprin-labs/archimedes/pull/1447) until the 2026-09-01
+copy-honesty pass moved it to `roadmap`. It stays OFF now for the ordinary
+reason: this call spends gas and creates a real on-chain vault, so it should be
+an explicit act, not a default. With the server's roadmap flag off, `--deploy`
+gets the `404` described above and creates nothing.
 
 ### MONITOR — read vault health back
 

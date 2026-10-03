@@ -18,6 +18,7 @@ from archimedes.api.limiter import limiter
 from archimedes.api.wallet_routes import require_linked_wallet
 from archimedes.chain.constants import MAX_MANAGEMENT_FEE_BPS, MAX_PERFORMANCE_FEE_BPS
 from archimedes.db import get_session
+from archimedes.feature_flags import require_roadmap_surfaces
 from archimedes.marketplace import spend_cap
 from archimedes.marketplace.encoding import derive_pool_id, to_bytes32
 from archimedes.marketplace.service import MarketService, Subscriber
@@ -87,7 +88,15 @@ async def _require_vault_fees_within_caps(market: MarketService, vault_address: 
 # ---------------------------------------------------------------------------
 
 
-@marketplace_router.post("/publish")
+@marketplace_router.post(
+    "/publish",
+    # Roadmap-gated (#1432): with no vault_address, publish has the backend
+    # signer deploy a vault owned by the caller's wallet (step 3 below). The
+    # gate is a route-level dependency, so while FEATURE_ROADMAP_SURFACES is
+    # off nothing in this handler runs: no auth check, no Circle wallet, no
+    # vault, no pool, no row. See feature_flags.require_roadmap_surfaces.
+    dependencies=[Depends(require_roadmap_surfaces)],
+)
 @limiter.limit("3/minute")
 async def publish_strategy(
     request: Request,
@@ -96,6 +105,11 @@ async def publish_strategy(
     wallet: str = Depends(require_linked_wallet),
 ):
     """Publish a strategy to the marketplace.
+
+    Roadmap-gated: marketplace publishing is not offered, so this answers 404
+    unless the server's ``FEATURE_ROADMAP_SURFACES`` flag is on (see
+    ``feature_flags.roadmap_surfaces_enabled``), matching the UI's build-time
+    roadmap gate on the Publish page.
 
     Body: {strategy_id, vault_address?}
     pool_id is DERIVED server-side (D-POOL). Never accept it from the client.
@@ -306,7 +320,15 @@ async def publish_strategy(
 # ---------------------------------------------------------------------------
 
 
-@marketplace_router.post("/subscribe")
+@marketplace_router.post(
+    "/subscribe",
+    # Roadmap-gated (#1432): subscribe always has the backend signer deploy a
+    # vault owned by the caller's wallet (step 5 below). Same route-level gate
+    # as publish: while FEATURE_ROADMAP_SURFACES is off nothing in this
+    # handler runs: no auth check, no spend-cap read, no Circle wallet, no
+    # vault, no row.
+    dependencies=[Depends(require_roadmap_surfaces)],
+)
 @limiter.limit("5/minute")
 async def subscribe_strategy(
     request: Request,
@@ -315,6 +337,10 @@ async def subscribe_strategy(
     wallet: str = Depends(require_linked_wallet),
 ):
     """Subscribe to a published strategy.
+
+    Roadmap-gated: marketplace subscriptions are not offered, so this answers
+    404 unless the server's ``FEATURE_ROADMAP_SURFACES`` flag is on, matching
+    the UI's build-time roadmap gate on the Marketplace pages.
 
     Body: {strategy_id, pool_id, sub_id, ephemeral_wallet}
     The subscription registry is Postgres-only (P7 — SubscriptionManager
