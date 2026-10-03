@@ -141,3 +141,32 @@ class TestBarePostgresUrlResolvesToPsycopg2:
         )
         assert result.returncode == 0, result.stderr
         assert result.stdout.split()[-2:] == ["postgresql+psycopg2://u:p@h:5432/d", "psycopg2"]
+
+
+class TestSqlalchemyFloorExcludesKnownRegressions:
+    """2.1.1 and 2.1.2 ship regressions that 2.1.3 fixes: #13619, #13625 and
+    #13626 (fixed in 2.1.2) and #13635 (fixed in 2.1.3), per SQLAlchemy's 2.1
+    changelog. #13635 makes a ``.params()`` value compile to NULL under
+    ``literal_binds``. Nothing in the backend uses the affected features today,
+    so the floor in ``requirements-base.txt`` is the only thing keeping a resolver
+    from installing those releases. A plain text read, like
+    ``test_single_openssl.py``'s requirement guard, so it runs everywhere.
+    """
+
+    def test_requirements_floor_is_at_least_2_1_3(self):
+        import re
+        from pathlib import Path
+
+        requirements = Path(__file__).resolve().parents[1] / "requirements-base.txt"
+        specs = []
+        for line in requirements.read_text().splitlines():
+            body = line.split("#", 1)[0].strip()
+            match = re.match(r"(?i)^sqlalchemy(?:\[[^\]]*\])?\s*(?P<spec>[<>=!~].*)?$", body)
+            if match:
+                specs.append(match.group("spec") or "")
+        assert len(specs) == 1, f"expected one sqlalchemy line in {requirements.name}, found {specs}"
+        floor = re.search(r">=\s*(\d+)\.(\d+)\.(\d+)\b", specs[0])
+        assert floor, f"the sqlalchemy line has no >=X.Y.Z floor: {specs[0]!r}"
+        assert tuple(int(part) for part in floor.groups()) >= (2, 1, 3), (
+            f"sqlalchemy floor {specs[0]!r} admits 2.1.1/2.1.2, which carry regressions 2.1.3 fixes"
+        )
