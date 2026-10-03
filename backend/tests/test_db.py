@@ -60,7 +60,7 @@ class TestDatabaseUrlEnvOverride:
         sqlite_kwargs = db._get_engine_kwargs()
         assert sqlite_kwargs == {"connect_args": {"check_same_thread": False}}
 
-        monkeypatch.setattr(db, "DATABASE_URL", "postgresql://user:pass@host:5432/db")
+        monkeypatch.setattr(db, "DATABASE_URL", "postgresql+psycopg2://user:pass@host:5432/db")
         postgres_kwargs = db._get_engine_kwargs()
         assert postgres_kwargs == {"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10}
 
@@ -99,6 +99,15 @@ class TestBarePostgresUrlResolvesToPsycopg2:
             "sqlite:///x.db",
         ):
             assert db._pin_psycopg2_driver(url) == url
+
+    def test_pin_is_anchored_to_the_scheme(self):
+        # SQLAlchemy's URL parser accepts the scheme text later in the URL, in a
+        # password or a query value. Only the leading scheme may be rewritten.
+        assert (
+            db._pin_psycopg2_driver("postgresql://u:postgresql://@h/d") == "postgresql+psycopg2://u:postgresql://@h/d"
+        )
+        driver_named = "postgresql+asyncpg://u:p@h/d?application_name=postgresql://x"
+        assert db._pin_psycopg2_driver(driver_named) == driver_named
 
     def test_module_database_url_goes_through_the_pin(self):
         # A subprocess, not importlib.reload: reloading `db` here would rebind
