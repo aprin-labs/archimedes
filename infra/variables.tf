@@ -295,6 +295,45 @@ variable "ses_events_drain_schedule_expression" {
   default     = "rate(15 minutes)"
 }
 
+# ── DMARC weekly summary (#1504, infra/dmarc_reports.tf) ────────────────────
+
+variable "dmarc_summary_cpu" {
+  description = "Fargate task-level vCPU units for the weekly DMARC summary task (infra/dmarc_reports.tf). 256 = 0.25 vCPU, the Fargate minimum — the job lists a fortnight of a few-KB objects, parses them in memory and sends one email, so this is sized for the boto3 import cost, not for the work."
+  type        = string
+  default     = "256"
+}
+
+variable "dmarc_summary_memory" {
+  description = "Fargate task-level memory (MiB) for the weekly DMARC summary task. Must pair validly with dmarc_summary_cpu (256 cpu allows 512, 1024 or 2048) — see https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-cpu-memory-error.html. 1024 matches the ses-events-drain task rather than being measured; the parser refuses to decompress past 64 MB (archimedes/scripts/dmarc_reports.py's MAX_UNCOMPRESSED_BYTES) so a hostile report cannot make the job want more."
+  type        = string
+  default     = "1024"
+}
+
+variable "dmarc_summary_schedule_expression" {
+  description = <<-EOT
+    EventBridge Scheduler expression for the weekly DMARC aggregate-report
+    summary (infra/dmarc_reports.tf's aws_scheduler_schedule.dmarc_weekly_summary).
+
+    Monday 13:00 UTC. Monday because a new source IP claiming to send as this
+    domain is something to act on during a working week; 13:00 UTC because it
+    is inside a waking day on both sides of the Atlantic.
+
+    WEEKLY IS NOT DECORATION. The owner asked for a weekly summary
+    (#1504, 2026-09-03), and the message's ARRIVAL is what tells him the
+    collection path is alive — a quiet week still sends a "no reports received"
+    line, precisely so silence stays meaningful. A summary that quietly became
+    hourly is a summary nobody reads, and one that became monthly is a
+    fortnight of evidence discovered too late. So
+    backend/tests/test_dmarc_summary_wiring.py fails unless this expression is
+    a cron naming exactly ONE weekday: tighten it to daily during the ramp by
+    changing that guard deliberately, not by editing this default past it.
+
+    There is no "off" here short of the schedule's own `state`.
+  EOT
+  type        = string
+  default     = "cron(0 13 ? * MON *)"
+}
+
 # ── Outage paging (issue #1818 P5) ──────────────────────────────────────────
 
 variable "owner_alert_email" {

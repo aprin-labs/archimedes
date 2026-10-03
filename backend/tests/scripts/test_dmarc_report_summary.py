@@ -28,6 +28,14 @@ receipt rule stores the RAW MIME MESSAGE in S3, so the report is a base64
 attachment rather than the object body, and it arrives zipped (Google,
 Microsoft) or gzipped (Yahoo and most others).
 
+WHERE THE CODE UNDER TEST LIVES. The parsing, aggregation and rendering are
+`archimedes.scripts.dmarc_reports` (imported below as ``core``); the CLI and its
+exit codes are `scripts/dmarc_report_summary.py` (loaded by path as ``drs``).
+The split exists because `backend/Dockerfile` copies ``backend/`` and nothing
+else, so the scheduled weekly summary — which runs in that image — cannot
+import the operator script. One parser, two callers, one answer about whether
+the domain is being spoofed.
+
 Hermetic: reports are built in-process from the RFC 7489 appendix-C schema and
 a hand-written stub S3 client. No boto3, no credentials, no network, no
 fixture files.
@@ -45,11 +53,26 @@ from email.message import EmailMessage
 from pathlib import Path
 
 import pytest
+from archimedes.scripts import dmarc_reports as core
+
+from tests import dmarc_fixtures
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _load_module():
+    """Load `scripts/dmarc_report_summary.py` the way an operator runs it.
+
+    The parsing moved to `archimedes.scripts.dmarc_reports` (imported above as
+    `core`) so the scheduled weekly summary, which runs inside the backend
+    image where this directory does not exist, reads reports with the same code
+    an operator does. The script is still loaded BY PATH here rather than
+    trusted to be importable: it carries the CLI — argument parsing and the
+    four exit codes — and it also carries the `sys.path` insert that makes
+    `python scripts/dmarc_report_summary.py` work from the repo root at all.
+    Exercising it as a file is what keeps that documented invocation covered;
+    importing `core` alone would leave the shim untested and free to rot.
+    """
     path = _REPO_ROOT / "scripts" / "dmarc_report_summary.py"
     spec = importlib.util.spec_from_file_location("dmarc_report_summary", path)
     module = importlib.util.module_from_spec(spec)
@@ -63,106 +86,16 @@ drs = _load_module()
 
 # ── Report builders ──────────────────────────────────────────────────────────
 #
-# Shaped after a real Google aggregate report: same element order, same
-# two-verdict structure (policy_evaluated vs auth_results) that the parser has
-# to tell apart.
+# Shared with tests/scripts/test_dmarc_weekly_summary.py, which tests the other
+# consumer of the same parser. See tests/dmarc_fixtures.py for what is faithful
+# about these shapes; the aliases below keep this file reading the way it did
+# when the builders were local to it.
 
-
-def _record(
-    *,
-    source_ip: str,
-    count: int,
-    disposition: str = "none",
-    dkim_aligned: str = "pass",
-    spf_aligned: str = "pass",
-    dkim_auth: str = "pass",
-    spf_auth: str = "pass",
-    header_from: str = "archimedes-arc.com",
-    spf_auth_domain: str = "archimedes-arc.com",
-) -> str:
-    return f"""
-  <record>
-    <row>
-      <source_ip>{source_ip}</source_ip>
-      <count>{count}</count>
-      <policy_evaluated>
-        <disposition>{disposition}</disposition>
-        <dkim>{dkim_aligned}</dkim>
-        <spf>{spf_aligned}</spf>
-      </policy_evaluated>
-    </row>
-    <identifiers>
-      <header_from>{header_from}</header_from>
-    </identifiers>
-    <auth_results>
-      <dkim>
-        <domain>archimedes-arc.com</domain>
-        <result>{dkim_auth}</result>
-        <selector>abc123</selector>
-      </dkim>
-      <spf>
-        <domain>{spf_auth_domain}</domain>
-        <result>{spf_auth}</result>
-      </spf>
-    </auth_results>
-  </record>"""
-
-
-def _report(
-    *,
-    org: str = "google.com",
-    report_id: str = "1234567890",
-    begin: int = 1_756_000_000,
-    end: int = 1_756_086_400,
-    policy: str = "none",
-    records: str = "",
-) -> bytes:
-    return f"""<?xml version="1.0" encoding="UTF-8" ?>
-<feedback>
-  <report_metadata>
-    <org_name>{org}</org_name>
-    <email>noreply-dmarc-support@{org}</email>
-    <report_id>{report_id}</report_id>
-    <date_range>
-      <begin>{begin}</begin>
-      <end>{end}</end>
-    </date_range>
-  </report_metadata>
-  <policy_published>
-    <domain>archimedes-arc.com</domain>
-    <adkim>r</adkim>
-    <aspf>r</aspf>
-    <p>{policy}</p>
-    <sp>{policy}</sp>
-    <pct>100</pct>
-  </policy_published>{records}
-</feedback>
-""".encode()
-
-
-def _zipped(xml: bytes, name: str = "google.com!archimedes-arc.com!1756000000!1756086400.xml") -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr(name, xml)
-    return buf.getvalue()
-
-
-def _as_ses_object(attachment: bytes, filename: str) -> bytes:
-    """The bytes an SES receipt rule actually puts in S3: the whole MIME message."""
-    msg = EmailMessage()
-    msg["From"] = "noreply-dmarc-support@google.com"
-    msg["To"] = "dmarc-reports@archimedes-arc.com"
-    msg["Subject"] = "Report domain: archimedes-arc.com Submitter: google.com"
-    msg.set_content("This is a DMARC aggregate report.")
-    subtype = "zip" if filename.endswith(".zip") else "gzip"
-    msg.add_attachment(attachment, maintype="application", subtype=subtype, filename=filename)
-    return msg.as_bytes()
-
-
-SAMPLE_XML = _report(
-    records=_record(source_ip="54.240.8.1", count=42)
-    + _record(source_ip="203.0.113.77", count=3, disposition="none", dkim_aligned="fail", spf_aligned="fail")
-)
+_record = dmarc_fixtures.record
+_report = dmarc_fixtures.aggregate_report
+_zipped = dmarc_fixtures.zipped
+_as_ses_object = dmarc_fixtures.as_ses_object
+SAMPLE_XML = dmarc_fixtures.SAMPLE_XML
 
 
 # ── Guard 1: alignment comes from policy_evaluated, not auth_results ─────────
@@ -416,7 +349,7 @@ def test_zip_bomb_is_refused_and_named(monkeypatch):
     A compressed bomb must be refused as an unreadable object, not decompressed
     into memory and not silently truncated into half an XML document.
     """
-    monkeypatch.setattr(drs, "MAX_UNCOMPRESSED_BYTES", 4096)
+    monkeypatch.setattr(core, "MAX_UNCOMPRESSED_BYTES", 4096)
     bomb = _zipped(b"A" * 100_000, name="bomb.xml")
     summary = drs.build_summary([("bomb.zip", bomb)])
 
@@ -433,7 +366,7 @@ def test_many_small_members_are_refused_on_declared_total(monkeypatch):
     individually under the limit, only the sum is not. Without the pre-check
     the parser would happily walk all of them.
     """
-    monkeypatch.setattr(drs, "MAX_UNCOMPRESSED_BYTES", 4096)
+    monkeypatch.setattr(core, "MAX_UNCOMPRESSED_BYTES", 4096)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for i in range(4):
@@ -445,6 +378,34 @@ def test_many_small_members_are_refused_on_declared_total(monkeypatch):
     assert "zip expands past" in summary.unreadable[0]
 
 
+def test_an_oversized_cell_cannot_inflate_the_rendered_table():
+    """The decompression bounds do not bound the RENDER.
+
+    `render_table` pads every row to the widest cell in its column, so a single
+    oversized cell is multiplied by the row count — measured before the bound,
+    a 219 KB report carrying one 200 KB `<source_ip>` plus 30 ordinary records
+    rendered a 6.6 MB table, and the factor grows with the number of sources.
+    Every cell arrives from the public internet at a DNS-published address, and
+    `archimedes.scripts.dmarc_weekly_summary` puts this table into an email, so
+    an unbounded render is a message SES refuses to send.
+    """
+    huge = "192.0.2.99" + "A" * 200_000
+    xml = _report(
+        records="".join(_record(source_ip=f"198.51.100.{i}", count=1) for i in range(30))
+        + _record(source_ip=huge, count=1)
+    )
+    summary = drs.build_summary([("hostile.xml", xml)])
+    rendered = drs.render_table(summary)
+
+    assert summary.reports_parsed == 1, "the report itself is well-formed; only one cell is hostile"
+    assert len(rendered) < 16_000, f"31 bounded rows must not render {len(rendered)} characters"
+    assert huge not in rendered
+    # Clipped, never dropped — a source missing from the table is the quiet
+    # undercount every guard in this file is built against.
+    assert "192.0.2.99" in rendered
+    assert "198.51.100.7  " in rendered, "ordinary rows keep their exact value and padding"
+
+
 def test_member_count_limit_refuses_rather_than_truncating(monkeypatch):
     """An over-full archive is refused, never silently read down to the limit.
 
@@ -452,7 +413,7 @@ def test_member_count_limit_refuses_rather_than_truncating(monkeypatch):
     the same quiet undercount the NO REPORTS PARSED guard exists to stop, just
     one level down.
     """
-    monkeypatch.setattr(drs, "MAX_ARCHIVE_MEMBERS", 3)
+    monkeypatch.setattr(core, "MAX_ARCHIVE_MEMBERS", 3)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         for i in range(5):

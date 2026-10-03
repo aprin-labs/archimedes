@@ -224,6 +224,11 @@ output "ses_events_dlq_url" {
   value       = aws_sqs_queue.ses_events_dlq.id
 }
 
+output "dmarc_summary_task_definition_family" {
+  description = "ECS task definition family for the weekly DMARC summary (infra/dmarc_reports.tf) — the family aws_scheduler_schedule.dmarc_weekly_summary invokes every Monday at 13:00 UTC. `aws ecs run-task --task-definition <this>` to force one summary by hand (see docs/runbooks/dmarc-reports.md for the network configuration it needs); `aws logs tail /archimedes/app --log-stream-name-prefix dmarc-weekly-summary --since 7d` to read the last one. A run that exits non-zero mailed nothing."
+  value       = aws_ecs_task_definition.dmarc_weekly_summary.family
+}
+
 output "dmarc_reports_bucket" {
   description = "S3 bucket the SES receipt rule writes DMARC aggregate reports into (infra/dmarc_reports.tf, #1504). Feed it to the parser: `python scripts/dmarc_report_summary.py --bucket $(terraform output -raw dmarc_reports_bucket) --since-days 14`. An empty bucket means no reports have been collected, NOT that nothing is spoofing the domain — see docs/runbooks/dmarc-reports.md."
   value       = aws_s3_bucket.dmarc_reports.id
