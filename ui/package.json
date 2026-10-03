@@ -14,7 +14,7 @@
     "check:routes": "npm run check:orphans && npm run check:sitemap"
   },
   "dependencies": {
-    "@circle-fin/modular-wallets-core": "^1.0.15",
+    "@circle-fin/modular-wallets-core": "^1.0.16",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-force-graph-2d": "^1.29.1",
