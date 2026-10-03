@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { DELETION_RETAINED } from "../src/account-deletion.js";
 import { resolveRoute, pageToPath } from "../src/routes.js";
 
 // Guards for the /privacy and /terms policy pages.
@@ -31,6 +32,8 @@ const publicLayout = src("components/PublicLayout.jsx");
 const layout = src("components/Layout.jsx");
 const landing = src("components/Landing.jsx");
 const app = src("App.jsx");
+const consentBanner = src("components/ConsentBanner.jsx");
+const consentChoices = src("components/ConsentChoices.jsx");
 
 // The component body only: everything from the default export on. Each page's
 // header comment names stale claims in order to say they are gone, and some
@@ -424,7 +427,7 @@ test("the terms state the testnet and no-advice position", () => {
 test("the terms disclose the real generation charge without over-claiming the marketplace rail", () => {
 	assert.match(terms, /\$2\.00 in testnet USDC/, "the generation price must appear on the page");
 	// \s+ throughout: these read the raw JSX source, where prose wraps mid-phrase.
-	assert.match(terms, /settles\s+for real/i, "the paywall must be described as really settling");
+	assert.match(rendered(terms), /settles\s+for real/i, "the paywall must be described as really settling");
 	assert.doesNotMatch(
 		terms,
 		/settlement is\s+switched off in production/i,
@@ -434,7 +437,7 @@ test("the terms disclose the real generation charge without over-claiming the ma
 
 	// The other half: marketplace settlement really is off, and saying so is
 	// not optional once the page starts talking about payments that work.
-	assert.match(terms, /marketplace/i, "the marketplace rail must still be named");
+	assert.match(rendered(terms), /marketplace/i, "the marketplace rail must still be named");
 	assert.match(terms, /nothing settles there/i, "the marketplace rail must still be disclosed as dry");
 
 	// The price belongs where a reader looks for what things cost, not only in
@@ -665,7 +668,7 @@ test("the privacy policy states the second audit's infrastructure facts", () => 
 	// vault_deployed step cannot fire; the server-counted list names only the
 	// steps that can (wallet_gate_shown, generation_started,
 	// free_generation_used in generate_routes.py).
-	assert.doesNotMatch(visitors, /deploying a vault/, "vault_deployed cannot fire with the roadmap gate off");
+	assert.doesNotMatch(visitors, /deploying\s+a\s+vault/, "vault_deployed cannot fire with the roadmap gate off");
 	assert.match(
 		visitors,
 		/being asked\s+to connect a wallet, and starting a generation \(and whether it was a\s+free one\)/,
@@ -691,8 +694,8 @@ test("the privacy policy states the second audit's infrastructure facts", () => 
 	// absence is pinned only while the gate is still on the route, so removing
 	// the gate fails here and forces the disclosure back.
 	const chain = sectionBody(privacy, "What goes on a public blockchain");
-	assert.doesNotMatch(chain, /still accepts a vault-deployment request/, "the route is gated off since #1927");
-	assert.doesNotMatch(chain, /One exception:/, "no API exception to the blockchain section remains");
+	assert.doesNotMatch(chain, /still\s+accepts\s+a\s+vault-deployment\s+request/, "the route is gated off since #1927");
+	assert.doesNotMatch(chain, /One\s+exception:/, "no API exception to the blockchain section remains");
 	const vaultsRoutes = readFileSync(new URL("../../backend/archimedes/api/vaults_routes.py", import.meta.url), "utf8");
 	assert.match(
 		vaultsRoutes,
@@ -715,7 +718,7 @@ test("the privacy policy states the second audit's infrastructure facts", () => 
 // no longer describe chat rows it does not hold.
 test("the retention and deletion lists no longer name per-vault chat rows", () => {
 	const body = rendered(privacy);
-	assert.doesNotMatch(body, /per-vault chat/i, "#1926 deleted the chat rows; the page must not list them");
+	assert.doesNotMatch(body, /per-vault\s+chat/i, "#1926 deleted the chat rows; the page must not list them");
 	assert.doesNotMatch(body, /chat_messages/, "no chat table is described on the page");
 	const deletion = sectionBody(privacy, "How long we keep things, and how to get them deleted");
 	const untouched = deletion.match(/<strong>Not touched by account deletion:<\/strong>([\s\S]*?)<\/li>/);
@@ -725,22 +728,34 @@ test("the retention and deletion lists no longer name per-vault chat rows", () =
 });
 
 // The final pass, on the owner's commitments: what account deletion leaves is
-// erased on request, a copy is sent on request, both by hand after proof of
-// ownership. Pinned in both directions so the old "you can ask" wording does
+// erased or scrubbed on request, a copy is sent on request, both by hand after
+// proof of ownership. Pinned in both directions so the old "you can ask" wording does
 // not come back and the commitment cannot be quietly softened.
 test("the privacy policy commits to erasure and a copy on request", () => {
 	const deletion = sectionBody(privacy, "How long we keep things, and how to get them deleted");
-	assert.match(deletion, /On request, we will erase the rest and send you a copy\./, "the commitment must be stated");
 	assert.match(
 		deletion,
-		/we will erase your payment\s+receipts, credit ledger, free-generation record and your\s+wallet&rsquo;s entries in the wallet ledger/,
+		/On\s+request,\s+we\s+will\s+erase\s+or\s+scrub\s+what\s+account\s+deletion\s+leaves,\s+and\s+send\s+you\s+a\s+copy\./,
+		"the commitment must be stated",
+	);
+	assert.doesNotMatch(deletion, /erase\s+the\s+rest/, "the body narrows it: detached rows are scrubbed, not erased");
+	assert.match(
+		deletion,
+		/erase\s+your\s+payment\s+receipts,\s+credit\s+ledger,\s+free-generation\s+record,\s+the\s+reasoning\s+records\s+of\s+your\s+paper-trading\s+decisions\s+and\s+your\s+wallet&rsquo;s\s+entries\s+in\s+the\s+wallet\s+ledger/,
 		"what is erased on request",
 	);
 	assert.match(
 		deletion,
-		/remove your brief\s+text and wallet address from the records that were detached from you/,
+		/remove\s+your\s+brief\s+text,\s+any\s+strategy\s+name\s+you\s+typed,\s+and\s+your\s+wallet\s+address\s+from\s+the\s+records\s+that\s+were\s+detached\s+from\s+you/,
 		"what is scrubbed from detached records",
 	);
+	// Proof, and where the copy goes: a wallet signature must not stand in for
+	// the account, and a deleted account can only be found through a wallet.
+	assert.match(deletion, /by\s+answering\s+a\s+message\s+we\s+send\s+to\s+its\s+email\s+address/, "how the account is proven");
+	assert.match(deletion, /A\s+wallet\s+signature\s+covers\s+only\s+that\s+wallet&rsquo;s\s+records/, "a wallet proves only its own records");
+	assert.match(deletion, /we\s+never\s+ask\s+for\s+identity\s+documents/);
+	assert.match(deletion, /we\s+will\s+delete\s+your\s+account\s+if\s+it\s+still\s+exists/, "a live account is deleted first");
+	assert.match(deletion, /Write\s+before\s+you\s+delete\s+your\s+account\s+yourself/, "the order the request needs");
 	assert.match(deletion, /send you a copy of the data we hold about you/);
 	assert.match(deletion, /handled by hand/, "no self-service export exists, and the page must say so");
 	assert.match(deletion, /show that the\s+account or wallet is yours/, "proof of ownership before acting");
@@ -756,9 +771,9 @@ test("the privacy policy states no visitor-id link, past or present", () => {
 	const body = rendered(privacy);
 	assert.match(body, /Entries in the ledger do not include the\s+anonymous visitor id/);
 	assert.match(body, /We do not link the visitor id\s+to your account or your wallet\./);
-	assert.doesNotMatch(body, /summer 2026/, "the past exception was purged by #1926");
-	assert.doesNotMatch(body, /New entries do not include/, "no entries include it, not only new ones");
-	assert.doesNotMatch(body, /one past exception/);
+	assert.doesNotMatch(body, /summer\s+2026/, "the past exception was purged by #1926");
+	assert.doesNotMatch(body, /New\s+entries\s+do\s+not\s+include/, "no entries include it, not only new ones");
+	assert.doesNotMatch(body, /one\s+past\s+exception/);
 });
 
 // E3: the EC2 server's EBS snapshot was deleted on 2026-10-02 (0 EBS snapshots
@@ -769,4 +784,50 @@ test("the privacy policy names no snapshot that no longer exists", () => {
 	assert.doesNotMatch(rendered(terms), /snapshot/i);
 	const deletion = sectionBody(privacy, "How long we keep things, and how to get them deleted");
 	assert.match(deletion, /automated database backups for up to 7\s+days/, "the backup window stays disclosed");
+});
+
+// Audit round 1 (2026-10-03): disclosures the page left out, each pinned
+// whitespace-tolerant so a re-wrap cannot hide a removal.
+test("the privacy policy discloses what the first audit round found missing", () => {
+	// #1804: the SES feedback drain stamps auth_users.emailBouncedAt /
+	// emailBounceKind, and auth/auth.js bounceRefusal refuses on it.
+	assert.match(
+		sectionBody(privacy, "Emails we send"),
+		/Our\s+own\s+database\s+also\s+records\s+on\s+your\s+account\s+that\s+your\s+address\s+bounced/,
+		"the bounce/complaint stamp on the account row",
+	);
+	// nginx main_redacted logs "$log_http_referer".
+	assert.match(sectionBody(privacy, "IP addresses and logs"), /the\s+page\s+that\s+linked\s+to\s+it\s+\(the\s+referrer\)/);
+	// mkdocs-material 9.7.7 loads mermaid from unpkg on pages with diagrams.
+	assert.match(sectionBody(privacy, "Who else is in the path"), /loads\s+a\s+script\s+from\s+unpkg\.com/);
+	// ui/src/x402.js: the passkey path batches approve + depositFor(token, paymentKey, amount).
+	const chain = sectionBody(privacy, "What goes on a public blockchain");
+	assert.match(chain, /deposit\s+names\s+this\s+browser&rsquo;s\s+device\s+payment\s+key/);
+	assert.match(chain, /deploys\s+the\s+wallet&rsquo;s\s+smart-contract\s+account/);
+	// Paper decision traces live in Redis (redis_state.save_trace, no TTL) and
+	// the auth_users cascade does not reach them.
+	const deletion = sectionBody(privacy, "How long we keep things, and how to get them deleted");
+	const erased = deletion.match(/<strong>Erased:<\/strong>([\s\S]*?)<\/li>/);
+	assert.match(erased[1], /everything\s+recorded\s+under\s+them\s+in\s+our\s+database/, "erasure is scoped to the database");
+	const untouched = deletion.match(/<strong>Not touched by account deletion:<\/strong>([\s\S]*?)<\/li>/);
+	assert.match(untouched[1], /the\s+reasoning\s+record\s+of\s+each\s+paper-trading\s+decision,\s+which\s+we\s+keep\s+in\s+our\s+cache/);
+	assert.match(deletion, /They\s+still\s+contain\s+your\s+brief\s+text,\s+any\s+strategy\s+name\s+you\s+typed/);
+	// privacy@ mail, replies and any copy sent stay in a personal Gmail inbox.
+	assert.match(deletion, /messages\s+you\s+send\s+to\s+our\s+privacy\s+address\s+and\s+our\s+replies/);
+	// The pre-deletion dialog lists the same not-touched database records.
+	const retained = DELETION_RETAINED.map((row) => row.table);
+	for (const table of ["payment_receipts", "generation_credits", "free_generation_grants", "identity_events"]) {
+		assert.ok(retained.includes(table), `Account Settings must list ${table} as not removed, as the Privacy page does`);
+	}
+});
+
+// The banner and the consent status used to say nothing optional is written
+// and that switching off deletes it, while archimedes_vid (an analytics entry)
+// is set by the server whatever the choice and the purge sweeps only web storage.
+test("the consent banner and status do not contradict the server-set visitor cookie", () => {
+	assert.doesNotMatch(consentBanner, /nothing\s+optional\s+is\s+written/);
+	assert.match(consentBanner, /our\s+server\s+still\s+sets\s+its\s+anonymous\s+visitor\s+cookie\s+\(archimedes_vid\)/);
+	assert.doesNotMatch(consentChoices, /has\s+been\s+deleted\s+from\s+this\s+browser\."/);
+	assert.match(consentChoices, /The\s+server's\s+archimedes_vid\s+cookie\s+stays/);
+	assert.match(consentChoices, /the\s+server\s+sets\s+archimedes_vid\s+either\s+way/);
 });

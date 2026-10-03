@@ -51,7 +51,9 @@ export default function ConsentBanner() {
 						wallet proof, and the checks that keep them correct. {optionalCount}{" "}
 						more are optional: preferences, progress markers, and one anonymous
 						drop-off counter. Until you choose, the optional ones are{" "}
-						<strong>off</strong> and nothing optional is written.
+						<strong>off</strong> and your browser writes nothing optional; our
+						server still sets its anonymous visitor cookie (archimedes_vid)
+						either way.
 					</p>
 					<p className="consent-banner__note">
 						No third-party trackers, no advertising, no consent SDK. Every key

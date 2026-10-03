@@ -91,10 +91,10 @@ export default function ConsentChoices({ onSaved }) {
 				</button>
 				<p className="consent-choices__status" role="status">
 					{savedAt
-						? "Saved. Anything you switched off has been deleted from this browser."
+						? "Saved. Anything you switched off has been deleted from this browser's storage. The server's archimedes_vid cookie stays; this page cannot delete it."
 						: consent
 							? `Current choice: functional ${consent.functional ? "on" : "off"}, analytics ${consent.analytics ? "on" : "off"}.`
-							: "No choice recorded yet — everything optional is currently off."}
+							: "No choice recorded yet — everything optional in your browser is currently off (the server sets archimedes_vid either way)."}
 				</p>
 			</div>
 		</div>

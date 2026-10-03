@@ -47,7 +47,7 @@ export const DELETION_DETACHED = [
   { table: 'vault_metadata', label: 'descriptions of vaults you created' },
 ]
 
-// Rows that are NOT reached at all: these carry a `user_id` string with no
+// Rows that are NOT reached at all: these carry a `user_id` or wallet with no
 // foreign key to auth_users, so nothing in the database removes them when
 // the account row goes. Naming them is the honest half of this list —
 // omitting them would make the two lists above read as exhaustive when they
@@ -57,6 +57,8 @@ export const DELETION_DETACHED = [
 export const DELETION_RETAINED = [
   { table: 'payment_receipts', label: 'receipts for generations you paid for' },
   { table: 'generation_credits', label: 'the generation-credit ledger those payments wrote' },
+  { table: 'free_generation_grants', label: 'the record of the free generations your account used' },
+  { table: 'identity_events', label: 'the wallet ledger entries for any wallet you linked, which are kept by wallet address' },
 ]
 
 // The typed confirmation. A `window.confirm` alone is one keystroke away

@@ -22,15 +22,33 @@ import PolicyBanner from "./PolicyBanner";
 //     dropIdToken) and old ones were cleared by alembic 7d2f9a4c1e60.
 //   - The deletion lists mirror ui/src/account-deletion.js, which
 //     ui/test/account-deletion.test.js pins against the models' ON DELETE
-//     actions. payment_receipts, generation_credits, free_generation_grants
+//     actions; its DELETION_RETAINED (what Account Settings shows before a
+//     deletion) names the same four not-touched database records as this
+//     page. payment_receipts, generation_credits, free_generation_grants
 //     and the wallet ledger (wallet_identities / identity_events) carry no FK
 //     to auth_users, so account deletion does not reach them. Detached rows
-//     keep owner_wallet and the brief text.
-//   - "On request, we will erase the rest and send you a copy" is done BY
-//     HAND by the operator, after the requester shows the account or wallet
-//     is theirs. What to change, checked against the models and migrations
-//     (no constraint blocks any of it; the only trigger in the schema is the
-//     BEFORE DELETE on auth_users, migration 85ca5310b7a1):
+//     keep owner_wallet, the brief text and any strategy name the user typed.
+//   - Account deletion does not reach the paper-trading reasoning records in
+//     Redis either, and Account Settings does not list them (they are not a
+//     table). advance_deployment -> _publish_decision_traces
+//     (services/paper_trading.py:569) -> publish_paper_trace -> _save
+//     (services/paper_trace.py:529) -> AgentStateStore.save_trace
+//     (services/redis_state.py:536): a plain SET of archimedes:trace:<hash>
+//     with no TTL, holding owner_user_id and owner_wallet, plus a ZADD to
+//     archimedes:trace:index. The cascade removes only the Postgres index
+//     (paper_decision_traces: trace_id/trace_hash). Follow-up: purge on delete.
+//   - "On request, we will erase or scrub what account deletion leaves, and
+//     send you a copy" is done BY HAND by the operator. Proof first: for the
+//     account, the requester answers a message sent to its email address
+//     (and the copy goes only there); for a wallet, they sign a message with
+//     it, which covers only that wallet's records. A passkey wallet is a
+//     smart account: verify its signature with the ERC-1271/6492 check in
+//     api/_erc6492.py, not plain ecrecover. Delete the account first if it
+//     still exists (deleting a live account's free_generation_grants would
+//     hand it its free runs again). What to change, checked against the
+//     models and migrations (no constraint blocks any of it; the only trigger
+//     in the schema is the BEFORE DELETE on auth_users, migration
+//     85ca5310b7a1):
 //       Delete the rows (nothing has an FK into these tables):
 //         payment_receipts, generation_credits, free_generation_grants
 //           WHERE user_id = the account id (a deleted account's id can be
@@ -39,22 +57,41 @@ import PolicyBanner from "./PolicyBanner";
 //         strategy_generators WHERE wallet_address = the address
 //           (wallet_address is NOT NULL, so the row goes rather than the
 //           value).
-//       Clear brief text and the wallet on detached rows:
+//       Redis: for every archimedes:trace:<hash> whose JSON owner_user_id is
+//         the account id or owner_wallet is the address: DEL
+//         archimedes:trace:<hash> and archimedes:trace:id:<id>, ZREM
+//         archimedes:trace:index <hash>. (After deletion the
+//         paper_decision_traces rows that index them are gone, so scan.)
+//       Find the detached rows. Those made with a wallet linked carry it in
+//       owner_wallet. Those made before any wallet was linked have neither
+//       owner_wallet nor owner_user_id; find them by job id: job_id from the
+//       three FK-less tables -> strategy_proposals.generation_id, and
+//       generation_costs(job_id, strategy_id) -> strategy_store /
+//       strategy_passports.id.
+//       Clear brief text, typed strategy name and the wallet on detached rows:
 //         strategy_store.brief_intent (nullable) -> NULL;
+//         strategy_store.strategy_name (NOT NULL, default '') -> '' (the
+//           winner carries the name typed into Generate's "Strategy name"
+//           field, agents/generation_pipeline.py _resolve_name);
 //         strategy_store.owner_wallet (nullable, FK) -> NULL;
 //         strategy_proposals.payload is NOT NULL JSON text holding the brief
-//           under "intent": rewrite the JSON with "intent" set to "" (no code
-//           looks that key up; the proposals API returns the JSON as stored);
+//           under "intent" and the name under "strategy_spec"."strategy_name"
+//           and "extra"."strategy_name" (agents/generation_pipeline.py:1732,
+//           :1749): rewrite the JSON with those set to "" (no code looks
+//           "intent" up; the proposals API returns the JSON as stored);
 //         strategy_proposals.owner_wallet (nullable, no FK) -> NULL;
 //         strategy_passports.owner_wallet and curator_wallet (nullable, FK)
-//           -> NULL (no brief column on this table);
+//           -> NULL (no brief or name column on this table);
 //         vault_metadata.creator_address is NOT NULL and FKs to
 //           wallet_identities, so it cannot be NULL or "": overwrite it with
 //           'system', the sentinel identity migration 07e9c1489199 created
 //           for exactly this (no brief column on this table).
 //       Then delete the wallet_identities row. Every FK into it must be
-//       cleared first: the columns above, plus linked_wallets.address and
-//       user_profiles.wallet_address (both erased with the account),
+//       cleared first: the columns above, plus linked_wallets.address (goes
+//       with the account) and user_profiles.wallet_address (DELETE any
+//       user_profiles row WHERE wallet_address = the address: an unclaimed
+//       one, owner_user_id NULL, survives account deletion when the account
+//       never linked that wallet, and it holds an encrypted contact email),
 //       paper_deployments.owner_wallet, marketplace_agents.creator_wallet /
 //       subscriber_wallet and controlled_wallets.controller_wallet (all
 //       nullable), and chat_messages.wallet_address (the table is empty).
@@ -88,6 +125,18 @@ import PolicyBanner from "./PolicyBanner";
 //   - privacy@ is an SES receipt rule -> SNS -> one email subscription, a
 //     personal Gmail inbox (infra/ses_inbound.tf). SNS actions bounce mail
 //     over 150 KB.
+//   - Added by the 2026-10-03 audit round: the bounce/complaint record is
+//     auth_users.emailBouncedAt / emailBounceKind, written only by the
+//     scripts/ses_events.py drain (infra/ses_events.tf:440, every 15 minutes
+//     by default) and read by auth/auth.js bounceRefusal (:270; signup at
+//     :754, the signed-in resend at :786). Whether the ses_events stack is
+//     applied live was NOT verified in that round. The referrer is
+//     "$log_http_referer" in nginx's main_redacted format
+//     (nginx/nginx.conf:125). The docs site's unpkg request: docs pins
+//     mkdocs-material 9.7.7 (docs/requirements.txt:15), whose bundle loads
+//     unpkg.com/mermaid@11 for the mermaid fence mkdocs.yml:142-146 enables.
+//     The passkey deposit: ui/src/x402.js:187-208, one user operation of
+//     approve + depositFor(token, device payment key, amount).
 //   - Backups: Aurora's automated retention is 7 days (infra/aurora.tf:94).
 //     The manual Aurora snapshots were deleted on 2026-10-01 and the EC2
 //     server's EBS snapshot on 2026-10-02; verified 2026-10-03: 0 manual
@@ -106,8 +155,10 @@ import PolicyBanner from "./PolicyBanner";
 //     wallet) depend on require_roadmap_surfaces
 //     (api/vaults_routes.py:362, api/marketplace_routes.py:98 and :330),
 //     which answers 404 before auth, body-schema validation or the handler
-//     runs unless FEATURE_ROADMAP_SURFACES is exactly "true"
-//     (backend/archimedes/feature_flags.py:74, :95). It is off by default and
+//     runs unless FEATURE_ROADMAP_SURFACES is "true" (any case, surrounding
+//     space ignored; backend/archimedes/feature_flags.py:74, :95). Only
+//     middleware and FastAPI's JSON body parse run first (a malformed JSON
+//     body gets 422/400, :84-92). It is off by default and
 //     unset in every container of the live task definition
 //     (archimedes-backend:285, checked 2026-10-03). If it is ever switched
 //     on, the blockchain section must say what a vault deployment publishes
@@ -216,7 +267,12 @@ export default function Privacy() {
 					If an email to you bounces permanently or is reported as spam, Amazon
 					SES puts your address on a do-not-send list for our account. That list
 					is kept by SES, not in our database, so deleting your account does not
-					remove your address from it; it stays until we remove it by hand.
+					remove your address from it; it stays until we remove it by hand. Our
+					own database also records on your account that your address bounced
+					or was reported as spam, and when, so the site can tell you why our
+					mail is not arriving: while that record stands, signing up with that
+					address, or asking for a new verification email while signed in, is
+					refused with that reason. Deleting your account erases that record.
 				</p>
 			</section>
 
@@ -485,8 +541,9 @@ export default function Privacy() {
 					</li>
 					<li>
 						Our web server logs every request: your IP address, browser
-						user-agent, the address requested and the chain of forwarding
-						addresses. Sign-in tokens are removed from that access log, though
+						user-agent, the address requested, the page that linked to it (the
+						referrer), and the chain of forwarding addresses. Sign-in tokens
+						are removed from that access log, though
 						not from the error entry written when a request fails inside our
 						servers. Our application keeps a similar log of API requests, with
 						your IP address and the address requested; some of those addresses
@@ -581,7 +638,10 @@ export default function Privacy() {
 				<p>
 					Through the site, the on-chain records you create are your
 					wallet&rsquo;s transactions funding Circle&rsquo;s Gateway: a token
-					approval and a deposit. Circle then settles payments made from that
+					approval and a deposit. With a Circle passkey wallet the two go as one
+					operation whose deposit names this browser&rsquo;s device payment key,
+					and the first one also deploys the wallet&rsquo;s smart-contract
+					account. Circle then settles payments made from that
 					balance on-chain, on its own schedule. Paper trading is simulated and
 					writes nothing to a chain. The site does not currently offer vault
 					deployment, on-chain publication of reasoning traces or marketplace
@@ -647,9 +707,10 @@ export default function Privacy() {
 					<li>
 						<strong>Our documentation site,</strong> docs.archimedes-arc.com,
 						linked from the header and footer of our public pages. It
-						loads its typefaces from Google Fonts and asks GitHub&rsquo;s API for
-						our repository&rsquo;s details from your browser, so Google and GitHub
-						see your IP address when you open it.
+						loads its typefaces from Google Fonts, asks GitHub&rsquo;s API for our
+						repository&rsquo;s details and, on pages with diagrams, loads a
+						script from unpkg.com, all from your browser, so Google, GitHub and
+						unpkg see your IP address when you open it.
 					</li>
 				</ul>
 				<p>
@@ -710,8 +771,10 @@ export default function Privacy() {
 					Everything else has no expiry date today: your account and profile,
 					your strategies and every stored generation candidate, your
 					paper-trading records, your payment receipts and credits, your
-					free-generation record, the wallet ledger, the email log, API keys,
-					wallet-link challenges, and running visitor totals.
+					free-generation record, the wallet ledger, the email log, messages you
+					send to our privacy address and our replies, including any copy of
+					your data we send (they stay in the operator&rsquo;s Gmail inbox), API
+					keys, wallet-link challenges, and running visitor totals.
 				</p>
 				<p>
 					<strong>You can delete your account yourself</strong> in Account
@@ -727,35 +790,50 @@ export default function Privacy() {
 						methods (your password and any linked Google or GitHub), your wallet
 						links and wallet-link challenges, your profile row
 						(which holds your encrypted contact email), your paper-trading
-						deployments with everything recorded under them, and the log of
-						emails we sent you.
+						deployments with everything recorded under them in our database, and
+						the log of emails we sent you.
 					</li>
 					<li>
 						<strong>Detached from you rather than destroyed:</strong> your
 						strategies, their rigor passports, the generation records behind
 						them, and descriptions of vaults you created stay in our database
 						with your account id removed, because other accounts can reference
-						them. They still contain your brief text and, if a wallet was linked
-						when they were made, that wallet&rsquo;s address.
+						them. They still contain your brief text, any strategy name you typed
+						and, if a wallet was linked when they were made, that wallet&rsquo;s
+						address.
 					</li>
 					<li>
 						<strong>Not touched by account deletion:</strong> your payment
 						receipts, your credit ledger, your free-generation record and the
 						wallet ledger, because none of them has a database link to your
-						account; and nothing on a blockchain.
+						account; the reasoning record of each paper-trading decision, which
+						we keep in our cache with your account id and wallet address, if
+						any; and nothing on a blockchain.
 					</li>
 				</ul>
 				<p>
-					<strong>On request, we will erase the rest and send you a copy.</strong>{" "}
-					Write to the contact address below and we will erase your payment
-					receipts, credit ledger, free-generation record and your
-					wallet&rsquo;s entries in the wallet ledger, and remove your brief
-					text and wallet address from the records that were detached from you.
-					We will also send you a copy of the data we hold about you. There is no
+					<strong>
+						On request, we will erase or scrub what account deletion leaves, and
+						send you a copy.
+					</strong>{" "}
+					Write to the contact address below and we will delete your account if
+					it still exists, erase your payment receipts, credit ledger,
+					free-generation record, the reasoning records of your paper-trading
+					decisions and your wallet&rsquo;s entries in the wallet ledger, and
+					remove your brief text, any strategy name you typed, and your wallet
+					address from the records that were detached from you. We will also
+					send you a copy of the data we hold about you. There is no
 					self-service export yet; these requests are handled by hand, and
 					before we erase or send anything we will ask you to show that the
-					account or wallet is yours. Write the same way if you cannot sign in
-					to delete your account yourself.
+					account or wallet is yours: for the account, by answering a message
+					we send to its email address; for a wallet, by signing a message with
+					it. A wallet signature covers only that wallet&rsquo;s records, a copy
+					of account records goes only to the account&rsquo;s email address, and
+					we never ask for identity documents. Write before you delete your
+					account yourself, or ask us to delete it as part of the request: once
+					it is deleted, we can find what it left only through a wallet you
+					linked or paid with. Write the same way if you cannot sign in to
+					delete your account yourself.
 				</p>
 				<p>Limits, stated up front:</p>
 				<ul>
