@@ -173,7 +173,7 @@ layer up, at every call site:
   caller can't forget it — the manual withdraw endpoint (M1') did exactly that,
   bypassing PAYMENTS_DRY_RUN on a real on-chain path" (settlement.py:48-51).
 - `/api/marketplace/*` manual-withdraw route: also fails soft when dry-run is on
-  (`api/marketplace_routes.py`:724-729, returning
+  (`api/marketplace_routes.py`:750-755, returning
   `{"status": "dry_run_noop", ...}` rather than attempting a real settlement).
 
 **Practical implication for anyone testing this flow:** with `PAYMENTS_DRY_RUN`
@@ -222,4 +222,6 @@ sed -n '85,155p' backend/archimedes/marketplace/payments.py
 - The public `/api/marketplace/*` HTTP routes (publish/subscribe/withdraw) in
   `api/marketplace_routes.py` — those are the human-facing onboarding surface
   around this engine, not the charge protocol itself; skim them separately if
-  you need the subscribe/publish request shapes.
+  you need the subscribe/publish request shapes. `POST /publish` and `POST
+  /subscribe` answer `404` while the server's `FEATURE_ROADMAP_SURFACES` flag
+  is off, its default (#1432): marketplace is roadmap, not shipped.

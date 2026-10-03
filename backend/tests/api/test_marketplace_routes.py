@@ -36,6 +36,15 @@ def _setup_db(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _roadmap_surfaces_on(monkeypatch):
+    """POST /publish and POST /subscribe 404 while FEATURE_ROADMAP_SURFACES is
+    off (#1432), the default everywhere. Most tests here pin how those routes
+    behave once the flag is on, so they run with it on; the flag-off tests at
+    the bottom of this file turn it off themselves."""
+    monkeypatch.setenv("FEATURE_ROADMAP_SURFACES", "true")
+
+
+@pytest.fixture(autouse=True)
 def _treasury_wallet(monkeypatch):
     """publish requires a server-side ARCHIMEDES_TREASURY_WALLET (the platform
     revenue address); set a test value so publish does not 503."""
@@ -708,3 +717,175 @@ def test_unsubscribe_ledgers_marketplace_unsubscribed(client, app):
         assert len(matching) == 1
         assert matching[0].meta["strategy_id"] == "refund_strat"
         assert matching[0].meta["refund_tx"] == "0xrefundtx"
+
+
+# ---------------------------------------------------------------------------
+# Roadmap gate (#1432): publish and subscribe are not offered
+# ---------------------------------------------------------------------------
+#
+# Both routes have the backend signer deploy a vault owned by the caller's
+# wallet (publish when no vault_address is given, subscribe always), so both
+# sit behind the same FEATURE_ROADMAP_SURFACES gate as POST /api/vaults/create.
+# While it is off, nothing in either handler may run: no Circle wallet, no
+# vault, no pool, no fee or balance read, no spend-cap read, no row, no
+# identity event. The exact set of gated routes is pinned in
+# tests/test_vault_create_roadmap_gate.py.
+
+GATE_404 = {"detail": "Not offered: roadmap, not shipped"}
+FLAG_OFF_VALUES = [None, "", "false", "0", "1", "yes", "on", "ture"]
+
+
+def _flag(monkeypatch, value: str | None) -> None:
+    if value is None:
+        monkeypatch.delenv("FEATURE_ROADMAP_SURFACES", raising=False)
+    else:
+        monkeypatch.setenv("FEATURE_ROADMAP_SURFACES", value)
+
+
+def _marketplace_rows(role: str) -> int:
+    from archimedes.db import get_session
+    from archimedes.models.marketplace import MarketplaceAgent
+
+    with get_session() as session:
+        return session.query(MarketplaceAgent).filter(MarketplaceAgent.role == role).count()
+
+
+def _reset_market_mocks(market) -> None:
+    for mock in (
+        market.executor.create_vault,
+        market.executor.get_vault_fee_bps,
+        market._usdc_balance_of,
+        market.signer.execute_contract,
+        market.start_publisher,
+        market.add_subscriber,
+    ):
+        mock.reset_mock()
+
+
+def _assert_market_untouched(market) -> None:
+    market.executor.create_vault.assert_not_called()  # no vault deployed, no gas spent
+    market.executor.get_vault_fee_bps.assert_not_called()
+    market._usdc_balance_of.assert_not_called()
+    market.signer.execute_contract.assert_not_called()  # no createPool
+    market.start_publisher.assert_not_called()
+    market.add_subscriber.assert_not_called()
+
+
+@pytest.mark.parametrize("value", FLAG_OFF_VALUES)
+def test_flag_off_publish_refused_before_anything_runs(client, app, monkeypatch, value):
+    """No vault_address: with the flag on this body deploys a vault for the caller."""
+    _flag(monkeypatch, value)
+    with (
+        patch(
+            "archimedes.marketplace.wallet_provisioner.provision_publisher_wallet",
+            new=AsyncMock(return_value=("w", "0x" + "09" * 20)),
+        ) as m_provision,
+        patch("archimedes.api.marketplace_routes.wallet_can_publish", return_value=True) as m_can_publish,
+        patch("archimedes.api.marketplace_routes.register_controlled_wallet") as m_register,
+        patch("archimedes.api.marketplace_routes.emit_identity_event") as m_event,
+    ):
+        resp = client.post("/api/marketplace/publish", json={"strategy_id": "test_strat"})
+
+    assert resp.status_code == 404, resp.text
+    assert resp.json() == GATE_404
+    _assert_market_untouched(app.state.market)
+    m_provision.assert_not_awaited()
+    m_can_publish.assert_not_called()
+    m_register.assert_not_called()
+    m_event.assert_not_called()
+    assert _marketplace_rows("publisher") == 0
+
+
+@pytest.mark.parametrize("value", FLAG_OFF_VALUES)
+def test_flag_off_subscribe_refused_before_anything_runs(client, app, monkeypatch, value):
+    """A running publisher exists (published while the flag was on), so with the
+    flag on this subscribe would provision a Circle wallet and deploy a vault."""
+    pub = client.post("/api/marketplace/publish", json={"strategy_id": "test_strat", "vault_address": _vaddr("b1")})
+    assert pub.status_code == 200, pub.text
+    _reset_market_mocks(app.state.market)
+
+    _flag(monkeypatch, value)
+    with (
+        patch(
+            "archimedes.marketplace.wallet_provisioner.provision_subscriber_wallet",
+            new=AsyncMock(return_value=("w", "0x" + "0a" * 20)),
+        ) as m_provision,
+        patch("archimedes.api.marketplace_routes.spend_cap.is_over_cap", new=AsyncMock(return_value=False)) as m_cap,
+        patch("archimedes.api.marketplace_routes.register_controlled_wallet") as m_register,
+        patch("archimedes.api.marketplace_routes.emit_identity_event") as m_event,
+    ):
+        resp = client.post(
+            "/api/marketplace/subscribe",
+            json={"strategy_id": "test_strat", "sub_id": "0x" + "b2" * 32, "ephemeral_wallet": "0xeph"},
+        )
+
+    assert resp.status_code == 404, resp.text
+    assert resp.json() == GATE_404
+    _assert_market_untouched(app.state.market)
+    m_provision.assert_not_awaited()
+    m_cap.assert_not_awaited()
+    m_register.assert_not_called()
+    m_event.assert_not_called()
+    assert _marketplace_rows("subscriber") == 0
+
+
+@pytest.mark.parametrize("path", ["/api/marketplace/publish", "/api/marketplace/subscribe"])
+def test_flag_off_answers_404_before_auth(client, app, monkeypatch, path):
+    """No session: still 404, not 401, so the refusal does not tell an anonymous
+    caller what it would need. With the flag on the same request is a 401."""
+    app.dependency_overrides.pop(require_verified_wallet, None)
+    body = {"strategy_id": "test_strat", "sub_id": "0x" + "b3" * 32}
+
+    _flag(monkeypatch, None)
+    off = client.post(path, json=body)
+    assert off.status_code == 404, off.text
+    assert off.json() == GATE_404
+
+    _flag(monkeypatch, "true")
+    on = client.post(path, json=body)
+    assert on.status_code == 401, on.text
+
+
+@pytest.mark.parametrize("path", ["/api/marketplace/publish", "/api/marketplace/subscribe"])
+def test_flag_off_answers_404_before_body_schema_validation(client, monkeypatch, path):
+    """A JSON array is valid JSON but not the ``dict`` both handlers declare.
+    With the flag on that is FastAPI's 422; with it off, the gate answers first."""
+    _flag(monkeypatch, "true")
+    on = client.post(path, json=["not", "an", "object"])
+    assert on.status_code == 422, on.text
+
+    _flag(monkeypatch, None)
+    off = client.post(path, json=["not", "an", "object"])
+    assert off.status_code == 404, off.text
+    assert off.json() == GATE_404
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("DELETE", "/api/marketplace/publish/{sid}"),
+        ("DELETE", "/api/marketplace/subscribe/{sid}"),
+        ("POST", "/api/marketplace/publish/{sid}/withdraw"),
+    ],
+)
+def test_flag_off_leaves_the_exit_routes_open(client, app, monkeypatch, method, path):
+    """Stop-publish, unsubscribe and withdraw are how an existing publisher or
+    subscriber gets out, or gets money back (unsubscribe refunds the prepaid-fee
+    balance; withdraw pays out publisher earnings, a no-op under
+    PAYMENTS_DRY_RUN). None of them deploys a vault, so the gate leaves them
+    alone: flag off, they still answer."""
+    pub = client.post("/api/marketplace/publish", json={"strategy_id": "refund_strat", "vault_address": _vaddr("b4")})
+    assert pub.status_code == 200, pub.text
+    with patch(
+        "archimedes.marketplace.wallet_provisioner.provision_subscriber_wallet",
+        new=AsyncMock(return_value=("w-exit", "0x" + "0b" * 20)),
+    ):
+        sub = client.post(
+            "/api/marketplace/subscribe",
+            json={"strategy_id": "refund_strat", "sub_id": "0x" + "b5" * 32, "ephemeral_wallet": "0xeph"},
+        )
+    assert sub.status_code == 200, sub.text
+
+    _flag(monkeypatch, None)
+    resp = client.request(method, path.format(sid="refund_strat"))
+    assert resp.status_code == 200, resp.text

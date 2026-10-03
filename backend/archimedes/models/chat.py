@@ -10,11 +10,12 @@ and accumulated the shared declarative ``Base`` plus ``VaultMetadata``. Today:
   - ``ChatMessage`` — **no live reader or writer.** Per-vault chat (its service,
     its routes, and its UI panel) was deleted on 2026-08-31; the owner's call
     was that it does not belong in the product right now and a future version
-    would be rebuilt on the strategy execution engine. The mapping is retained
-    deliberately so ``init_db()`` keeps declaring the table and the existing
-    ``chat_messages`` rows in prod stay readable and un-orphaned. Dropping the
-    table is a migration decision, not a code cleanup — do that on purpose or
-    not at all.
+    would be rebuilt on the strategy execution engine. The rows themselves
+    are deleted by alembic revision ``5cdd4f098a74`` (#1432); the table and
+    this mapping remain. Dropping the table is a migration decision, not a
+    code cleanup: do it on purpose, in the same change that removes this
+    mapping and ``init_db()``'s ``ALTER TABLE chat_messages`` patch, or not at
+    all.
 """
 
 from __future__ import annotations
@@ -104,8 +105,8 @@ class ChatMessage(Base):
     # persona's agent wallet, actor_class='agent') had to be a known identity.
     # The writer that upheld it — ChatService.post_message() / post_ai_message()
     # calling ensure_wallet_identity() before every insert — was deleted with
-    # the chat surface on 2026-08-31. The constraint still guards the historical
-    # rows; nothing writes new ones.
+    # the chat surface on 2026-08-31. Nothing writes new rows, and revision
+    # 5cdd4f098a74 (#1432) deletes the historical ones.
     wallet_address: Mapped[str] = mapped_column(
         String(42), ForeignKey("wallet_identities.wallet_address"), nullable=False
     )

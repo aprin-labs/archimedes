@@ -7,8 +7,8 @@ code and the wrong one for a liveness path: an awaitable parked in something
 uncancellable does not stop when asked, so ``wait_for`` waits with it and the
 caller's "timeout" bounds nothing at all.
 
-That is not hypothetical for this repo's chain path. ``web3`` 7.16 routes
-EVERY async JSON-RPC request through
+That is not hypothetical for this repo's chain path. ``web3`` (7.16 and 8.0
+alike) routes EVERY async JSON-RPC request through
 ``HTTPSessionManager.async_cache_and_return_session``, which opens with::
 
     async with async_lock(self.session_pool, self._lock):
