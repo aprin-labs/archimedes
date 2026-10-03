@@ -182,7 +182,7 @@ slowapi>=0.1.10
 # Paper ingestion
 arxiv>=4.0.1
 # Floor raised to 6.13.3 to close 8 CVEs incl GHSA-jm82-fx9c-mx94 (CVE bump 2026-06-25).
-pypdf>=6.16.2
+pypdf>=6.19.0
 
 # AWS / S3
 boto3>=1.43.92
