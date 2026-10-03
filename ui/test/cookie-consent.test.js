@@ -211,7 +211,12 @@ test("every key the issue enumerated is in the map, with its category", () => {
 // 3591cd79 plus the live stack:
 //   - archimedes_vid said SIWE verify links it to the wallet in identity_events.
 //     That route is test-only and /api/auth/ goes to Better Auth, so no live
-//     path links the id to an account or wallet.
+//     path links the id to an account or wallet. The final pass (#1926 ran in
+//     prod and nulled the 20 SIWE-window rows) also dropped the "one past
+//     exception, from summer 2026" pointer, which the Privacy page no longer
+//     carries, and the funnel steps that cannot fire live: "connecting a
+//     wallet" is recorded only by the test-only SIWE router, and "deploying"
+//     only past the #1927 roadmap gate (FEATURE_ROADMAP_SURFACES, off).
 //   - archimedes_session was listed as a live necessary cookie. Nothing live
 //     sets it; the guard below also pins the TESTING-only mount, so mounting
 //     the SIWE router again fails here and forces the entry to be revisited.
@@ -220,7 +225,11 @@ test("every key the issue enumerated is in the map, with its category", () => {
 test("the inventory agrees with the privacy page on the cookies the audit caught", () => {
 	const vid = lookupEntry("archimedes_vid");
 	assert.doesNotMatch(vid.reveals, /identity_events|SIWE verify/, "the live site does not link the vid to a wallet");
-	assert.match(vid.reveals, /never links it to an account or wallet/);
+	assert.match(vid.reveals, /Nothing on the live site stores it with your account or your wallet/);
+	assert.doesNotMatch(vid.reveals, /past exception|summer 2026/, "the Privacy page describes no past exception now");
+	assert.match(vid.reveals, /marker that expires 180 days after it is written/, "the #1908 first-seen marker");
+	assert.doesNotMatch(vid.purpose, /deploying|connecting a wallet/, "neither step can be recorded on the live site");
+	assert.match(vid.purpose, /are asked to connect a wallet/, "wallet_gate_shown is the live wallet step");
 	assert.match(vid.onReject, /first API response/, "the HTML response sets no cookie");
 
 	const siwe = lookupEntry("archimedes_session");

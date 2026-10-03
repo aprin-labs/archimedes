@@ -32,9 +32,12 @@ import PolicyBanner from "./PolicyBanner";
 //     with anchoring off (PAPER_TRACE_ANCHOR unset). The live agent runner
 //     takes AGENT_DRY_RUN from SSM and logs "DRY RUN" lines, so it signs
 //     nothing. Vault deployment is behind ROADMAP_SURFACES_ENABLED in the UI
-//     (CreateVaultModal mounts only under it), but POST /api/vaults/create is
-//     still mounted for an account with a linked wallet; Privacy.jsx discloses
-//     that, and this page only claims what the SITE offers. On-chain trace
+//     (CreateVaultModal mounts only under it) and, since #1927, behind the
+//     server's FEATURE_ROADMAP_SURFACES too: POST /api/vaults/create,
+//     /api/marketplace/publish and /api/marketplace/subscribe answer 404
+//     unless it is "true" (backend/archimedes/feature_flags.py:95), and it is
+//     unset in the live task definition (archimedes-backend:285, checked
+//     2026-10-03). Nothing on this page depends on that route. On-chain trace
 //     publishing has no UI at all: POST /api/traces/publish needs the internal
 //     agent key, paper anchoring is off, and the house agent runs with
 //     AGENT_DRY_RUN. IPFS pinning never ran in production

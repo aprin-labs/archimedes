@@ -116,11 +116,11 @@ export const STORAGE_INVENTORY = [
 		category: ANALYTICS,
 		source: "backend/archimedes/api/funnel_middleware.py",
 		purpose:
-			"Anonymous funnel id: 16 random bytes, 180-day max-age, HttpOnly. Exists so drop-off between landing, generating, connecting a wallet and deploying can be counted per browser instead of per request.",
+			"Anonymous funnel id: 16 random bytes, 180-day max-age, HttpOnly. Exists so the server can count per browser, instead of per request, how many visitors land on the site, start a generation (and whether it was a free one) and are asked to connect a wallet.",
 		reveals:
-			"A random opaque token — no name, email or address in the value. The live site never links it to an account or wallet; the Privacy page describes the one past exception, from summer 2026.",
+			"A random opaque token — no name, email or address in the value. When your browser reports a landing, the server keeps the id in a marker that expires 180 days after it is written, so you are counted once. Nothing on the live site stores it with your account or your wallet.",
 		onReject:
-			"The cookie itself is set by the server on the first API response and this page cannot delete it. What rejecting DOES stop is the browser-side reporting: the client stops sending funnel events (App.jsx) and stops writing the archimedes_landed marker.",
+			"The cookie itself is set by the server on the first API response and this page cannot delete it. What rejecting DOES stop is the browser-side reporting: the client does not send its landing report (App.jsx) and does not write the archimedes_landed marker. The server still counts the steps it sees itself, starting a generation and being asked to connect a wallet, whatever you choose.",
 	},
 
 	// ── localStorage ────────────────────────────────────────────────────

@@ -26,34 +26,99 @@ import PolicyBanner from "./PolicyBanner";
 //     and the wallet ledger (wallet_identities / identity_events) carry no FK
 //     to auth_users, so account deletion does not reach them. Detached rows
 //     keep owner_wallet and the brief text.
+//   - "On request, we will erase the rest and send you a copy" is done BY
+//     HAND by the operator, after the requester shows the account or wallet
+//     is theirs. What to change, checked against the models and migrations
+//     (no constraint blocks any of it; the only trigger in the schema is the
+//     BEFORE DELETE on auth_users, migration 85ca5310b7a1):
+//       Delete the rows (nothing has an FK into these tables):
+//         payment_receipts, generation_credits, free_generation_grants
+//           WHERE user_id = the account id (a deleted account's id can be
+//           recovered from receipts/credits by payer_wallet);
+//         identity_events WHERE wallet = the address;
+//         strategy_generators WHERE wallet_address = the address
+//           (wallet_address is NOT NULL, so the row goes rather than the
+//           value).
+//       Clear brief text and the wallet on detached rows:
+//         strategy_store.brief_intent (nullable) -> NULL;
+//         strategy_store.owner_wallet (nullable, FK) -> NULL;
+//         strategy_proposals.payload is NOT NULL JSON text holding the brief
+//           under "intent": rewrite the JSON with "intent" set to "" (no code
+//           looks that key up; the proposals API returns the JSON as stored);
+//         strategy_proposals.owner_wallet (nullable, no FK) -> NULL;
+//         strategy_passports.owner_wallet and curator_wallet (nullable, FK)
+//           -> NULL (no brief column on this table);
+//         vault_metadata.creator_address is NOT NULL and FKs to
+//           wallet_identities, so it cannot be NULL or "": overwrite it with
+//           'system', the sentinel identity migration 07e9c1489199 created
+//           for exactly this (no brief column on this table).
+//       Then delete the wallet_identities row. Every FK into it must be
+//       cleared first: the columns above, plus linked_wallets.address and
+//       user_profiles.wallet_address (both erased with the account),
+//       paper_deployments.owner_wallet, marketplace_agents.creator_wallet /
+//       subscriber_wallet and controlled_wallets.controller_wallet (all
+//       nullable), and chat_messages.wallet_address (the table is empty).
+//     Not named on this page, but holding the address: legacy_row_adoptions.
+//     prior_owner_wallet (NOT NULL, no FK; only for rows of wallets that were
+//     never linked); delete the row if the request covers it.
 //   - Three free generations, the $2.00 price and the 100/200 daily caps are
 //     pinned in infra/ecs.tf (FREE_GENERATIONS_PER_ACCOUNT,
 //     GENERATION_PRICE_USD, GENERATION_DAILY_CAP_PER_USER/_PER_IP).
 //   - The visitor-id marker expires one cookie lifetime after it is written
 //     (services/visitor_insights_store.py, #1908). The /security inventory
 //     (ui/src/storage-consent.js) is the full key list this page points to.
+//   - The visitor id is in no ledger row, so "Entries in the ledger do not
+//     include the anonymous visitor id" carries no "New" and "We do not link
+//     the visitor id" carries no exception. The only code that writes
+//     identity_events.vid is api/auth_siwe.py's verify (vid= at :402), and
+//     that router is mounted only under TESTING (main.py:880). Alembic
+//     5cdd4f098a74 (#1926) ran in prod on 2026-10-03 and nulled the vid on
+//     the 20 auth_verified rows from the SIWE window; the read-only
+//     scripts/count_privacy_leftovers.py then printed 0 for both of its
+//     identity_events counts. Those two WHERE clauses (in-window
+//     auth_verified rows with a vid, and every other row with a vid) cover
+//     every row with a non-null vid between them, because event_type and
+//     occurred_at are NOT NULL (models/identity.py:136, :138).
+//   - The server-counted funnel steps the analytics bullet lists are the ones
+//     that can fire on the live site: wallet_gate_shown, generation_started
+//     and free_generation_used (api/generate_routes.py:534, :674, :680).
+//     wallet_connected is recorded only by the test-only SIWE router, and
+//     vault_deployed (api/vaults_routes.py:418) sits behind the roadmap gate
+//     described below.
 //   - privacy@ is an SES receipt rule -> SNS -> one email subscription, a
 //     personal Gmail inbox (infra/ses_inbound.tf). SNS actions bounce mail
 //     over 150 KB.
-//   - Backups: Aurora's automated retention is 7 days (infra/aurora.tf). The
-//     manual Aurora snapshots were deleted on 2026-10-01; the one remaining
-//     snapshot is the EBS image of the decommissioned EC2 server.
+//   - Backups: Aurora's automated retention is 7 days (infra/aurora.tf:94).
+//     The manual Aurora snapshots were deleted on 2026-10-01 and the EC2
+//     server's EBS snapshot on 2026-10-02; verified 2026-10-03: 0 manual
+//     cluster snapshots, 0 EBS snapshots. The automated backups are the only
+//     copies, so the page names no other.
 //   - Not offered on the site today, so not described as running: vault
 //     deployment and marketplace publishing (their UI is behind
-//     ROADMAP_SURFACES_ENABLED, which is a UI build flag only), on-chain trace
-//     publication (no UI; POST /api/traces/publish needs the internal agent
-//     key), IPFS pinning (docs/adr/ipfs-pinning-not-live.md), Google Fonts on
-//     this site (removed from ui/index.html in the rebrand). The live agent
-//     runner runs in dry-run. Marketplace publishing is also off server-side
-//     (ARCHIMEDES_TREASURY_WALLET is empty, so the route answers 503).
-//   - POST /api/vaults/create is STILL MOUNTED (main.py includes vaults_router
-//     unconditionally), gated only by an account, a linked wallet and the
-//     rigor gate, and it transfers the deployed vault to that wallet. The
-//     blockchain section discloses it; if the route is disabled, drop that
-//     sentence in the same change.
-//   - Per-vault chat was deleted on 2026-08-31, but its chat_messages rows
-//     (keyed by wallet, no FK to auth_users) were not; the retention and
-//     deletion lists name them. Nobody counted the prod rows for this page.
+//     ROADMAP_SURFACES_ENABLED, a UI build flag), on-chain trace publication
+//     (no UI; POST /api/traces/publish needs the internal agent key), IPFS
+//     pinning (docs/adr/ipfs-pinning-not-live.md), Google Fonts on this site
+//     (removed from ui/index.html in the rebrand). The live agent runner runs
+//     in dry-run.
+//   - Not offered through the API either (#1927). POST /api/vaults/create,
+//     POST /api/marketplace/publish and POST /api/marketplace/subscribe (the
+//     three routes that have our signer deploy a vault owned by the caller's
+//     wallet) depend on require_roadmap_surfaces
+//     (api/vaults_routes.py:362, api/marketplace_routes.py:98 and :330),
+//     which answers 404 before auth, body-schema validation or the handler
+//     runs unless FEATURE_ROADMAP_SURFACES is exactly "true"
+//     (backend/archimedes/feature_flags.py:74, :95). It is off by default and
+//     unset in every container of the live task definition
+//     (archimedes-backend:285, checked 2026-10-03). If it is ever switched
+//     on, the blockchain section must say what a vault deployment publishes
+//     before it is (promised on the page).
+//   - Per-vault chat was deleted on 2026-08-31 and no code on main writes a
+//     chat_messages row (models/chat.py:10; the only other references are
+//     init_db()'s ALTER TABLE patch, db.py:377, and the read-only count
+//     script). Alembic 5cdd4f098a74 (#1926), which deletes the rows and keeps
+//     the table, ran in prod on 2026-10-03 and found 0 rows to delete; the
+//     re-count printed chat_messages_rows=0. So the page no longer mentions
+//     the chat.
 export default function Privacy() {
 	return (
 		<div className="page-content policy-page">
@@ -201,11 +266,9 @@ export default function Privacy() {
 				<p>
 					We also keep a ledger keyed by wallet address: when an address was
 					first linked here, and events it took part in, such as a generation
-					started or completed. New entries do not include the anonymous visitor
-					id described below. For a period in summer 2026, before our current
-					sign-in system, signing in with a wallet did record that id next to
-					the wallet address, and any entries from then are still in the ledger. The ledger has no database link to
-					your account, so deleting your account does not remove it.
+					started or completed. Entries in the ledger do not include the
+					anonymous visitor id described below. The ledger has no database link
+					to your account, so deleting your account does not remove it.
 				</p>
 				<p>
 					Paying from a Circle passkey wallet also links that browser&rsquo;s
@@ -363,10 +426,9 @@ export default function Privacy() {
 						(HyperLogLog), which count how many different visitors reached each
 						step but cannot be read back as a list of ids. Some steps are counted
 						by our server whatever you choose in the consent banner: being asked
-						to connect a wallet, starting a generation (and whether it was a free
-						one), and deploying a vault through our API (see the blockchain
-						section below). Your browser reports that you landed on the site only
-						if you allow analytics.
+						to connect a wallet, and starting a generation (and whether it was a
+						free one). Your browser reports that you landed on the site only if
+						you allow analytics.
 					</li>
 					<li>
 						When that landing report is sent, we also count your country and
@@ -386,9 +448,8 @@ export default function Privacy() {
 				</ul>
 				<p>
 					This counting never reads your IP address. Daily counts expire after
-					90 days; running totals do not expire. Our current code does not link
-					the visitor id to your account or your wallet; the one past exception,
-					in summer 2026, is described under wallets above.
+					90 days; running totals do not expire. We do not link the visitor id
+					to your account or your wallet.
 				</p>
 			</section>
 
@@ -528,12 +589,6 @@ export default function Privacy() {
 					page will say what gets published before the feature is switched on.
 				</p>
 				<p>
-					One exception: our API still accepts a vault-deployment request from
-					an account with a linked wallet, for a strategy that passes the rigor
-					gate. A vault deployed that way is a public on-chain record that names
-					that wallet as its owner.
-				</p>
-				<p>
 					<strong>A wallet address is pseudonymous, not anonymous.</strong> It is
 					not your name, but everything that address has ever done is linkable —
 					on Arc and on every other chain it has been used on. If you have
@@ -655,8 +710,7 @@ export default function Privacy() {
 					Everything else has no expiry date today: your account and profile,
 					your strategies and every stored generation candidate, your
 					paper-trading records, your payment receipts and credits, your
-					free-generation record, the wallet ledger, any messages posted in the
-					per-vault chat we removed in August 2026, the email log, API keys,
+					free-generation record, the wallet ledger, the email log, API keys,
 					wallet-link challenges, and running visitor totals.
 				</p>
 				<p>
@@ -685,18 +739,23 @@ export default function Privacy() {
 						when they were made, that wallet&rsquo;s address.
 					</li>
 					<li>
-						<strong>Not touched:</strong> your payment receipts, your credit
-						ledger, your free-generation record, the wallet ledger, and any
-						messages you posted in that per-vault chat (they are stored by wallet
-						address), because none of them has a database link to your account;
-						and nothing on a blockchain.
+						<strong>Not touched by account deletion:</strong> your payment
+						receipts, your credit ledger, your free-generation record and the
+						wallet ledger, because none of them has a database link to your
+						account; and nothing on a blockchain.
 					</li>
 				</ul>
 				<p>
-					If you want any of the detached or untouched records removed, or you
-					cannot sign in to delete your account yourself, write to the contact
-					address below. There is no self-service export of your data yet; you
-					can ask for a copy the same way.
+					<strong>On request, we will erase the rest and send you a copy.</strong>{" "}
+					Write to the contact address below and we will erase your payment
+					receipts, credit ledger, free-generation record and your
+					wallet&rsquo;s entries in the wallet ledger, and remove your brief
+					text and wallet address from the records that were detached from you.
+					We will also send you a copy of the data we hold about you. There is no
+					self-service export yet; these requests are handled by hand, and
+					before we erase or send anything we will ask you to show that the
+					account or wallet is yours. Write the same way if you cannot sign in
+					to delete your account yourself.
 				</p>
 				<p>Limits, stated up front:</p>
 				<ul>
@@ -708,11 +767,6 @@ export default function Privacy() {
 					<li>
 						Deleted data remains in our automated database backups for up to 7
 						days.
-					</li>
-					<li>
-						We also keep one disk snapshot of a server we decommissioned in
-						August 2026. It has no expiry date and contains whatever was on that
-						server&rsquo;s disk when it was taken.
 					</li>
 					<li>
 						An address on the SES do-not-send list stays there until we remove it
@@ -765,7 +819,8 @@ export default function Privacy() {
 			<section>
 				<h2>Contact</h2>
 				<p>
-					Privacy questions, and requests to delete or see your data, go to{" "}
+					Privacy questions, and requests to delete or get a copy of your data,
+					go to{" "}
 					<a href="mailto:privacy@archimedes-arc.com">
 						privacy@archimedes-arc.com
 					</a>

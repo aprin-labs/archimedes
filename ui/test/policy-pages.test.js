@@ -337,7 +337,7 @@ test("the privacy policy says payment records survive account deletion", () => {
 	assert.doesNotMatch(erased[1], /receipt|credit/i, "receipts and credits are not erased by account deletion");
 	assert.match(
 		deletion,
-		/Not touched:<\/strong>\s+your payment receipts,\s+your credit\s+ledger/,
+		/Not touched by account deletion:<\/strong>\s+your payment\s+receipts,\s+your credit\s+ledger/,
 		"the retained records must be named where the deletion is described",
 	);
 });
@@ -661,7 +661,16 @@ test("the privacy policy states the second audit's infrastructure facts", () => 
 	const visitors = sectionBody(privacy, "Counting visitors");
 	assert.match(visitors, /The first time a page calls our server&rsquo;s API/, "when the vid cookie is set");
 	assert.doesNotMatch(visitors, /On its first response/, "the HTML response sets no cookie");
-	assert.match(visitors, /deploying a vault through our API/, "vaults_routes records vault_deployed server-side");
+	// #1927 put POST /api/vaults/create behind the server roadmap gate, so the
+	// vault_deployed step cannot fire; the server-counted list names only the
+	// steps that can (wallet_gate_shown, generation_started,
+	// free_generation_used in generate_routes.py).
+	assert.doesNotMatch(visitors, /deploying a vault/, "vault_deployed cannot fire with the roadmap gate off");
+	assert.match(
+		visitors,
+		/being asked\s+to connect a wallet, and starting a generation \(and whether it was a\s+free one\)/,
+		"the server-counted steps that can fire on the live site",
+	);
 
 	// GitHub's default scopes are read:user and user:email (@better-auth/core).
 	const oauth = sectionBody(privacy, "If you sign in with Google or GitHub");
@@ -674,20 +683,90 @@ test("the privacy policy states the second audit's infrastructure facts", () => 
 	assert.match(made, /gets as far as saving its strategy and\s+backtesting it/, "when candidates are kept");
 	assert.doesNotMatch(made, /gets as far as producing candidates/, "false: runs with candidates can still end before the write");
 
-	// POST /api/vaults/create is mounted unconditionally; the UI flag hides
-	// only the modal. Until the route is disabled, the page must say so.
+	// Inverted by the final pass. This guard used to REQUIRE the disclosure that
+	// "our API still accepts a vault-deployment request", because
+	// POST /api/vaults/create was mounted unconditionally. #1927 put it behind
+	// require_roadmap_surfaces (404 unless FEATURE_ROADMAP_SURFACES is "true";
+	// unset in prod), so the sentence is gone. The two halves are tied: the
+	// absence is pinned only while the gate is still on the route, so removing
+	// the gate fails here and forces the disclosure back.
 	const chain = sectionBody(privacy, "What goes on a public blockchain");
-	assert.match(chain, /our API still accepts a vault-deployment request/, "the live vault-create route must be disclosed");
-	assert.match(chain, /names\s+that wallet as its owner/, "what that on-chain record reveals");
+	assert.doesNotMatch(chain, /still accepts a vault-deployment request/, "the route is gated off since #1927");
+	assert.doesNotMatch(chain, /One exception:/, "no API exception to the blockchain section remains");
+	const vaultsRoutes = readFileSync(new URL("../../backend/archimedes/api/vaults_routes.py", import.meta.url), "utf8");
+	assert.match(
+		vaultsRoutes,
+		/@vaults_router\.post\(\s+"\/create",[^@]*?dependencies=\[Depends\(require_roadmap_surfaces\)\],\s+\)/,
+		"POST /api/vaults/create must stay behind the roadmap gate while the page omits it",
+	);
+	const flags = readFileSync(new URL("../../backend/archimedes/feature_flags.py", import.meta.url), "utf8");
+	assert.match(
+		flags,
+		/environ\.get\("FEATURE_ROADMAP_SURFACES", ""\)\.strip\(\)\.lower\(\) == "true"/,
+		"the gate must stay off unless explicitly set to true",
+	);
 });
 
-// chat_messages (models/chat.py) keeps the historical per-vault chat rows,
-// keyed by wallet with no FK to auth_users, so neither expiry nor account
-// deletion reaches them. Nobody counted the prod rows; "any" covers zero.
-test("the retention and deletion lists name the historical per-vault chat rows", () => {
+// Inverted by the final pass. This guard used to require the retention and
+// deletion lists to name the historical per-vault chat rows (chat_messages,
+// keyed by wallet, no FK to auth_users). Alembic 5cdd4f098a74 (#1926) deletes
+// them and ran in prod on 2026-10-03 (0 rows found; a re-count printed
+// chat_messages_rows=0), and nothing on main writes the table. The page must
+// no longer describe chat rows it does not hold.
+test("the retention and deletion lists no longer name per-vault chat rows", () => {
+	const body = rendered(privacy);
+	assert.doesNotMatch(body, /per-vault chat/i, "#1926 deleted the chat rows; the page must not list them");
+	assert.doesNotMatch(body, /chat_messages/, "no chat table is described on the page");
 	const deletion = sectionBody(privacy, "How long we keep things, and how to get them deleted");
-	assert.match(deletion, /any messages posted in the\s+per-vault chat we removed in August 2026/, "no-expiry list");
-	const untouched = deletion.match(/<strong>Not touched:<\/strong>([\s\S]*?)<\/li>/);
-	assert.ok(untouched, "the Not touched bullet must exist");
-	assert.match(untouched[1], /messages you posted in that per-vault chat/, "account deletion does not reach chat rows");
+	const untouched = deletion.match(/<strong>Not touched by account deletion:<\/strong>([\s\S]*?)<\/li>/);
+	assert.ok(untouched, "the Not touched by account deletion bullet must exist");
+	assert.doesNotMatch(untouched[1], /chat|messages/i, "no chat rows are left for account deletion to miss");
+	assert.match(untouched[1], /free-generation record and the\s+wallet ledger/, "the FK-less records stay named");
+});
+
+// The final pass, on the owner's commitments: what account deletion leaves is
+// erased on request, a copy is sent on request, both by hand after proof of
+// ownership. Pinned in both directions so the old "you can ask" wording does
+// not come back and the commitment cannot be quietly softened.
+test("the privacy policy commits to erasure and a copy on request", () => {
+	const deletion = sectionBody(privacy, "How long we keep things, and how to get them deleted");
+	assert.match(deletion, /On request, we will erase the rest and send you a copy\./, "the commitment must be stated");
+	assert.match(
+		deletion,
+		/we will erase your payment\s+receipts, credit ledger, free-generation record and your\s+wallet&rsquo;s entries in the wallet ledger/,
+		"what is erased on request",
+	);
+	assert.match(
+		deletion,
+		/remove your brief\s+text and wallet address from the records that were detached from you/,
+		"what is scrubbed from detached records",
+	);
+	assert.match(deletion, /send you a copy of the data we hold about you/);
+	assert.match(deletion, /handled by hand/, "no self-service export exists, and the page must say so");
+	assert.match(deletion, /show that the\s+account or wallet is yours/, "proof of ownership before acting");
+	assert.doesNotMatch(deletion, /If you want any of the detached or untouched records removed/, "superseded by the commitment");
+	assert.match(sectionBody(privacy, "Contact"), /requests to delete or get a copy of your data/);
+});
+
+// #1926 nulled the vid on the 20 SIWE-window identity_events rows in prod and
+// count_privacy_leftovers.py then printed 0 for every row with a vid; the only
+// vid writer (auth_siwe) is mounted only under TESTING. The page states no
+// past exception, and "New entries" would understate it.
+test("the privacy policy states no visitor-id link, past or present", () => {
+	const body = rendered(privacy);
+	assert.match(body, /Entries in the ledger do not include the\s+anonymous visitor id/);
+	assert.match(body, /We do not link the visitor id\s+to your account or your wallet\./);
+	assert.doesNotMatch(body, /summer 2026/, "the past exception was purged by #1926");
+	assert.doesNotMatch(body, /New entries do not include/, "no entries include it, not only new ones");
+	assert.doesNotMatch(body, /one past exception/);
+});
+
+// E3: the EC2 server's EBS snapshot was deleted on 2026-10-02 (0 EBS snapshots
+// and 0 manual Aurora snapshots, verified 2026-10-03), so the 7-day automated
+// backups are the only copies and the page must not describe another.
+test("the privacy policy names no snapshot that no longer exists", () => {
+	assert.doesNotMatch(rendered(privacy), /snapshot/i, "no disk or database snapshot remains");
+	assert.doesNotMatch(rendered(terms), /snapshot/i);
+	const deletion = sectionBody(privacy, "How long we keep things, and how to get them deleted");
+	assert.match(deletion, /automated database backups for up to 7\s+days/, "the backup window stays disclosed");
 });
