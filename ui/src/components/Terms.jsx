@@ -37,7 +37,11 @@ import PolicyBanner from "./PolicyBanner";
 //     /api/marketplace/publish and /api/marketplace/subscribe answer 404
 //     unless it is "true" (backend/archimedes/feature_flags.py:95), and it is
 //     unset in the live task definition (archimedes-backend:285, checked
-//     2026-10-03). Nothing on this page depends on that route. On-chain trace
+//     2026-10-03). The fourth such route, POST /api/vaults/metadata (it has
+//     our signer anchor a self-deployed vault's strategies on-chain), is
+//     gated the same way by the companion PR
+//     dbrowneup/1432-gate-vault-metadata; #1432 merges after it or with it.
+//     Nothing on this page depends on those routes. On-chain trace
 //     publishing has no UI at all: POST /api/traces/publish needs the internal
 //     agent key, paper anchoring is off, and the house agent runs with
 //     AGENT_DRY_RUN. IPFS pinning never ran in production
@@ -53,8 +57,19 @@ import PolicyBanner from "./PolicyBanner";
 //     release_entitlements_if_undelivered (:900), called from the run's own
 //     finally (:1050; scripts/run_generation_job.py:244 on the offload
 //     path), gives them back. A hard process death skips that finally and
-//     nothing sweeps later, so the page does not promise a hand-back when our
-//     server goes down. Credits are looked up only by user_id
+//     nothing sweeps later. A database failure can do the same, and the
+//     ledger writes swallow it: if generation_credits.settle
+//     (services/generation_credits.py) cannot mark the claim settled, the
+//     payment has cleared but the row stays pending, so consume_credit
+//     (models/generation_credit.py, only an available credit) and
+//     restore_credit_for_job (only a consumed one) both find nothing; a
+//     failed free_generations.stamp_job leaves the slot unstamped, so
+//     release_for_job cannot find it; and a failed release or restore is
+//     logged, not retried. The cache can too: both release helpers read the
+//     job record and event log from the Redis job store, and a failed or
+//     empty read leaves the credit or slot spent. So the page says that if
+//     our server, database or cache fails, the credit or free generation may
+//     not be handed back automatically. Credits are looked up only by user_id
 //     (models/generation_credit.py:67), so deleting or erasing the account
 //     gives up an unspent one, and the page says so.
 export default function Terms() {
@@ -150,9 +165,9 @@ export default function Terms() {
 					Credits do not expire. They belong to your account, so deleting the
 					account, or asking us to erase your records, gives up any credit you
 					have not spent. A free generation that does not produce a strategy
-					goes back to your free allowance in the same way. If our server itself
-					goes down after a run is accepted, neither is handed back
-					automatically. We are being direct that this is not a money-back
+					goes back to your free allowance in the same way. If our server,
+					database or cache fails, the credit or free generation may not be handed
+					back automatically. We are being direct that this is not a money-back
 					guarantee: settlement runs one way through our payment provider and
 					the product has no way to send test USDC back to you, so we do not
 					offer refunds.
@@ -334,10 +349,11 @@ export default function Terms() {
 					yourself in Account Settings; the{" "}
 					<a href="/privacy">Privacy Policy</a> describes what that removes, what
 					it leaves behind, and how to ask us to erase or scrub the rest or send
-					you a copy. Ask before you delete the account yourself, or ask us to
-					delete it for you: once it is gone, we can find what it left only
-					through a wallet you linked or paid with. Records on a public
-					blockchain survive account closure — nobody can delete those.
+					you a copy. If you want any of that, ask for it before you delete your
+					account yourself, or ask us to delete it for you: once it is gone, we
+					can find what it left only through a wallet you linked or paid with.
+					Records on a public blockchain survive account closure — nobody can
+					delete those.
 				</p>
 			</section>
 

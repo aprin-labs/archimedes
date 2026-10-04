@@ -26,8 +26,26 @@ import PolicyBanner from "./PolicyBanner";
 //     deletion) names the same four not-touched database records as this
 //     page. payment_receipts, generation_credits, free_generation_grants
 //     and the wallet ledger (wallet_identities / identity_events) carry no FK
-//     to auth_users, so account deletion does not reach them. Detached rows
-//     keep owner_wallet, the brief text and any strategy name the user typed.
+//     to auth_users, so account deletion does not reach them. Credits are
+//     looked up only by user_id (take_available_credit), so after deletion
+//     an unspent one cannot be used, as the not-touched bullet says and the
+//     dialog's generation_credits label does too. Detached rows
+//     keep owner_wallet (vault_metadata: creator_address), the brief text and
+//     any strategy or vault name the user typed, and they re-attach to any
+//     account that later links that wallet: _link_verified_wallet calls
+//     claim_legacy_wallet_data (api/wallet_routes.py), which stamps
+//     owner_user_id on every row whose wallet column is that address and
+//     whose owner_user_id is NULL. Linking needs a wallet signature.
+//   - The hand-back of a failed free or paid run carries the same qualifier
+//     as Terms.jsx (see its header): a server, database or cache failure can
+//     keep either from coming back.
+//   - Account Settings lists sessions only for a sign-in younger than 24
+//     hours: better-auth's /list-sessions uses freshSessionMiddleware, and
+//     auth/auth.js pins freshAge at 24h (session.freshAge); the stale state's
+//     copy is SESSIONS_STALE_MESSAGE in AccountSettings.jsx.
+//   - Wallet-link challenge fields: models/account.py WalletLinkChallenge
+//     (nonce_hash, address, chain_id, provider, circle_wallet_id, domain,
+//     uri, issued_at, expires_at, consumed_at).
 //   - Account deletion does not reach the paper-trading reasoning records in
 //     Redis either, and Account Settings does not list them (they are not a
 //     table). advance_deployment -> _publish_decision_traces
@@ -50,16 +68,27 @@ import PolicyBanner from "./PolicyBanner";
 //     new one if theirs is deleted); the linked_wallets row is the proof.
 //     Find its device payment key, the payer_wallet on its receipts, from the
 //     smart account's depositFor calls on-chain (ui/src/x402.js:195-202).
-//     Delete the account first if it still exists (deleting a live account's
-//     free_generation_grants would hand it its free runs again). After
-//     deletion, a wallet signature authorises erasure of the rows under the
-//     account id recovered through that wallet (payment_receipts /
-//     generation_credits.payer_wallet, or identity_events.meta->>'job_id'
-//     and strategy_proposals.generation_id joined to
-//     free_generation_grants.job_id); a copy covers only rows that name that
-//     wallet. What to change, checked against the models and migrations (no
-//     constraint blocks any of it; the only trigger in the schema is the
-//     BEFORE DELETE on auth_users, migration 85ca5310b7a1):
+//     The message to sign must move no funds and approve nothing (the page
+//     promises it, and that we never ask for a transaction): a plain text
+//     message, verified as above. An erasure request proven through the
+//     account (its email address): delete the account first if it still exists
+//     (deleting a live account's free_generation_grants would hand it its free
+//     runs again), then follow the steps below. A request proven only by a
+//     wallet signature while the account still exists: do NOT delete the
+//     account unless its holder asks through the account's email address, and
+//     erase or scrub only what names that wallet (its identity_events and
+//     strategy_generators rows, payment receipts and credits whose
+//     payer_wallet is that address, the Redis records whose owner_wallet is
+//     it, and its address on the detached rows below); leave the account's own
+//     rows, its free_generation_grants included, and the wallet_identities row
+//     while a linked_wallets row still points at it. After deletion, a wallet
+//     signature authorises erasure of the rows under the account id recovered
+//     through that wallet (payment_receipts / generation_credits.payer_wallet,
+//     or identity_events.meta->>'job_id' and strategy_proposals.generation_id
+//     joined to free_generation_grants.job_id); a copy covers only rows that
+//     name that wallet. What to change, checked against the models and
+//     migrations (no constraint blocks any of it; the only trigger in the
+//     schema is the BEFORE DELETE on auth_users, migration 85ca5310b7a1):
 //       Delete the rows (nothing has an FK into these tables):
 //         payment_receipts, generation_credits, free_generation_grants
 //           WHERE user_id = the account id (recovered as above after
@@ -79,7 +108,8 @@ import PolicyBanner from "./PolicyBanner";
 //       three FK-less tables -> strategy_proposals.generation_id, and
 //       generation_costs(job_id, strategy_id) -> strategy_store /
 //       strategy_passports.id.
-//       Clear brief text, typed strategy name and the wallet on detached rows:
+//       Clear brief text, typed strategy and vault names and the wallet on
+//       detached rows:
 //         strategy_store.brief_intent (nullable) -> NULL;
 //         strategy_store.strategy_name (NOT NULL, default '') -> '' (the
 //           winner carries the name typed into Generate's "Strategy name"
@@ -96,6 +126,9 @@ import PolicyBanner from "./PolicyBanner";
 //         strategy_proposals.owner_wallet (nullable, no FK) -> NULL;
 //         strategy_passports.owner_wallet and curator_wallet (nullable, FK)
 //           -> NULL (no brief or name column on this table);
+//         vault_metadata.name (String(64)) and .symbol (String(16)), both
+//           NOT NULL default '' -> '' (typed in CreateVaultModal and stored
+//           by POST /api/vaults/metadata, models/chat.py VaultMetadata);
 //         vault_metadata.creator_address is NOT NULL and FKs to
 //           wallet_identities, so it cannot be NULL or "": overwrite it with
 //           'system', the sentinel identity migration 07e9c1489199 created
@@ -139,12 +172,27 @@ import PolicyBanner from "./PolicyBanner";
 //   - privacy@ is an SES receipt rule -> SNS -> one email subscription, a
 //     personal Gmail inbox (infra/ses_inbound.tf). SNS actions bounce mail
 //     over 150 KB.
-//   - Added by the 2026-10-03 audit round: the bounce/complaint record is
-//     auth_users.emailBouncedAt / emailBounceKind, written only by the
-//     scripts/ses_events.py drain (infra/ses_events.tf:440, every 15 minutes
-//     by default) and read by auth/auth.js bounceRefusal (:270; signup at
-//     :754, the signed-in resend at :786). Whether the ses_events stack is
-//     applied live was NOT verified in that round. The referrer is
+//   - NOT on the page, on purpose: that our database records a bounce or
+//     spam report on the account and refuses sign-up or the signed-in resend
+//     on it. Audit round 1 added that sentence; the final triaged pass took it
+//     out. The code exists (auth/auth.js bounceRefusal :270, signup :754,
+//     resend :786; the scripts/ses_events.py drain that writes
+//     auth_users.emailBouncedAt / emailBounceKind; infra/ses_events.tf), but
+//     it is not applied live. Checked 2026-10-03: the archimedes-mail
+//     configuration set and the SQS queue exist, but there is no event
+//     destination, no ses-events-drain task definition and no scheduler
+//     schedule, so the stamp is never written in production. Re-add the
+//     sentence in the same change that applies #1837.
+//   - "Bedrock's own prompt logging is switched off in our account": on
+//     2026-10-03, aws bedrock get-model-invocation-logging-configuration
+//     returned an empty configuration (rc 0), meaning no invocation logging,
+//     in us-east-1, us-east-2 and us-west-2, the regions a brief can reach.
+//   - The load balancer's log fields: infra/alb.tf enables access_logs (S3,
+//     expired after 30 days), and AWS's fixed ALB log format includes the
+//     request line and user_agent. Every CloudFront behaviour uses the
+//     all_viewer origin request policy (allViewerAndWhitelistCloudFront,
+//     infra/cloudfront.tf), so the user-agent is the viewer's.
+//   - Added by the 2026-10-03 audit round 1: the referrer is
 //     "$log_http_referer" in nginx's main_redacted format
 //     (nginx/nginx.conf:125). The docs site's unpkg request: docs pins
 //     mkdocs-material 9.7.7 (docs/requirements.txt:15), whose bundle loads
@@ -167,8 +215,13 @@ import PolicyBanner from "./PolicyBanner";
 //     POST /api/marketplace/publish and POST /api/marketplace/subscribe (the
 //     three routes that have our signer deploy a vault owned by the caller's
 //     wallet) depend on require_roadmap_surfaces
-//     (api/vaults_routes.py:362, api/marketplace_routes.py:98 and :330),
-//     which answers 404 before auth, body-schema validation or the handler
+//     (api/vaults_routes.py:362, api/marketplace_routes.py:98 and :330). The
+//     fourth, POST /api/vaults/metadata, which for a vault the caller
+//     deployed outside the site stores public metadata and has our signer
+//     anchor its strategies on-chain, is gated the same way by the companion
+//     PR dbrowneup/1432-gate-vault-metadata. On this branch alone it is still
+//     open, so #1432 must merge after that PR or together with it. The gate
+//     answers 404 before auth, body-schema validation or the handler
 //     runs unless FEATURE_ROADMAP_SURFACES is "true" (any case, surrounding
 //     space ignored; backend/archimedes/feature_flags.py:74, :95). Only
 //     middleware and FastAPI's JSON body parse run first (a malformed JSON
@@ -238,8 +291,8 @@ export default function Privacy() {
 						first half of the address, the part that identifies your network. A
 						session expires seven days after it was last renewed, and using the
 						site renews it at most once a day. A job that runs every hour deletes
-						expired session records. Account Settings lists your sessions and
-						lets you end any of them.
+						expired session records. Account Settings lists your sessions, if you
+						signed in within the last 24 hours, and lets you end any of them.
 					</li>
 					<li>
 						<strong>API keys, if you create any.</strong> Keys are created
@@ -284,12 +337,7 @@ export default function Privacy() {
 					If an email to you bounces permanently or is reported as spam, Amazon
 					SES puts your address on a do-not-send list for our account. That list
 					is kept by SES, not in our database, so deleting your account does not
-					remove your address from it; it stays until we remove it by hand. Our
-					own database also records on your account that your address bounced
-					or was reported as spam, and when, so the site can tell you why our
-					mail is not arriving: while that record stands, signing up with that
-					address, or asking for a new verification email while signed in, is
-					refused with that reason. Deleting your account erases that record.
+					remove your address from it; it stays until we remove it by hand.
 				</p>
 			</section>
 
@@ -332,8 +380,9 @@ export default function Privacy() {
 				<p>
 					For each link attempt we also keep the challenge you were asked to
 					sign. Its one-time code is stored only as a hash. The rest (the
-					address, chain, wallet software, our site&rsquo;s address, and when it
-					was issued and expires) is kept as plain text, whether or not the link
+					address, chain, wallet software, Circle&rsquo;s id for the wallet if it
+					is a Circle wallet, our site&rsquo;s address, and when it was issued,
+					expires and was used) is kept as plain text, whether or not the link
 					completed, until your account is deleted.
 				</p>
 				<p>
@@ -358,7 +407,8 @@ export default function Privacy() {
 					verified, with no wallet and no payment. Each one is recorded in{" "}
 					<code>free_generation_grants</code> with your account id, which run
 					used it, and when. A free run that fails to produce a strategy is
-					handed back. That record has no database link to your account, so
+					handed back, unless our server, database or cache fails along the way.
+					That record has no database link to your account, so
 					deleting your account does not remove it.
 				</p>
 				<p>
@@ -414,7 +464,8 @@ export default function Privacy() {
 				<p>
 					A second record, <code>generation_credits</code>, decides what you are
 					owed. A settled payment buys a credit and a generation spends it, so a
-					run that takes your money and then fails leaves the credit with you. A
+					run that takes your money and then fails leaves the credit with you,
+					unless our server, database or cache fails along the way. A
 					credit row holds the payment details above, its state (claimed,
 					available, spent or voided), when that changed, which generation spent
 					it, and the idempotency key your client sent, if it sent one, which is
@@ -567,12 +618,12 @@ export default function Privacy() {
 						contain a wallet address. Both are kept for 90 days.
 					</li>
 					<li>
-						Our load balancer logs every request with the full address
-						requested, including the one-time tokens in email-verification and
-						password-reset links (a verification token contains your email
-						address in encoded form). For visits through our CDN it records the
-						CDN server&rsquo;s IP address rather than yours. These logs are
-						deleted after 30 days.
+						Our load balancer logs every request with your browser user-agent and
+						the full address requested, including the one-time tokens in
+						email-verification and password-reset links (a verification token
+						contains your email address in encoded form). For visits through our CDN
+						it records the CDN server&rsquo;s IP address rather than yours. These
+						logs are deleted after 30 days.
 					</li>
 				</ul>
 				<p>
@@ -816,17 +867,18 @@ export default function Privacy() {
 						strategies, their rigor passports, the generation records behind
 						them, and descriptions of vaults you created stay in our database
 						with your account id removed, because other accounts can reference
-						them. They still contain your brief text, any strategy name you typed
-						and, if a wallet was linked when they were made, that wallet&rsquo;s
-						address.
+						them. They still contain your brief text, any strategy or vault name
+						you typed and, if a wallet was linked when they were made, that
+						wallet&rsquo;s address. If that wallet is later linked to an account
+						again, the records that carry it show up under that account.
 					</li>
 					<li>
 						<strong>Not touched by account deletion:</strong> your payment
-						receipts, your credit ledger, your free-generation record and the
-						wallet ledger, because none of them has a database link to your
-						account; the reasoning record of each paper-trading decision, which
-						we keep in our cache with your account id and wallet address, if
-						any; and nothing on a blockchain.
+						receipts, your credit ledger (an unspent credit can no longer be
+						used), your free-generation record and the wallet ledger, because none
+						of them has a database link to your account; the reasoning record of
+						each paper-trading decision, which we keep in our cache with your
+						account id and wallet address, if any; and nothing on a blockchain.
 					</li>
 				</ul>
 				<p>
@@ -834,29 +886,32 @@ export default function Privacy() {
 						On request, we will erase or scrub what account deletion leaves, send
 						you a copy, or both.
 					</strong>{" "}
-					Write to the contact address below. If you ask us to erase your data,
-					we will delete your account if it still exists, erase your payment
+					Write to the contact address below. If you ask us to erase your data, we
+					will delete your account if it still exists, erase your payment
 					receipts, credit ledger (which gives up any unspent credit),
 					free-generation record, the reasoning records of your paper-trading
 					decisions and your wallet&rsquo;s entries in the wallet ledger, and
-					remove your brief text, any strategy name you typed, and your wallet
-					address from the records that were detached from you. If you ask for
-					a copy, we will send you a copy of the data we hold about you. There
-					is no self-service export yet; these requests are handled by hand, and
-					before we erase or send anything we will ask you to show that the
-					account or wallet is yours: for the account, by answering a message
-					we send to its email address; for a wallet, by signing a message with
-					it (for a Circle passkey wallet, by linking it to an account here,
-					which signs our challenge). While the account exists, a wallet
-					signature covers only that wallet&rsquo;s records, a copy of account
-					records goes only to the account&rsquo;s email address, and we never
-					ask for identity documents. Write before you delete your account
-					yourself, or ask us to delete it as part of the request: once it is
-					deleted, we can find what it left only through a wallet you linked or
-					paid with. We can then erase what it left, but we can send a copy only
-					of that wallet&rsquo;s records, because there is no longer an account
-					email to send the rest to. Write the same way if you cannot sign in to
-					delete your account yourself.
+					remove your brief text, any strategy or vault name you typed, and your
+					wallet address from the records that were detached from you. If you ask
+					for a copy, we will send you a copy of the records we hold about your
+					account or wallet in our database, other than password hashes and
+					sign-in tokens. There is no self-service export yet; these requests are
+					handled by hand, and before we erase or send anything we will ask you to
+					show that the account or wallet is yours: for the account, by answering
+					a message we send to its email address; for a wallet, by signing a
+					message with it (for a Circle passkey wallet, by linking it to an
+					account here, which signs our challenge). That message moves no funds
+					and approves nothing, and we will never ask you to sign a transaction to
+					prove a request. While the account exists, a wallet signature covers
+					only that wallet&rsquo;s records, and a copy of account records goes
+					only to the account&rsquo;s email address. We never ask for identity
+					documents. Write before you delete your account yourself, or ask us to
+					delete it as part of the request: once it is deleted, we can find what
+					it left only through a wallet you linked or paid with. We can then erase
+					what it left, but we can send a copy only of that wallet&rsquo;s
+					records, because there is no longer an account email to send the rest
+					to. Write the same way if you cannot sign in to delete your account
+					yourself.
 				</p>
 				<p>Limits, stated up front:</p>
 				<ul>

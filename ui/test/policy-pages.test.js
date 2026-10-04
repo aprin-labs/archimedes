@@ -41,6 +41,42 @@ const authPage = src("components/AuthPage.jsx");
 // guards must not be satisfied (or tripped) by that comment.
 const rendered = (source) => source.slice(source.indexOf("export default function"));
 
+// What a reader is shown of a JSX fragment, near enough for these guards: JSX
+// comments dropped, the whitespace JSX drops beside a tag dropped, {" "}
+// spacers made spaces, block tags made spaces and inline tags removed, the
+// entities these pages use decoded, and whitespace collapsed. So a sentence commented out with {/* */} is gone,
+// and a phrase split by <strong>, an entity or a line wrap reads as one phrase.
+// Not a renderer: it is the text the promise pins and the removal guards read.
+const ENTITIES = {
+	"&rsquo;": "\u2019",
+	"&lsquo;": "\u2018",
+	"&ldquo;": "\u201c",
+	"&rdquo;": "\u201d",
+	"&nbsp;": " ",
+	"&amp;": "&",
+	"&mdash;": "\u2014",
+	"&ndash;": "\u2013",
+	"&hellip;": "\u2026",
+};
+const visible = (fragment) =>
+	fragment
+		.replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+		.replace(/>\s*\n\s*/g, ">")
+		.replace(/\s*\n\s*</g, "<")
+		.replace(/\{"\s*"\}/g, " ")
+		.replace(/<\/?(?:p|li|ul|ol|h[1-6]|section|header|div)\b[^>]*>/g, " ")
+		.replace(/<[^>]*>/g, "")
+		.replace(/&[a-z]+;/g, (entity) => ENTITIES[entity] ?? entity)
+		.replace(/\s+/g, " ");
+// The rendered part of a page, as text.
+const shown = (source) => visible(rendered(source));
+// A removal guard: the text must be absent from the source AND from what the
+// reader is shown, so re-adding it split by markup or a spacer still fails.
+function assertGone(fragment, pattern, message) {
+	assert.doesNotMatch(fragment, pattern, message);
+	assert.doesNotMatch(visible(fragment), pattern, message);
+}
+
 // ── Routing: anonymous, public, and not feature-gated ───────────────────
 
 test("/privacy and /terms resolve as public routes", () => {
@@ -123,7 +159,7 @@ test("policy pages stay undated until the owner approves them", () => {
 		["Terms", terms],
 	]) {
 		assert.match(page, /Last updated: \[pending owner approval\]/, `${name} must keep the placeholder date`);
-		assert.doesNotMatch(
+		assertGone(
 			page,
 			/Last updated:\s*(?!\[pending owner approval\])\S/,
 			`${name} must not carry a real last-updated date while it is an unreviewed draft`,
@@ -210,7 +246,7 @@ test("external links on the policy pages are safe and point at the real repo", (
 		// pre-rename name still redirects, so a stale link would not 404 — which
 		// is exactly why it needs pinning rather than eyeballing.
 		assert.match(page, /https:\/\/github\.com\/aprin-labs\/archimedes\/issues/);
-		assert.doesNotMatch(page, /archimedes-arcadia/);
+		assertGone(page, /archimedes-arcadia/);
 	}
 });
 
@@ -240,7 +276,7 @@ test("the privacy policy discloses the things it would be convenient to omit", (
 	// not reach it, and a verify-email token is an unencrypted JWT of the address.
 	assert.match(
 		sectionBody(privacy, "IP addresses and logs"),
-		/verification token contains your email\s+address/,
+		/verification\s+token\s+contains\s+your\s+email\s+address/,
 		"the load balancer's unredacted auth links must be disclosed",
 	);
 });
@@ -252,8 +288,8 @@ test("the privacy policy discloses the things it would be convenient to omit", (
 test("the privacy policy describes the self-service deletion that exists", () => {
 	const deletion = sectionBody(privacy, "How long we keep things, and how to get them deleted");
 	assert.match(deletion, /You can delete your account yourself/, "self-service deletion must be stated");
-	assert.doesNotMatch(privacy, /no delete-my-account button/i, "false since #1367: the button exists");
-	assert.doesNotMatch(privacy, /Deletion today is manual/i, "false since #1367: the database does it in-request");
+	assertGone(privacy, /no delete-my-account button/i, "false since #1367: the button exists");
+	assertGone(privacy, /Deletion today is manual/i, "false since #1367: the database does it in-request");
 	assert.match(deletion, /no\s+recovery window/, "the irreversibility must be stated before anyone clicks");
 });
 
@@ -271,15 +307,15 @@ test("the privacy policy describes the self-service deletion that exists", () =>
 test("the third-party disclosure matches what each site actually loads", () => {
 	const path = sectionBody(privacy, "Who else is in the path");
 	assert.match(path, /serves its typefaces from our own domain/, "this site's self-hosted fonts must be stated");
-	assert.doesNotMatch(path, /linked, but blocked/i, "stale: ui/index.html no longer links the font CDN at all");
+	assertGone(path, /linked, but blocked/i, "stale: ui/index.html no longer links the font CDN at all");
 	assert.match(path, /docs\.archimedes-arc\.com/, "the docs site's third parties must be disclosed");
 	assert.match(path, /linked from the header and footer of our public pages/, "where the docs site is linked");
-	assert.doesNotMatch(path, /linked from every page/, "false: only PublicLayout links the docs site");
+	assertGone(path, /linked from every page/, "false: only PublicLayout links the docs site");
 	assert.match(path, /loads its typefaces from Google Fonts/, "the docs site really does load Google Fonts");
 	assert.match(path, /GitHub&rsquo;s API/, "the docs site's in-browser GitHub API call must be disclosed");
 	assert.match(path, /Arc testnet RPC endpoint/i, "the browser's own RPC calls must be disclosed");
 	assert.match(path, /Circle/, "the browser's Circle SDK calls must be disclosed");
-	assert.doesNotMatch(
+	assertGone(
 		privacy,
 		/only third-party request/i,
 		"false: Circle's SDK and the Arc RPC are both called from the browser",
@@ -314,7 +350,7 @@ test("the privacy policy discloses the payment records the paywall creates", () 
 		"the receipt is written when the payment settles, with the exception flagged",
 	);
 	assert.match(receipts, /a\s+payment can settle without a receipt row/, "the swallowed-write exception must be stated");
-	assert.doesNotMatch(receipts, /Every payment that settles is written/, "false: a failed receipt write is swallowed");
+	assertGone(receipts, /Every payment that settles is written/, "false: a failed receipt write is swallowed");
 	// The grant row carries user_id (no FK), which is why it is personal data.
 	assert.match(
 		receipts,
@@ -333,12 +369,12 @@ test("the privacy policy discloses the payment records the paywall creates", () 
 test("the privacy policy says payment records survive account deletion", () => {
 	const receipts = sectionBody(privacy, "Free generations and payments");
 	assert.match(receipts, /deleting your account does not\s+remove them/, "receipts and credits outlive the account");
-	assert.doesNotMatch(privacy, /removing them is part of the deletion process/i, "false: no FK, nothing removes them");
-	assert.doesNotMatch(privacy, /read your own receipts back in the app/i, "false: the receipts list is roadmap-hidden");
+	assertGone(privacy, /removing them is part of the deletion process/i, "false: no FK, nothing removes them");
+	assertGone(privacy, /read your own receipts back in the app/i, "false: the receipts list is roadmap-hidden");
 	const deletion = sectionBody(privacy, "How long we keep things, and how to get them deleted");
 	const erased = deletion.match(/<strong>Erased:<\/strong>([\s\S]*?)<\/li>/);
 	assert.ok(erased, "the Erased bullet must exist");
-	assert.doesNotMatch(erased[1], /receipt|credit/i, "receipts and credits are not erased by account deletion");
+	assertGone(erased[1], /receipt|credit/i, "receipts and credits are not erased by account deletion");
 	assert.match(
 		deletion,
 		/Not touched by account deletion:<\/strong>\s+your payment\s+receipts,\s+your credit\s+ledger/,
@@ -357,7 +393,7 @@ test("the deletion section splits what is erased from what is detached", () => {
 	assert.match(deletion, /profile row/i, "the encrypted-email row's fate must be stated explicitly");
 	assert.match(deletion, /detached from you rather than destroyed/i, "the SET NULL tables must be described");
 	assert.match(deletion, /payment receipts/i, "receipts must be named where deletion is described");
-	assert.doesNotMatch(
+	assertGone(
 		deletion,
 		/detach your strategies and profile/i,
 		"the profile row is erased, not detached (#1429 cascade policy)",
@@ -398,7 +434,7 @@ test("both pages route account and privacy requests to the private mailbox", () 
 	assert.match(sectionBody(privacy, "Contact"), /personal Gmail inbox/, "the Gmail relay must be disclosed");
 	assert.match(sectionBody(privacy, "Contact"), /150&nbsp;KB/, "the attachment-size bounce must be disclosed");
 	assert.match(sectionBody(terms, "Contact"), /personal Gmail inbox/, "the terms must not imply a dedicated mailbox");
-	assert.doesNotMatch(terms, /a private mailbox we read/i, "stale: the address is a relay to a personal inbox");
+	assertGone(terms, /a private mailbox we read/i, "stale: the address is a relay to a personal inbox");
 });
 
 test("the terms state the testnet and no-advice position", () => {
@@ -428,17 +464,17 @@ test("the terms state the testnet and no-advice position", () => {
 test("the terms disclose the real generation charge without over-claiming the marketplace rail", () => {
 	assert.match(terms, /\$2\.00 in testnet USDC/, "the generation price must appear on the page");
 	// \s+ throughout: these read the raw JSX source, where prose wraps mid-phrase.
-	assert.match(rendered(terms), /settles\s+for real/i, "the paywall must be described as really settling");
-	assert.doesNotMatch(
+	assert.match(shown(terms), /settles\s+for real/i, "the paywall must be described as really settling");
+	assertGone(
 		terms,
 		/settlement is\s+switched off in production/i,
 		"blanket 'settlement is off in production' is false — the generation rail settles",
 	);
-	assert.doesNotMatch(terms, /Nothing is charged/i, "false: each generation is charged $2.00");
+	assertGone(terms, /Nothing is charged/i, "false: each generation is charged $2.00");
 
 	// The other half: marketplace settlement really is off, and saying so is
 	// not optional once the page starts talking about payments that work.
-	assert.match(rendered(terms), /marketplace/i, "the marketplace rail must still be named");
+	assert.match(shown(terms), /marketplace/i, "the marketplace rail must still be named");
 	assert.match(terms, /nothing settles there/i, "the marketplace rail must still be disclosed as dry");
 
 	// The price belongs where a reader looks for what things cost, not only in
@@ -467,28 +503,28 @@ test("the terms state the free allowance, the Gateway flow and the live caps", (
 		/Each account gets three free generations once its email address is\s+verified/,
 		"the free allowance must be stated per account",
 	);
-	assert.doesNotMatch(terms, /first three generations are free/, "imprecise: unverified accounts pay for their first runs");
+	assertGone(terms, /first three generations are free/, "imprecise: unverified accounts pay for their first runs");
 	assert.match(
 		sectionBody(terms, "Limits and fair use"),
 		/Beyond the free allowance/,
 		"the price sentence must not read as unconditional",
 	);
 	assert.match(terms, /Circle&rsquo;s Gateway contract/, "the deposit step must be disclosed");
-	assert.match(rendered(terms), /capped at \$50/, "the device-payment-key deposit cap must be disclosed");
-	assert.doesNotMatch(terms, /leaves your wallet and arrives in ours/i, "false: settlement moves Gateway balances");
-	assert.doesNotMatch(terms, /charged to\s+your linked wallet/i, "false: the charge comes from the Gateway balance");
+	assert.match(shown(terms), /capped at \$50/, "the device-payment-key deposit cap must be disclosed");
+	assertGone(terms, /leaves your wallet and arrives in ours/i, "false: settlement moves Gateway balances");
+	assertGone(terms, /charged to\s+your linked wallet/i, "false: the charge comes from the Gateway balance");
 	const limits = sectionBody(terms, "Limits and fair use");
 	// The caps count POST /start requests (enforce_generation_quota runs first,
 	// on every one), not generations: the UI's unpaid 402 fetch counts too.
 	assert.match(limits, /one hundred requests to start a generation per day/, "the live per-account cap");
 	assert.match(limits, /each IP\s+address two hundred/, "the live per-IP cap");
 	assert.match(limits, /a paid\s+generation normally uses two/, "what one paid generation costs against the cap");
-	assert.doesNotMatch(limits, /one hundred\s+generations per account per day/, "imprecise: the cap counts requests");
-	assert.doesNotMatch(terms, /ten\s+generations per account per day/i, "stale: 10/20 are only code fallbacks");
+	assertGone(limits, /one hundred\s+generations per account per day/, "imprecise: the cap counts requests");
+	assertGone(terms, /ten\s+generations per account per day/i, "stale: 10/20 are only code fallbacks");
 	// services/client_ip.py keys IPv6 on the /64, not on whatever network a
 	// caller holds; a delegated /56 is 256 keys.
 	assert.match(limits, /each \/64 block/, "the IPv6 key is the /64");
-	assert.doesNotMatch(terms, /an IPv6 network counts as one address/, "imprecise: a larger IPv6 network is many keys");
+	assertGone(terms, /an IPv6 network counts as one address/, "imprecise: a larger IPv6 network is many keys");
 });
 
 // Paper trading is a database replay (services/paper_trading.py) and the live
@@ -497,19 +533,20 @@ test("the terms state the free allowance, the Gateway flow and the live caps", (
 // the Gateway approve + deposit. IPFS pinning never ran in production
 // (docs/adr/ipfs-pinning-not-live.md), and per-vault chat was deleted. All of
 // these are absences, so each is pinned on the RENDERED text (the source
-// comments name them in order to say they are gone; see rendered() above).
+// comments name them in order to say they are gone; see rendered() above), and
+// since the final triaged pass on what that text shows too (assertGone).
 
 test("neither page describes features that are not running", () => {
-	assert.doesNotMatch(terms, /paper trade genuinely\s+writes/i, "false: paper trading writes nothing to a chain");
+	assertGone(terms, /paper trade genuinely\s+writes/i, "false: paper trading writes nothing to a chain");
 	assert.match(terms, /Paper\s+trading, by contrast, is simulated/, "the paper-trading position must be stated");
 	for (const [name, page] of [
 		["Privacy", privacy],
 		["Terms", terms],
 	]) {
-		assert.doesNotMatch(rendered(page), /pinned to IPFS|pinning a\s+provenance record|IPFS\s+records/i, `${name}: no IPFS pinning runs`);
+		assertGone(rendered(page), /pinned to IPFS|pinning a\s+provenance record|IPFS\s+records/i, `${name}: no IPFS pinning runs`);
 	}
 	assert.match(privacy, /do\s+not pin anything to IPFS/, "the absence of pinning must be stated, not just omitted");
-	assert.doesNotMatch(rendered(privacy), /chat you have with the agent/i, "per-vault chat was deleted");
+	assertGone(rendered(privacy), /chat you have with the agent/i, "per-vault chat was deleted");
 });
 
 // #1908 (#1911): auth/auth.js dropIdToken nulls idToken on every account write,
@@ -519,9 +556,9 @@ test("neither page describes features that are not running", () => {
 // before it, expired rows (with their IP and user-agent) were never deleted.
 test("the privacy policy states the token and session facts #1908 made true", () => {
 	assert.match(privacy, /We do not store the ID token/, "the dropped ID token must be stated");
-	assert.doesNotMatch(privacy, /tokens it issued\.\s+Those tokens are encrypted/, "stale: the ID token was not encrypted");
+	assertGone(privacy, /tokens it issued\.\s+Those tokens are encrypted/, "stale: the ID token was not encrypted");
 	assert.match(privacy, /job that runs every\s+hour\s+deletes\s+expired session records/, "the session sweep must be stated");
-	assert.doesNotMatch(privacy, /Sessions last seven days/, "stale: sessions roll, and expired rows used to persist");
+	assertGone(privacy, /Sessions last seven days/, "stale: sessions roll, and expired rows used to persist");
 });
 
 // Once the page says you are really charged, what happens when the thing you
@@ -537,7 +574,7 @@ test("the terms describe repayment as a credit and never promise a refund", () =
 	// Scoped to PROMISES. The page legitimately uses the words "refund" and
 	// "money-back guarantee" to deny them, so a bare /refund/ would forbid the
 	// honest sentence along with the dishonest one.
-	assert.doesNotMatch(
+	assertGone(
 		terms,
 		/(we will refund|we can refund|refund your|a full refund|refunded to you)/i,
 		"no refund promise — the outbound transfer path does not exist today",
@@ -569,7 +606,7 @@ test("governing law names Illinois, and no other jurisdiction", () => {
 		/courts located in Illinois/,
 		"venue must be named too — governing law alone leaves where-you-sue open",
 	);
-	assert.doesNotMatch(
+	assertGone(
 		governing,
 		/\b(Delaware|England|Wales|Singapore|Switzerland|New York|California|Texas|Massachusetts)\b/i,
 		"no jurisdiction other than Illinois may appear in this section",
@@ -585,7 +622,7 @@ test("no unresolved owner-decision markers remain on either page", () => {
 		["Privacy", privacy],
 		["Terms", terms],
 	]) {
-		assert.doesNotMatch(page, /\[OWNER TO SPECIFY\]/, `${name} still carries an unresolved owner decision`);
+		assertGone(page, /\[OWNER TO SPECIFY\]/, `${name} still carries an unresolved owner decision`);
 	}
 });
 
@@ -601,7 +638,7 @@ test("the operator line does not imply a company that does not exist", () => {
 	]) {
 		assert.match(page, /operated under the name APRIN&nbsp;Labs/, `${name} must name the operator`);
 		assert.match(page, /not a registered company/, `${name} must not leave incorporation implied`);
-		assert.doesNotMatch(page, /operated by APRIN/, `${name} must not imply APRIN Labs is a company`);
+		assertGone(page, /operated by APRIN/, `${name} must not imply APRIN Labs is a company`);
 	}
 });
 
@@ -628,22 +665,22 @@ test("both pages describe the deposit, the device key and unlinking as they work
 	]) {
 		const body = rendered(page);
 		assert.match(body, /Whenever your Gateway balance is too low for a payment/, `${name}: when a deposit happens`);
-		assert.doesNotMatch(body, /Your first payment includes a deposit/, `${name}: a deposit is not tied to the first payment`);
+		assertGone(body, /Your first payment includes a deposit/, `${name}: a deposit is not tied to the first payment`);
 		assert.match(body, /credited to a\s+device payment key/, `${name}: the deposit is credited, not sent to the browser`);
-		assert.doesNotMatch(body, /deposit goes instead\s+to a device/, `${name}: the funds never go to the browser`);
+		assertGone(body, /deposit goes instead\s+to a device/, `${name}: the funds never go to the browser`);
 		assert.match(body, /can no longer be\s+spent from the site/, `${name}: cleared storage strands the remainder`);
 		assert.match(body, /device payment key\s+signs it without a prompt/, `${name}: the passkey path signs without the user`);
-		assert.doesNotMatch(body, /For each generation you sign a payment authorisation/, `${name}: a credit or a device key means no user signature`);
+		assertGone(body, /For each generation you sign a payment authorisation/, `${name}: a credit or a device key means no user signature`);
 		assert.match(body, /it can no longer be\s+unlinked/, `${name}: the 409 on unlink must be disclosed`);
-		assert.doesNotMatch(body, /you can unlink it in Account Settings|where\s+you can remove it/, `${name}: false once the key backs a strategy`);
+		assertGone(body, /you can unlink it in Account Settings|where\s+you can remove it/, `${name}: false once the key backs a strategy`);
 		assert.match(body, /when you go back from\s+the\s+run&rsquo;s live view/, `${name}: where the settlement receipt appears`);
 	}
-	assert.doesNotMatch(terms, /site shows a settlement reference when a payment completes/, "the stream view replaces the page on success");
+	assertGone(terms, /site shows a settlement reference when a payment completes/, "the stream view replaces the page on success");
 	// generation_payment.py verifies and settles against the price on the paid
 	// request, not against the quote the user saw; only the signed amount holds.
 	const limits = sectionBody(terms, "Limits and fair use");
 	assert.match(limits, /never charged more\s+than the amount your payment authorisation names/, "the true price guarantee");
-	assert.doesNotMatch(limits, /quote you are\s+shown before you pay is the price that applies/, "false in the price-change window");
+	assertGone(limits, /quote you are\s+shown before you pay is the price that applies/, "false in the price-change window");
 });
 
 test("the privacy policy states the second audit's infrastructure facts", () => {
@@ -656,20 +693,20 @@ test("the privacy policy states the second audit's infrastructure facts", () => 
 	// The managed rules (IP reputation included) sit only on the regional ACL
 	// at the ALB, which sees the CloudFront peer, not the visitor.
 	assert.match(logs, /a second firewall at our load balancer/, "the two firewalls must be told apart");
-	assert.doesNotMatch(logs, /including an IP-reputation list/, "the reputation list never sees a CDN visitor's IP");
+	assertGone(logs, /including an IP-reputation list/, "the reputation list never sees a CDN visitor's IP");
 	assert.match(logs, /and to diagnose problems/, "the logs are operational, not security-only");
-	assert.doesNotMatch(logs, /All of this exists to keep accounts secure/, "the purpose list was narrower than the uses");
+	assertGone(logs, /All of this exists to keep accounts secure/, "the purpose list was narrower than the uses");
 
 	// The vid cookie is minted by the FastAPI middleware, so it arrives on the
 	// first /api/ response (App.jsx fetches /api/features on every load).
 	const visitors = sectionBody(privacy, "Counting visitors");
 	assert.match(visitors, /The first time a page calls our server&rsquo;s API/, "when the vid cookie is set");
-	assert.doesNotMatch(visitors, /On its first response/, "the HTML response sets no cookie");
+	assertGone(visitors, /On its first response/, "the HTML response sets no cookie");
 	// #1927 put POST /api/vaults/create behind the server roadmap gate, so the
 	// vault_deployed step cannot fire; the server-counted list names only the
 	// steps that can (wallet_gate_shown, generation_started,
 	// free_generation_used in generate_routes.py).
-	assert.doesNotMatch(visitors, /deploying\s+a\s+vault/, "vault_deployed cannot fire with the roadmap gate off");
+	assertGone(visitors, /deploying\s+a\s+vault/, "vault_deployed cannot fire with the roadmap gate off");
 	assert.match(
 		visitors,
 		/being asked\s+to connect a wallet, and starting a generation \(and whether it was a\s+free one\)/,
@@ -679,13 +716,13 @@ test("the privacy policy states the second audit's infrastructure facts", () => 
 	// GitHub's default scopes are read:user and user:email (@better-auth/core).
 	const oauth = sectionBody(privacy, "If you sign in with Google or GitHub");
 	assert.match(oauth, /from GitHub, read access to your\s+profile and your email addresses/, "GitHub's real scopes");
-	assert.doesNotMatch(oauth, /contacts or anything else/, "read:user and user:email are more than name and avatar");
+	assertGone(oauth, /contacts or anything else/, "read:user and user:email are more than name and avatar");
 
 	// persist_proposal runs after the winner is saved and backtested, so a run
 	// cancelled, crashed or timed out before then keeps no candidates.
 	const made = sectionBody(privacy, "What you make on Archimedes");
 	assert.match(made, /gets as far as saving its strategy and\s+backtesting it/, "when candidates are kept");
-	assert.doesNotMatch(made, /gets as far as producing candidates/, "false: runs with candidates can still end before the write");
+	assertGone(made, /gets as far as producing candidates/, "false: runs with candidates can still end before the write");
 
 	// Inverted by the final pass. This guard used to REQUIRE the disclosure that
 	// "our API still accepts a vault-deployment request", because
@@ -697,9 +734,9 @@ test("the privacy policy states the second audit's infrastructure facts", () => 
 	// absence is checked on the whole rendered text of both pages, not one
 	// section, so the removed paragraph cannot come back somewhere else.
 	for (const page of [rendered(privacy), rendered(terms)]) {
-		assert.doesNotMatch(page, /still\s+accepts\s+a\s+vault-deployment\s+request/, "the route is gated off since #1927");
-		assert.doesNotMatch(page, /One\s+exception:/, "no API exception to the blockchain section remains");
-		assert.doesNotMatch(page, /deploying\s+a\s+vault/i, "vault_deployed cannot fire with the roadmap gate off");
+		assertGone(page, /still\s+accepts\s+a\s+vault-deployment\s+request/, "the route is gated off since #1927");
+		assertGone(page, /One\s+exception:/, "no API exception to the blockchain section remains");
+		assertGone(page, /deploying\s+a\s+vault/i, "vault_deployed cannot fire with the roadmap gate off");
 	}
 	const vaultsRoutes = readFileSync(new URL("../../backend/archimedes/api/vaults_routes.py", import.meta.url), "utf8");
 	assert.match(
@@ -723,12 +760,12 @@ test("the privacy policy states the second audit's infrastructure facts", () => 
 // no longer describe chat rows it does not hold.
 test("the retention and deletion lists no longer name per-vault chat rows", () => {
 	const body = rendered(privacy);
-	assert.doesNotMatch(body, /\bchat\b/i, "#1926 deleted the chat rows; the page must not list them");
-	assert.doesNotMatch(body, /chat_messages/, "no chat table is described on the page");
+	assertGone(body, /\bchat\b/i, "#1926 deleted the chat rows; the page must not list them");
+	assertGone(body, /chat_messages/, "no chat table is described on the page");
 	const deletion = sectionBody(privacy, "How long we keep things, and how to get them deleted");
 	const untouched = deletion.match(/<strong>Not touched by account deletion:<\/strong>([\s\S]*?)<\/li>/);
 	assert.ok(untouched, "the Not touched by account deletion bullet must exist");
-	assert.doesNotMatch(untouched[1], /chat|messages/i, "no chat rows are left for account deletion to miss");
+	assertGone(untouched[1], /chat|messages/i, "no chat rows are left for account deletion to miss");
 	assert.match(untouched[1], /free-generation record and the\s+wallet ledger/, "the FK-less records stay named");
 });
 
@@ -747,8 +784,8 @@ test("the privacy policy commits to erasure and a copy on request", () => {
 	);
 	assert.match(deletion, /If\s+you\s+ask\s+us\s+to\s+erase\s+your\s+data,\s+we\s+will\s+delete\s+your\s+account/, "deletion only on an erasure request");
 	assert.match(deletion, /If\s+you\s+ask\s+for\s+a\s+copy,\s+we\s+will\s+send\s+you\s+a\s+copy/, "a copy is its own request");
-	assert.doesNotMatch(deletion, /We\s+will\s+also\s+send\s+you\s+a\s+copy/, "the bundled reading is gone");
-	assert.doesNotMatch(deletion, /erase\s+the\s+rest/, "the body narrows it: detached rows are scrubbed, not erased");
+	assertGone(deletion, /We\s+will\s+also\s+send\s+you\s+a\s+copy/, "the bundled reading is gone");
+	assertGone(deletion, /erase\s+the\s+rest/, "the body narrows it: detached rows are scrubbed, not erased");
 	assert.match(
 		deletion,
 		/erase\s+your\s+payment\s+receipts,\s+credit\s+ledger\s+\(which\s+gives\s+up\s+any\s+unspent\s+credit\),\s+free-generation\s+record,\s+the\s+reasoning\s+records\s+of\s+your\s+paper-trading\s+decisions\s+and\s+your\s+wallet&rsquo;s\s+entries\s+in\s+the\s+wallet\s+ledger/,
@@ -756,7 +793,7 @@ test("the privacy policy commits to erasure and a copy on request", () => {
 	);
 	assert.match(
 		deletion,
-		/remove\s+your\s+brief\s+text,\s+any\s+strategy\s+name\s+you\s+typed,\s+and\s+your\s+wallet\s+address\s+from\s+the\s+records\s+that\s+were\s+detached\s+from\s+you/,
+		/remove\s+your\s+brief\s+text,\s+any\s+strategy\s+or\s+vault\s+name\s+you\s+typed,\s+and\s+your\s+wallet\s+address\s+from\s+the\s+records\s+that\s+were\s+detached\s+from\s+you/,
 		"what is scrubbed from detached records",
 	);
 	// Proof, and where the copy goes: a wallet signature must not stand in for
@@ -767,13 +804,21 @@ test("the privacy policy commits to erasure and a copy on request", () => {
 		/While\s+the\s+account\s+exists,\s+a\s+wallet\s+signature\s+covers\s+only\s+that\s+wallet&rsquo;s\s+records/,
 		"a wallet proves only its own records while the account exists",
 	);
-	assert.match(deletion, /we\s+never\s+ask\s+for\s+identity\s+documents/);
+	// Final triaged pass: its own sentence, so "while the account exists" does
+	// not limit it.
+	assert.match(deletion, /\.\s+We\s+never\s+ask\s+for\s+identity\s+documents\./);
+	assertGone(deletion, /and\s+we\s+never\s+ask\s+for\s+identity\s+documents/, "the clause read as limited to a live account");
 	assert.match(deletion, /we\s+will\s+delete\s+your\s+account\s+if\s+it\s+still\s+exists/, "a live account is deleted first");
 	assert.match(deletion, /Write\s+before\s+you\s+delete\s+your\s+account\s+yourself/, "the order the request needs");
-	assert.match(deletion, /send you a copy of the data we hold about you/);
+	// Final triaged pass: a copy the operator can actually assemble.
+	assert.match(
+		deletion,
+		/send\s+you\s+a\s+copy\s+of\s+the\s+records\s+we\s+hold\s+about\s+your\s+account\s+or\s+wallet\s+in\s+our\s+database,\s+other\s+than\s+password\s+hashes\s+and\s+sign-in\s+tokens\./,
+	);
+	assertGone(deletion, /a\s+copy\s+of\s+the\s+data\s+we\s+hold\s+about\s+you/, "unscoped: logs, backups and Gmail are not in a copy");
 	assert.match(deletion, /handled by hand/, "no self-service export exists, and the page must say so");
 	assert.match(deletion, /show that the\s+account or wallet is yours/, "proof of ownership before acting");
-	assert.doesNotMatch(deletion, /If you want any of the detached or untouched records removed/, "superseded by the commitment");
+	assertGone(deletion, /If you want any of the detached or untouched records removed/, "superseded by the commitment");
 	assert.match(sectionBody(privacy, "Contact"), /requests to delete or get a copy of your data/);
 });
 
@@ -785,21 +830,21 @@ test("the privacy policy states no visitor-id link, past or present", () => {
 	const body = rendered(privacy);
 	assert.match(body, /Entries in the ledger do not include the\s+anonymous visitor id/);
 	assert.match(body, /We do not link the visitor id\s+to your account or your wallet\./);
-	assert.doesNotMatch(body, /summer\s+2026/i, "the past exception was purged by #1926");
-	assert.doesNotMatch(body, /New\s+entries\s+do\s+not\s+include/, "no entries include it, not only new ones");
-	assert.doesNotMatch(body, /one\s+past\s+exception/);
+	assertGone(body, /summer\s+2026/i, "the past exception was purged by #1926");
+	assertGone(body, /New\s+entries\s+do\s+not\s+include/, "no entries include it, not only new ones");
+	assertGone(body, /one\s+past\s+exception/);
 });
 
 // E3: the EC2 server's EBS snapshot was deleted on 2026-10-02 (0 EBS snapshots
 // and 0 manual Aurora snapshots, verified 2026-10-03), so the 7-day automated
 // backups are the only copies and the page must not describe another.
 test("the privacy policy names no snapshot that no longer exists", () => {
-	assert.doesNotMatch(rendered(privacy), /snapshot/i, "no disk or database snapshot remains");
-	assert.doesNotMatch(rendered(terms), /snapshot/i);
+	assertGone(rendered(privacy), /snapshot/i, "no disk or database snapshot remains");
+	assertGone(rendered(terms), /snapshot/i);
 	// A paraphrase of the removed sentence ("the decommissioned server's disk
 	// image") would pass the word check above.
-	assert.doesNotMatch(rendered(privacy), /decommissioned/i, "the EC2 server's disk image is gone");
-	assert.doesNotMatch(rendered(terms), /decommissioned/i);
+	assertGone(rendered(privacy), /decommissioned/i, "the EC2 server's disk image is gone");
+	assertGone(rendered(terms), /decommissioned/i);
 	const deletion = sectionBody(privacy, "How long we keep things, and how to get them deleted");
 	assert.match(deletion, /automated database backups for up to 7\s+days/, "the backup window stays disclosed");
 });
@@ -807,13 +852,19 @@ test("the privacy policy names no snapshot that no longer exists", () => {
 // Audit round 1 (2026-10-03): disclosures the page left out, each pinned
 // whitespace-tolerant so a re-wrap cannot hide a removal.
 test("the privacy policy discloses what the first audit round found missing", () => {
-	// #1804: the SES feedback drain stamps auth_users.emailBouncedAt /
-	// emailBounceKind, and auth/auth.js bounceRefusal refuses on it.
-	assert.match(
+	// #1804's SES feedback drain would stamp auth_users.emailBouncedAt /
+	// emailBounceKind, and auth/auth.js bounceRefusal refuses on it. Round 1
+	// added a sentence saying so; the final triaged pass removed it, because the
+	// stack is not applied live (checked 2026-10-03: no event destination, no
+	// drain task definition, no schedule), so nothing writes the stamp. Pinned
+	// absent until the change that applies #1837 re-adds it, and the header
+	// comment must keep saying why.
+	assertGone(
 		sectionBody(privacy, "Emails we send"),
 		/Our\s+own\s+database\s+also\s+records\s+on\s+your\s+account\s+that\s+your\s+address\s+bounced/,
-		"the bounce/complaint stamp on the account row",
+		"the bounce stamp is never written in production until #1837 is applied",
 	);
+	assert.match(privacy, /Re-add the\s+\/\/\s+sentence in the same change that applies #1837\./);
 	// nginx main_redacted logs "$log_http_referer".
 	assert.match(sectionBody(privacy, "IP addresses and logs"), /the\s+page\s+that\s+linked\s+to\s+it\s+\(the\s+referrer\)/);
 	// mkdocs-material 9.7.7 loads mermaid from unpkg on pages with diagrams.
@@ -829,7 +880,7 @@ test("the privacy policy discloses what the first audit round found missing", ()
 	assert.match(erased[1], /everything\s+recorded\s+under\s+them\s+in\s+our\s+database/, "erasure is scoped to the database");
 	const untouched = deletion.match(/<strong>Not touched by account deletion:<\/strong>([\s\S]*?)<\/li>/);
 	assert.match(untouched[1], /the\s+reasoning\s+record\s+of\s+each\s+paper-trading\s+decision,\s+which\s+we\s+keep\s+in\s+our\s+cache/);
-	assert.match(deletion, /They\s+still\s+contain\s+your\s+brief\s+text,\s+any\s+strategy\s+name\s+you\s+typed/);
+	assert.match(deletion, /They\s+still\s+contain\s+your\s+brief\s+text,\s+any\s+strategy\s+or\s+vault\s+name\s+you\s+typed/);
 	// privacy@ mail, replies and any copy sent stay in a personal Gmail inbox.
 	assert.match(deletion, /messages\s+you\s+send\s+to\s+our\s+privacy\s+address\s+and\s+our\s+replies/);
 	// The pre-deletion dialog lists the same not-touched database records.
@@ -859,7 +910,7 @@ test("the policy pages carry the second audit round's corrections", () => {
 	// closed lists had to be scoped.
 	const emails = sectionBody(privacy, "Emails we send");
 	assert.match(emails, /Our\s+sign-in\s+service\s+emails\s+you\s+only\s+about\s+your\s+account:/);
-	assert.doesNotMatch(emails, /We\s+email\s+you\s+only\s+about\s+your\s+account/, "false: replies to privacy@ are email too");
+	assertGone(emails, /We\s+email\s+you\s+only\s+about\s+your\s+account/, "false: replies to privacy@ are email too");
 	assert.match(emails, /our\s+answers\s+are\s+sent\s+from\s+the\s+operator&rsquo;s\s+Gmail\s+inbox/);
 	assert.match(sectionBody(privacy, "What we do not do"), /or\s+used\s+to\s+write\s+to\s+us\./);
 	// The claims ledger's profile-visibility and visitor-marker rows cite these.
@@ -888,11 +939,15 @@ test("the policy pages carry the second audit round's corrections", () => {
 	// and a credit is looked up by account id only.
 	const body = rendered(terms);
 	assert.match(body, /fails,\s+times\s+out,\s+is\s+cancelled,\s+or\s+never\s+starts/);
-	assert.doesNotMatch(body, /fails,\s+crashes,\s+or\s+never\s+starts/, "a hard process death skips the release");
+	assertGone(body, /fails,\s+crashes,\s+or\s+never\s+starts/, "a hard process death skips the release");
+	// Final triaged pass: a database or cache failure can keep the hand-back
+	// from happening too (generation_credits.settle, free_generations.stamp_job
+	// and both release helpers swallow their failures).
 	assert.match(
 		body,
-		/If\s+our\s+server\s+itself\s+goes\s+down\s+after\s+a\s+run\s+is\s+accepted,\s+neither\s+is\s+handed\s+back\s+automatically\./,
+		/If\s+our\s+server,\s+database\s+or\s+cache\s+fails,\s+the\s+credit\s+or\s+free\s+generation\s+may\s+not\s+be\s+handed\s+back\s+automatically\./,
 	);
+	assertGone(body, /If\s+our\s+server\s+itself\s+goes\s+down/, "too narrow: database and cache failures do the same");
 	assert.match(
 		body,
 		/deleting\s+the\s+account,\s+or\s+asking\s+us\s+to\s+erase\s+your\s+records,\s+gives\s+up\s+any\s+credit\s+you\s+have\s+not\s+spent/,
@@ -901,7 +956,9 @@ test("the policy pages carry the second audit round's corrections", () => {
 	// the on-request route needs.
 	const closing = sectionBody(terms, "Suspension and termination");
 	assert.match(closing, /how\s+to\s+ask\s+us\s+to\s+erase\s+or\s+scrub\s+the\s+rest\s+or\s+send\s+you\s+a\s+copy/);
-	assert.match(closing, /Ask\s+before\s+you\s+delete\s+the\s+account\s+yourself/);
+	// Final triaged pass: "Ask before you delete" read as asking permission.
+	assert.match(closing, /If\s+you\s+want\s+any\s+of\s+that,\s+ask\s+for\s+it\s+before\s+you\s+delete\s+your\s+account\s+yourself/);
+	assertGone(closing, /Ask\s+before\s+you\s+delete\s+the\s+account\s+yourself/, "ambiguous: ask what?");
 
 	// The sign-up screen renders outside both shells, so neither footer's
 	// policy links reach it; it carries them itself, above the OAuth buttons.
@@ -914,11 +971,74 @@ test("the policy pages carry the second audit round's corrections", () => {
 			authPage.indexOf("By creating an account") < authPage.indexOf('className="auth-social-group"'),
 		"the notice must sit above the OAuth buttons, which create accounts too",
 	);
+	// Final triaged pass: on /sign-in too. "Continue with Google" and "Continue
+	// with GitHub" there create an account for an address that has none
+	// (auth/auth.js sets no disableSignUp or disableImplicitSignUp), so the
+	// notice must not be gated on the sign-up mode. Everything between the
+	// cross-link row and the OAuth group renders on both screens.
+	const aboveOauth = authPage.slice(
+		authPage.indexOf('className="auth-alt-action"'),
+		authPage.indexOf('className="auth-social-group"'),
+	);
+	assert.match(aboveOauth, /By\s+creating\s+an\s+account\s+you\s+agree\s+to\s+the/);
+	assert.doesNotMatch(aboveOauth, /\{\s*creating\s*&&/, "the 18+ and Terms notice must show on /sign-in as well");
+	assert.equal((authPage.match(/By\s+creating\s+an\s+account/g) || []).length, 1, "one notice, reused, not a second copy");
 
 	// The banner's optional count is browser storage only: archimedes_vid is
 	// an analytics entry the server sets whatever the choice.
 	assert.match(consentBanner, /entry\.store\s*!==\s*"cookie"/);
 	assert.match(consentBanner, /more,\s+in\s+your\s+browser,\s+are\s+optional/);
+});
+
+// The final triaged pass (2026-10-03): each fix pinned on what the reader is
+// shown, whitespace-tolerant, with the text it replaced pinned absent.
+test("the policy pages carry the final triaged fixes", () => {
+	const page = shown(privacy);
+
+	// The hand-back of a failed free or paid run carries Terms' qualifier
+	// (see the Terms assertion in the round-2 test above).
+	const runs = visible(sectionBody(privacy, "Free generations and payments"));
+	assert.match(runs, /A free run that fails to produce a strategy is handed back, unless our server, database or cache fails along the way\./);
+	assert.match(runs, /leaves the credit with you, unless our server, database or cache fails along the way\./);
+	assertGone(runs, /strategy is handed back\. That record/, "unqualified: a failure on our side can keep the slot spent");
+
+	// The load balancer's access log has a user_agent field, and CloudFront
+	// forwards the viewer's (origin request policy all_viewer).
+	assert.match(
+		visible(sectionBody(privacy, "IP addresses and logs")),
+		/Our load balancer logs every request with your browser user-agent and the full address requested/,
+	);
+
+	// WalletLinkChallenge also stores circle_wallet_id and consumed_at.
+	assert.match(
+		visible(sectionBody(privacy, "If you link a wallet")),
+		/Circle\u2019s id for the wallet if it is a Circle wallet, our site\u2019s address, and when it was issued, expires and was used\)/,
+	);
+
+	// /list-sessions needs a session younger than freshAge (24h).
+	assert.match(page, /Account Settings lists your sessions, if you signed in within the last 24 hours, and lets you end any of them\./);
+
+	// The on-request paragraph: an anti-phishing line, and the typed vault name.
+	const deletion = visible(sectionBody(privacy, "How long we keep things, and how to get them deleted"));
+	assert.match(
+		deletion,
+		/That message moves no funds and approves nothing, and we will never ask you to sign a transaction to prove a request\./,
+	);
+	assert.match(deletion, /any strategy or vault name you typed, and your wallet address from the records that were detached from you/);
+	assertGone(deletion, /any strategy name you typed/, "vault_metadata keeps a typed vault name and symbol too");
+	// Detached rows re-attach when the wallet is linked again
+	// (wallet_routes.claim_legacy_wallet_data, from _link_verified_wallet).
+	assert.match(deletion, /If that wallet is later linked to an account again, the records that carry it show up under that account\./);
+	// The credit ledger outlives the account, but its unspent credit is unusable.
+	assert.match(deletion, /your credit ledger \(an unspent credit can no longer be used\)/);
+
+	// The storage-inventory row's page end: the pointer to /security.
+	assert.match(sectionBody(privacy, "Cookies and browser storage"), /href="\/security#storage-disclosure"/);
+	assert.match(page, /The Security page lists every cookie and storage key by name, with what each one reveals\./);
+
+	// Bedrock prompt logging: the sentence, and its evidence in the header.
+	assert.match(page, /Bedrock\u2019s own prompt logging is switched off in our account\./);
+	assert.match(privacy, /get-model-invocation-logging-configuration/);
 });
 
 // The owner's seven commitments (#1432), kept word for word. Matched
@@ -938,6 +1058,6 @@ const wordForWord = (s) =>
 
 test("the owner's seven promises stay word for word", () => {
 	for (const [page, sentence] of OWNER_PROMISES) {
-		assert.match(rendered(page), wordForWord(sentence), sentence.slice(0, 60));
+		assert.match(shown(page), wordForWord(sentence), sentence.slice(0, 60));
 	}
 });
