@@ -47,8 +47,10 @@ than one that omits the endpoint, so the drift is caught in CI rather than by th
 A feature-gated route still appears in OpenAPI while it 404s, so that check cannot see
 one. ``POST /api/vaults/create``, ``POST /api/marketplace/publish`` and ``POST
 /api/marketplace/subscribe`` are gated by ``FEATURE_ROADMAP_SURFACES`` (#1432) and are
-listed only while that flag is on; ``backend/tests/test_vault_create_roadmap_gate.py``
-checks this manifest and the static card against every roadmap-gated route.
+listed only while that flag is on. ``POST /api/vaults/metadata`` sits behind the same
+gate and is not listed in either state, as it was not before the gate;
+``backend/tests/test_vault_create_roadmap_gate.py`` checks this manifest and the
+static card against every roadmap-gated route.
 ``test_agent_discovery.py`` also asserts that every route shared with the static
 ``ui/public/.well-known/agent.json`` card carries the SAME auth flag on both surfaces:
 two discovery documents that disagree about whether a call needs a session send the
