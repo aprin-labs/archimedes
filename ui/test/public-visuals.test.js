@@ -500,9 +500,13 @@ test("security page is a canonical public destination", () => {
 	assert.match(app, /security:\s*["']\/security["']/);
 	assert.match(app, /route\.page === ["']security["'][\s\S]*<Security \/>/);
 	assert.match(publicLayout, /href="\/security"[\s\S]*Security/);
-	// One in-body link; the second (footer) moved to the shell with #1432,
-	// so every public page carries it — asserted on publicLayout above.
+	// One in-body link; the second (footer) moved to the shell with #1432, so
+	// every public page carries it. The header link alone satisfies the match
+	// above, so the footer's is asserted on the footer itself.
 	assert.ok((landing.match(/href="\/security"/g) ?? []).length >= 1);
+	const footerAt = publicLayout.indexOf('<footer className="public-footer">');
+	assert.ok(footerAt > -1, "the shell footer must exist");
+	assert.match(publicLayout.slice(footerAt), /href="\/security"/, "the shell footer must keep its Security link");
 	assert.match(sitemap, /<loc>https:\/\/archimedes-arc\.com\/security<\/loc>/);
 });
 

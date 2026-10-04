@@ -30,10 +30,10 @@ export const DELETION_ERASED = [
   { table: 'api_keys', label: 'every API key minted for this account — revoked and erased; any script still holding one gets 401 on its next call' },
   { table: 'auth_accounts', label: 'your sign-in methods — the password itself, and any linked Google or GitHub' },
   { table: 'linked_wallets', label: 'your wallet links (the account↔wallet binding here, never anything on-chain)' },
-  { table: 'wallet_link_challenges', label: 'any wallet-link challenge still outstanding' },
+  { table: 'wallet_link_challenges', label: 'every wallet-link challenge issued to this account, completed or not' },
   { table: 'user_profiles', label: 'your profile row, including the encrypted contact email stored in it' },
   { table: 'paper_deployments', label: 'your paper-trading deployments and the daily returns recorded under them' },
-  { table: 'auth_email_deliveries', label: 'the record of verification and password-reset emails we sent to your address, including the address itself' },
+  { table: 'auth_email_deliveries', label: 'the record of every account email we sent you (verification, password reset, email-change confirmation and sign-in-method alerts), including the address itself' },
 ]
 
 // Rows that survive with `owner_user_id` set to NULL, because other
@@ -56,7 +56,7 @@ export const DELETION_DETACHED = [
 // explicitly and leaves both columns alone.
 export const DELETION_RETAINED = [
   { table: 'payment_receipts', label: 'receipts for generations you paid for' },
-  { table: 'generation_credits', label: 'the generation-credit ledger those payments wrote' },
+  { table: 'generation_credits', label: 'the generation-credit ledger those payments wrote; an unspent credit can no longer be used' },
   { table: 'free_generation_grants', label: 'the record of the free generations your account used' },
   { table: 'identity_events', label: 'the wallet ledger entries for any wallet you linked, which are kept by wallet address' },
 ]

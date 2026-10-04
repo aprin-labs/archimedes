@@ -534,6 +534,19 @@ export default function AuthPage({ mode, oauthError }) {
               </a>
             </p>
 
+            {/* The account and its data are created on this screen, and it
+                renders outside both shells, so neither footer's policy links
+                reach it. Above the OAuth buttons, which create accounts too. */}
+            {creating && (
+              <p className="caption mt-4">
+                By creating an account you agree to the{' '}
+                <a className="text-[var(--accent)] underline" href="/terms">Terms of Service</a> and
+                confirm you are 18 or older. The{' '}
+                <a className="text-[var(--accent)] underline" href="/privacy">Privacy Policy</a> explains
+                what we keep.
+              </p>
+            )}
+
             {/* Hairline only, no "or continue with" label: each button already
                 says "Continue with …", and a label there would read as an
                 alternative to the create-account row directly above it. */}

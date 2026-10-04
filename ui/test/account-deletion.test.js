@@ -167,3 +167,24 @@ test("every deletion row carries a plain-language sentence, not a bare table nam
 		assert.doesNotMatch(row.label, /_/, `${row.table}'s description leaks a database identifier: ${row.label}`);
 	}
 });
+
+// ── The dialog's own sentences (#1432 audit round 2) ────────────────────
+//
+// The Privacy page makes on-request erasure and the copy depend on writing
+// BEFORE deleting, and lists the paper-trading reasoning records in our cache
+// as not touched. The dialog is the only text a self-deleting user sees at
+// the irreversible moment, so it must say both, and it must not call the
+// detached rows anonymised: SET NULL clears owner_user_id only.
+const accountSettings = readFileSync(new URL("../src/components/AccountSettings.jsx", import.meta.url), "utf8");
+
+test("the deletion dialog says to write first, names the cached records, and does not imply anonymised rows", () => {
+	assert.match(
+		accountSettings,
+		/write\s+to\{' '\}\s*<a[^>]*href="mailto:privacy@archimedes-arc\.com"[^>]*>privacy@archimedes-arc\.com<\/a>\{' '\}\s*before\s+you\s+delete:/,
+	);
+	assert.match(accountSettings, /we\s+can\s+find\s+what\s+the\s+account\s+left\s+only\s+through\s+a\s+wallet\s+you\s+linked\s+or\s+paid\s+with/);
+	assert.match(accountSettings, /<a[^>]*href="\/privacy"[^>]*>Privacy Policy<\/a>/);
+	assert.match(accountSettings, /The\s+reasoning\s+record\s+of\s+each\s+paper-trading\s+decision,\s+kept\s+in\s+our\s+cache/);
+	assert.doesNotMatch(accountSettings, /with\s+your\s+name\s+taken\s+off\s+them/, "detached rows still hold the brief, name and wallet");
+	assert.match(accountSettings, /they\s+still\s+hold\s+your\s+brief\s+text,\s+any\s+strategy\s+name\s+you\s+typed/);
+});

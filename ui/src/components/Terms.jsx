@@ -48,6 +48,15 @@ import PolicyBanner from "./PolicyBanner";
 //   - the price check: generation_payment.py verifies and settles against the
 //     price on the paid request, not the quote the user saw; only the signed
 //     amount bounds the charge.
+//   - the credit and free-slot hand-back: both are spent at the enqueue
+//     (api/generate_routes.py:644, :655), and only
+//     release_entitlements_if_undelivered (:900), called from the run's own
+//     finally (:1050; scripts/run_generation_job.py:244 on the offload
+//     path), gives them back. A hard process death skips that finally and
+//     nothing sweeps later, so the page does not promise a hand-back when our
+//     server goes down. Credits are looked up only by user_id
+//     (models/generation_credit.py:67), so deleting or erasing the account
+//     gives up an unspent one, and the page says so.
 export default function Terms() {
 	return (
 		<div className="page-content policy-page">
@@ -136,12 +145,17 @@ export default function Terms() {
 						credit, not as a refund.
 					</strong>{" "}
 					A settled payment buys a credit, and a generation spends it; if the run
-					fails, crashes, or never starts, the credit stays yours and your next
-					attempt spends it instead of charging you again. Credits do not expire.
-					A free generation that does not produce a strategy is handed back the
-					same way. We are being direct that this is not a money-back guarantee:
-					settlement runs one way through our payment provider and the product
-					has no way to send test USDC back to you, so we do not offer refunds.
+					fails, times out, is cancelled, or never starts, the credit goes back
+					to you and your next attempt spends it instead of charging you again.
+					Credits do not expire. They belong to your account, so deleting the
+					account, or asking us to erase your records, gives up any credit you
+					have not spent. A free generation that does not produce a strategy
+					goes back to your free allowance in the same way. If our server itself
+					goes down after a run is accepted, neither is handed back
+					automatically. We are being direct that this is not a money-back
+					guarantee: settlement runs one way through our payment provider and
+					the product has no way to send test USDC back to you, so we do not
+					offer refunds.
 				</p>
 				<p>
 					The <em>other</em> payment path is the one that is switched off. The
@@ -318,9 +332,12 @@ export default function Terms() {
 				<p>
 					You can stop using it whenever you like, and you can delete your account
 					yourself in Account Settings; the{" "}
-					<a href="/privacy">Privacy Policy</a> describes what that removes and
-					what it leaves behind. Records on a public blockchain survive account
-					closure — nobody can delete those.
+					<a href="/privacy">Privacy Policy</a> describes what that removes, what
+					it leaves behind, and how to ask us to erase or scrub the rest or send
+					you a copy. Ask before you delete the account yourself, or ask us to
+					delete it for you: once it is gone, we can find what it left only
+					through a wallet you linked or paid with. Records on a public
+					blockchain survive account closure — nobody can delete those.
 				</p>
 			</section>
 

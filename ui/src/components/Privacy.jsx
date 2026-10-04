@@ -37,22 +37,33 @@ import PolicyBanner from "./PolicyBanner";
 //     with no TTL, holding owner_user_id and owner_wallet, plus a ZADD to
 //     archimedes:trace:index. The cascade removes only the Postgres index
 //     (paper_decision_traces: trace_id/trace_hash). Follow-up: purge on delete.
-//   - "On request, we will erase or scrub what account deletion leaves, and
-//     send you a copy" is done BY HAND by the operator. Proof first: for the
-//     account, the requester answers a message sent to its email address
+//   - "On request, we will erase or scrub what account deletion leaves, send
+//     you a copy, or both" is done BY HAND by the operator. Proof first: for
+//     the account, the requester answers a message sent to its email address
 //     (and the copy goes only there); for a wallet, they sign a message with
-//     it, which covers only that wallet's records. A passkey wallet is a
-//     smart account: verify its signature with the ERC-1271/6492 check in
-//     api/_erc6492.py, not plain ecrecover. Delete the account first if it
-//     still exists (deleting a live account's free_generation_grants would
-//     hand it its free runs again). What to change, checked against the
-//     models and migrations (no constraint blocks any of it; the only trigger
-//     in the schema is the BEFORE DELETE on auth_users, migration
-//     85ca5310b7a1):
+//     it, which, while the account exists, covers only that wallet's records.
+//     A passkey wallet is a smart account: verify its signature with the
+//     ERC-1271/6492 check in api/_erc6492.py, not plain ecrecover. The site
+//     gives a passkey holder no way to sign a message we send (signSiweMessage,
+//     ui/src/config.js:562, is called only by the link flow), so a passkey
+//     holder proves control by linking the passkey wallet to an account (a
+//     new one if theirs is deleted); the linked_wallets row is the proof.
+//     Find its device payment key, the payer_wallet on its receipts, from the
+//     smart account's depositFor calls on-chain (ui/src/x402.js:195-202).
+//     Delete the account first if it still exists (deleting a live account's
+//     free_generation_grants would hand it its free runs again). After
+//     deletion, a wallet signature authorises erasure of the rows under the
+//     account id recovered through that wallet (payment_receipts /
+//     generation_credits.payer_wallet, or identity_events.meta->>'job_id'
+//     and strategy_proposals.generation_id joined to
+//     free_generation_grants.job_id); a copy covers only rows that name that
+//     wallet. What to change, checked against the models and migrations (no
+//     constraint blocks any of it; the only trigger in the schema is the
+//     BEFORE DELETE on auth_users, migration 85ca5310b7a1):
 //       Delete the rows (nothing has an FK into these tables):
 //         payment_receipts, generation_credits, free_generation_grants
-//           WHERE user_id = the account id (a deleted account's id can be
-//           recovered from receipts/credits by payer_wallet);
+//           WHERE user_id = the account id (recovered as above after
+//           deletion);
 //         identity_events WHERE wallet = the address;
 //         strategy_generators WHERE wallet_address = the address
 //           (wallet_address is NOT NULL, so the row goes rather than the
@@ -76,9 +87,12 @@ import PolicyBanner from "./PolicyBanner";
 //         strategy_store.owner_wallet (nullable, FK) -> NULL;
 //         strategy_proposals.payload is NOT NULL JSON text holding the brief
 //           under "intent" and the name under "strategy_spec"."strategy_name"
-//           and "extra"."strategy_name" (agents/generation_pipeline.py:1732,
-//           :1749): rewrite the JSON with those set to "" (no code looks
-//           "intent" up; the proposals API returns the JSON as stored);
+//           and the top-level "strategy_name" (persist_proposal spreads its
+//           extra dict into the stored payload,
+//           services/strategy_memory.py:93-100;
+//           agents/generation_pipeline.py:1732, :1749): rewrite the JSON with
+//           those set to "" (no code looks "intent" up; the proposals API
+//           returns the JSON as stored);
 //         strategy_proposals.owner_wallet (nullable, no FK) -> NULL;
 //         strategy_passports.owner_wallet and curator_wallet (nullable, FK)
 //           -> NULL (no brief or name column on this table);
@@ -249,11 +263,14 @@ export default function Privacy() {
 			<section>
 				<h2>Emails we send</h2>
 				<p>
-					We email you only about your account: to verify your address, to reset
-					your password, to confirm a change of email address, and to warn you
-					when a sign-in method is added to or removed from your account. We do
-					not send marketing email. Our emails are plain text, with no open or
-					click tracking.
+					Our sign-in service emails you only about your account: to verify your
+					address, to reset your password, to confirm a change of email address,
+					and to warn you when a sign-in method is added to or removed from your
+					account. We do not send marketing email. Our emails are plain text,
+					with no open or click tracking. If you write to our privacy address,
+					our answers are sent from the operator&rsquo;s Gmail inbox, including
+					the message that confirms a request comes from your account and any
+					copy of your data; they are not part of the record described next.
 				</p>
 				<p>
 					We keep a record of each of those emails: the address it went to,
@@ -739,7 +756,8 @@ export default function Privacy() {
 					<li>
 						<strong>We do not buy or import contact lists.</strong> The only
 						addresses we email are ones people gave us themselves: typed into our
-						forms, or supplied by the Google or GitHub sign-in they chose.
+						forms, supplied by the Google or GitHub sign-in they chose, or used to
+						write to us.
 					</li>
 				</ul>
 			</section>
@@ -813,26 +831,31 @@ export default function Privacy() {
 				</ul>
 				<p>
 					<strong>
-						On request, we will erase or scrub what account deletion leaves, and
-						send you a copy.
+						On request, we will erase or scrub what account deletion leaves, send
+						you a copy, or both.
 					</strong>{" "}
-					Write to the contact address below and we will delete your account if
-					it still exists, erase your payment receipts, credit ledger,
+					Write to the contact address below. If you ask us to erase your data,
+					we will delete your account if it still exists, erase your payment
+					receipts, credit ledger (which gives up any unspent credit),
 					free-generation record, the reasoning records of your paper-trading
 					decisions and your wallet&rsquo;s entries in the wallet ledger, and
 					remove your brief text, any strategy name you typed, and your wallet
-					address from the records that were detached from you. We will also
-					send you a copy of the data we hold about you. There is no
-					self-service export yet; these requests are handled by hand, and
+					address from the records that were detached from you. If you ask for
+					a copy, we will send you a copy of the data we hold about you. There
+					is no self-service export yet; these requests are handled by hand, and
 					before we erase or send anything we will ask you to show that the
 					account or wallet is yours: for the account, by answering a message
 					we send to its email address; for a wallet, by signing a message with
-					it. A wallet signature covers only that wallet&rsquo;s records, a copy
-					of account records goes only to the account&rsquo;s email address, and
-					we never ask for identity documents. Write before you delete your
-					account yourself, or ask us to delete it as part of the request: once
-					it is deleted, we can find what it left only through a wallet you
-					linked or paid with. Write the same way if you cannot sign in to
+					it (for a Circle passkey wallet, by linking it to an account here,
+					which signs our challenge). While the account exists, a wallet
+					signature covers only that wallet&rsquo;s records, a copy of account
+					records goes only to the account&rsquo;s email address, and we never
+					ask for identity documents. Write before you delete your account
+					yourself, or ask us to delete it as part of the request: once it is
+					deleted, we can find what it left only through a wallet you linked or
+					paid with. We can then erase what it left, but we can send a copy only
+					of that wallet&rsquo;s records, because there is no longer an account
+					email to send the rest to. Write the same way if you cannot sign in to
 					delete your account yourself.
 				</p>
 				<p>Limits, stated up front:</p>
@@ -849,6 +872,14 @@ export default function Privacy() {
 					<li>
 						An address on the SES do-not-send list stays there until we remove it
 						by hand.
+					</li>
+					<li>
+						Our correspondence with you, including any copy of your data we send,
+						stays in the operator&rsquo;s Gmail inbox (see above).
+					</li>
+					<li>
+						We cannot erase what Circle, Google or GitHub keep about you; see
+						&ldquo;Who else is in the path&rdquo;.
 					</li>
 				</ul>
 			</section>

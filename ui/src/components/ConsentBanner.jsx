@@ -30,8 +30,13 @@ export default function ConsentBanner() {
 	const acceptAll = () => decide({ functional: true, analytics: true });
 	const rejectOptional = () => decide({ functional: false, analytics: false });
 
+	// Browser storage only: archimedes_vid is an analytics entry, but the
+	// server sets that cookie whatever the choice, so it cannot be counted
+	// among the optional keys that stay off (the sentence below names it).
 	const optionalCount = STORAGE_INVENTORY.filter(
-		(entry) => entry.category === "functional" || entry.category === "analytics",
+		(entry) =>
+			(entry.category === "functional" || entry.category === "analytics") &&
+			entry.store !== "cookie",
 	).length;
 	const necessaryCount = STORAGE_INVENTORY.filter(
 		(entry) => entry.category === "necessary",
@@ -49,11 +54,10 @@ export default function ConsentBanner() {
 					<p>
 						{necessaryCount} cookies and keys are strictly necessary — sign-in,
 						wallet proof, and the checks that keep them correct. {optionalCount}{" "}
-						more are optional: preferences, progress markers, and one anonymous
-						drop-off counter. Until you choose, the optional ones are{" "}
-						<strong>off</strong> and your browser writes nothing optional; our
-						server still sets its anonymous visitor cookie (archimedes_vid)
-						either way.
+						more, in your browser, are optional: preferences, progress markers,
+						and one landing marker. Until you choose, those are{" "}
+						<strong>off</strong>; our server still sets its anonymous visitor
+						cookie (archimedes_vid) either way.
 					</p>
 					<p className="consent-banner__note">
 						No third-party trackers, no advertising, no consent SDK. Every key
