@@ -63,7 +63,7 @@ alembic>=1.19.1
 # build time and `libpq5` at runtime (both wired in backend/Dockerfile), and
 # local `conda env create` needs conda-forge `libpq` for `pg_config` (wired in
 # environment.yml). Do not "fix a slow build" by putting -binary back.
-psycopg2>=2.9.12
+psycopg2>=2.9.13
 redis>=8.1.0
 pydantic>=2.13.5
 # Declared because backend code IMPORTS IT DIRECTLY — `PydanticCustomError` in
