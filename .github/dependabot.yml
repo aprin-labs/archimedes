@@ -66,8 +66,24 @@ updates:
           - "version-update:semver-minor"
           - "version-update:semver-patch"
 
-  # Analytics engine — pip
-  - package-ecosystem: pip
+  # Wallet setup scripts — npm. The Circle SDKs pull axios in transitively, and
+  # until this entry existed nothing watched this lockfile.
+  - package-ecosystem: npm
+    directory: /wallet-setup
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - infra-tooling
+    commit-message:
+      prefix: "[deps][wallet-setup]"
+
+  # Analytics engine — uv. The README's workflow is `uv sync`, which installs
+  # from uv.lock. The `pip` ecosystem bumps pyproject.toml and leaves uv.lock
+  # where it is, so the lockfile went unwatched.
+  - package-ecosystem: uv
     directory: /analytics-engine
     schedule:
       interval: weekly
