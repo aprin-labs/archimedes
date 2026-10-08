@@ -23,7 +23,9 @@ import AuthPage from "./components/AuthPage";
 import Landing from "./components/Landing";
 import NotFound from "./components/NotFound";
 import PublicLayout from "./components/PublicLayout";
+import Privacy from "./components/Privacy";
 import Security from "./components/Security";
+import Terms from "./components/Terms";
 import "./App.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
@@ -192,6 +194,8 @@ export default function App() {
 			generate: "Generate · Archimedes",
 			architecture: "Architecture · Archimedes",
 			security: "Security · Archimedes",
+			privacy: "Privacy Policy · Archimedes",
+			terms: "Terms of Service · Archimedes",
 			library: "Library · Archimedes",
 			corpus: "Corpus · Archimedes",
 			quant: "Quant Lab · Archimedes",
@@ -237,6 +241,8 @@ export default function App() {
 		const canonicalPaths = {
 			architecture: "/architecture",
 			security: "/security",
+			privacy: "/privacy",
+			terms: "/terms",
 		};
 		canonical.href = new URL(
 			canonicalPaths[route.page] ?? "/",
@@ -274,6 +280,8 @@ export default function App() {
 	if (route.kind === "public") {
 		let content = <Landing onNavigate={navigateToPage} />;
 		if (route.page === "security") content = <Security />;
+		if (route.page === "privacy") content = <Privacy />;
+		if (route.page === "terms") content = <Terms />;
 		if (route.page === "architecture") {
 			content = <Architecture onNavigate={navigateToPage} />;
 		}

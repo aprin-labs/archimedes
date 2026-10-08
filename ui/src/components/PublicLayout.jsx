@@ -84,6 +84,72 @@ export default function PublicLayout({ user, children }) {
 			<div id="public-content" tabIndex="-1">
 				{children}
 			</div>
+			{/* Shell-level footer, moved here from Landing.jsx: it used to live on
+			    one page, so Architecture (and not-found) carried no footer at all
+			    and had nowhere to hang the policy links. Owning it at the shell
+			    means every public page — Landing, Architecture, Privacy, Terms,
+			    not-found — links to the policies, which is the point: Google's
+			    OAuth consent review looks for a discoverable privacy link, not a
+			    URL you only reach by typing it. */}
+			<footer className="public-footer">
+				<div className="public-shell public-footer__grid">
+					<div className="public-footer__brand">
+						<strong>Archimedes</strong>
+						<p>Research-grounded strategy generation on Arc public testnet.</p>
+					</div>
+					<nav aria-label="Product links">
+						<strong>Product</strong>
+						<a href="/app/generate">Generate</a>
+						<a href="/app/explore">Explore</a>
+						<a href="/security">Security</a>
+						<a href="/architecture">Architecture</a>
+					</nav>
+					<nav aria-label="Resource links">
+						<strong>Resources</strong>
+						<a href="/llms.txt">Agent API</a>
+						<a href="/.well-known/agent.json">Agent manifest</a>
+						{/* The docs site moved here with the rest of the footer when
+						    the landing page stopped carrying its own (#1634 link,
+						    guarded by ui/test/docs-link.test.js). */}
+						<a
+							href="https://docs.archimedes-arc.com/"
+							target="_blank"
+							rel="noreferrer"
+						>
+							Docs
+						</a>
+						<a
+							href="https://github.com/aprin-labs/archimedes"
+							target="_blank"
+							rel="noreferrer"
+						>
+							GitHub
+						</a>
+					</nav>
+					<nav aria-label="Project links">
+						<strong>Project</strong>
+						<a
+							href="https://github.com/aprin-labs/archimedes/blob/main/LICENSE"
+							target="_blank"
+							rel="noreferrer"
+						>
+							Unlicense
+						</a>
+						<a href="https://faucet.circle.com/" target="_blank" rel="noreferrer">
+							Arc faucet
+						</a>
+					</nav>
+					<nav className="policy-links" aria-label="Policies">
+						<strong>Policies</strong>
+						<a href="/privacy">Privacy</a>
+						<a href="/terms">Terms</a>
+					</nav>
+				</div>
+				<div className="public-shell public-footer__base">
+					<span>Research prototype. No mainnet money. Generation fee is real testnet USDC.</span>
+					<span>Past performance does not guarantee future results.</span>
+				</div>
+			</footer>
 		</div>
 	);
 }

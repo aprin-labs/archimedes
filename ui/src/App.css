@@ -4342,6 +4342,133 @@ button:where(.tag) {
 	gap: 20px;
 }
 
+/* Policy links — same row in the public footer, and the whole content of the
+   app shell's footer. Shared class so the two shells can't drift apart. */
+.policy-links {
+	display: flex;
+	gap: 16px;
+}
+
+.policy-links a {
+	color: var(--text-3);
+	text-decoration: none;
+	border-bottom: 1px solid transparent;
+}
+
+.policy-links a:hover,
+.policy-links a:focus-visible {
+	color: var(--text-1);
+	border-bottom-color: currentColor;
+}
+
+/* App-shell footer: sits below <main> inside .main-area, so it inherits the
+   sidebar offset and never overlaps the rail. */
+.app-footer {
+	display: flex;
+	justify-content: flex-end;
+	padding: 16px var(--space-6);
+	border-top: 1px solid var(--glass-border);
+	color: var(--text-3);
+	font-family: var(--mono);
+	font-size: 0.6rem;
+	letter-spacing: 0.04em;
+}
+
+/* ── Policy pages (/privacy, /terms) ───────────────────────────────────
+   Deliberately NOT styled with .public-section: that block's h2 is
+   clamp(2.7rem, 5.3vw, 5rem), a marketing headline size that turns a
+   twelve-section policy into a scroll of billboards. These are documents —
+   one measured column, ~72ch, sized for reading. */
+.policy-page {
+	max-width: 760px;
+}
+
+/* Drawn in --accent / --accent-muted, NOT the --warning-* trio used by
+   .backend-warning. Reason: .public-site pins its own dark palette but does
+   not override --warning, so --warning resolves from :root — and under
+   :root[data-theme="light"] that is #b45309, which lands at 3.75:1 on the
+   shell's permanently-dark --public-abyss (#071319). Below AA. --accent IS
+   redefined inside .public-site (= --public-bronze #d9a85c, 8.70:1 on the
+   same ground), so it can't be desynced from the background it paints on.
+   Body copy stays --text-1; only the "Draft" lead takes the accent. */
+.policy-banner {
+	margin-bottom: 32px;
+	padding: 14px 18px;
+	border: 1px solid var(--accent);
+	background: var(--accent-muted);
+	border-radius: var(--radius-md);
+	color: var(--text-1);
+	font-family: var(--mono);
+	font-size: 0.72rem;
+	line-height: 1.7;
+}
+
+.policy-banner strong {
+	color: var(--accent);
+}
+
+.policy-page h1 {
+	margin: 14px 0 0;
+	font-family: var(--serif);
+	font-size: clamp(2rem, 4vw, 2.8rem);
+	font-weight: 500;
+	letter-spacing: -0.03em;
+	line-height: 1.05;
+}
+
+.policy-meta {
+	margin-top: 12px;
+	color: var(--text-3);
+	font-family: var(--mono);
+	font-size: 0.68rem;
+	letter-spacing: 0.04em;
+}
+
+.policy-page section {
+	margin-top: 40px;
+}
+
+.policy-page h2 {
+	margin: 0 0 12px;
+	font-family: var(--serif);
+	font-size: 1.3rem;
+	font-weight: 500;
+	letter-spacing: -0.01em;
+}
+
+.policy-page h3 {
+	margin: 24px 0 8px;
+	font-size: 0.94rem;
+	font-weight: 600;
+}
+
+.policy-page p,
+.policy-page li {
+	color: var(--text-2);
+	font-size: 0.94rem;
+	line-height: 1.75;
+}
+
+.policy-page p + p {
+	margin-top: 14px;
+}
+
+.policy-page ul {
+	margin: 12px 0 0;
+	padding-left: 20px;
+	list-style: disc;
+}
+
+.policy-page li + li {
+	margin-top: 8px;
+}
+
+.policy-page a {
+	color: var(--text-1);
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+
 .public-site .page-content {
 	padding-top: clamp(36px, 5vw, 64px);
 }

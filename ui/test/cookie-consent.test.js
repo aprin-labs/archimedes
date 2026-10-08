@@ -169,7 +169,10 @@ test("direction B: every key in the map really is in the code it names", () => {
 // issue's own table needed correcting against a fresh grep.
 const SPEC_KEYS = [
 	["better-auth.session_token", "cookie", "necessary"],
-	["archimedes_session", "cookie", "necessary"],
+	// Was "necessary". The SIWE router that sets it is mounted only under
+	// TESTING (backend/archimedes/main.py), so the live site never sets it;
+	// the 2026-10-01 policy audit (#1432) moved it to legacy.
+	["archimedes_session", "cookie", "legacy"],
 	["archimedes_vid", "cookie", "analytics"],
 	["archimedes_wallet", "localStorage", "necessary"],
 	["archimedes_wallet_names", "localStorage", "functional"],
@@ -201,6 +204,38 @@ test("every key the issue enumerated is in the map, with its category", () => {
 		assert.ok(entry.reveals?.length > 20, `${name} needs a real 'reveals'`);
 		assert.ok(entry.onReject?.length > 10, `${name} needs a stated fallback`);
 	}
+});
+
+// The Privacy page (#1432) sends readers to this inventory "with what each one
+// reveals", so three entries that contradicted it were corrected against main
+// 3591cd79 plus the live stack:
+//   - archimedes_vid said SIWE verify links it to the wallet in identity_events.
+//     That route is test-only and /api/auth/ goes to Better Auth, so no live
+//     path links the id to an account or wallet.
+//   - archimedes_session was listed as a live necessary cookie. Nothing live
+//     sets it; the guard below also pins the TESTING-only mount, so mounting
+//     the SIWE router again fails here and forces the entry to be revisited.
+//   - better-auth.state said 600s; better-auth@1.6.25 (auth/package.json) sets
+//     the database-strategy state cookie with maxAge 300 (dist/state.mjs).
+test("the inventory agrees with the privacy page on the cookies the audit caught", () => {
+	const vid = lookupEntry("archimedes_vid");
+	assert.doesNotMatch(vid.reveals, /identity_events|SIWE verify/, "the live site does not link the vid to a wallet");
+	assert.match(vid.reveals, /never links it to an account or wallet/);
+	assert.match(vid.onReject, /first API response/, "the HTML response sets no cookie");
+
+	const siwe = lookupEntry("archimedes_session");
+	assert.equal(siwe.category, "legacy", "no live path sets archimedes_session");
+	assert.match(siwe.purpose, /mounted only in test builds/);
+	const main = readFileSync(join(REPO, "backend/archimedes/main.py"), "utf8");
+	assert.match(
+		main,
+		/if os\.getenv\("TESTING"\):\s+from archimedes\.api\.auth_siwe import auth_router\s+app\.include_router\(auth_router\)/,
+		"the SIWE router must stay test-only while archimedes_session is listed as legacy",
+	);
+
+	const state = lookupEntry("better-auth.state");
+	assert.match(state.purpose, /\(300s\)/, "the library's state cookie lives 300 seconds");
+	assert.doesNotMatch(state.purpose, /600s/);
 });
 
 test("the consent record itself is disclosed and exempt, not hidden", () => {

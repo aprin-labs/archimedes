@@ -500,7 +500,9 @@ test("security page is a canonical public destination", () => {
 	assert.match(app, /security:\s*["']\/security["']/);
 	assert.match(app, /route\.page === ["']security["'][\s\S]*<Security \/>/);
 	assert.match(publicLayout, /href="\/security"[\s\S]*Security/);
-	assert.ok((landing.match(/href="\/security"/g) ?? []).length >= 2);
+	// One in-body link; the second (footer) moved to the shell with #1432,
+	// so every public page carries it — asserted on publicLayout above.
+	assert.ok((landing.match(/href="\/security"/g) ?? []).length >= 1);
 	assert.match(sitemap, /<loc>https:\/\/archimedes-arc\.com\/security<\/loc>/);
 });
 
