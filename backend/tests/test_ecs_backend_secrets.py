@@ -675,6 +675,33 @@ class TestTheFreeAllowanceIsPinnedNotInherited:
         assert self.FREE_GENERATIONS_NAME not in backend_secrets
 
 
+class TestPremiumTierStaysOff:
+    """`model_gate.is_entitled_to_premium` is wallet AND (global flag OR
+    allowlist) — an OR, not a single switch. Pinning only
+    `PREMIUM_MODELS_ENABLED` leaves the identical charge-then-fallback hazard
+    (#1482) reachable by adding one wallet to `PREMIUM_MODELS_ALLOWLIST`, which
+    was unpinned in exactly the way #1482's own thesis condemns. Both halves
+    of the lock must stay off together until the premium serving path exists
+    (roadmap T3.8/Bedrock).
+    """
+
+    GLOBAL_FLAG_NAME = "PREMIUM_MODELS_ENABLED"
+    ALLOWLIST_NAME = "PREMIUM_MODELS_ALLOWLIST"
+
+    def test_premium_tier_stays_off(self, backend_environment: dict[str, str]) -> None:
+        assert backend_environment.get(self.GLOBAL_FLAG_NAME) == "false", (
+            f"{self.GLOBAL_FLAG_NAME} is {backend_environment.get(self.GLOBAL_FLAG_NAME)!r} "
+            "in infra/ecs.tf, not 'false' — this charges GENERATION_PRICE_USD and delivers "
+            "the env default model to an entitled premium caller until the premium serving "
+            "path ships (roadmap T3.8/Bedrock)."
+        )
+        assert backend_environment.get(self.ALLOWLIST_NAME, "") == "", (
+            f"{self.ALLOWLIST_NAME} is {backend_environment.get(self.ALLOWLIST_NAME)!r} in "
+            f"infra/ecs.tf. is_entitled_to_premium is an OR: a non-empty allowlist reaches "
+            f"the same charge-then-fallback hazard with {self.GLOBAL_FLAG_NAME} still 'false'."
+        )
+
+
 class TestAntiGoals:
     """Seeding a credential must not also arm what spends with it.
 
