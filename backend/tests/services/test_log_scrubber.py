@@ -24,6 +24,18 @@ def test_pii_fields_are_redacted() -> None:
     assert cleaned["marketing_opt_in"] == "<REDACTED>"
 
 
+def test_profile_answers_are_redacted() -> None:
+    """Interests and attribution are the user's own answers, owner-only (#1908)."""
+    cleaned = scrub_profile(
+        {
+            "wallet_address": "0xabc",
+            "interests": ["Bonds", "FX"],
+            "attribution": "heard-from-a-friend",
+        }
+    )
+    assert cleaned == {"wallet_address": "0xabc", "interests": "<REDACTED>", "attribution": "<REDACTED>"}
+
+
 def test_non_pii_fields_pass_through_unchanged() -> None:
     cleaned = scrub_profile({"id": 42, "tier": "verified", "created_at": "2026-05-24"})
     assert cleaned == {"id": 42, "tier": "verified", "created_at": "2026-05-24"}

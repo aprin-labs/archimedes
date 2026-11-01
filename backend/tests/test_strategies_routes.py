@@ -1246,10 +1246,19 @@ async def test_single_strategy_endpoint_numeric_fields_equal_live_gate(monkeypat
     assert resp.status_code == 200
     served = resp.json()
 
-    assert served["dsr_p_value"] == pytest.approx(expected.dsr_p_value, rel=1e-9)
-    assert served["pbo_score"] == pytest.approx(expected.pbo_score, rel=1e-9)
-    assert served["out_of_sample_sharpe"] == pytest.approx(expected.oos_sharpe, rel=1e-9)
-    assert served["deflated_sharpe_ratio"] == pytest.approx(expected.deflated_sharpe, rel=1e-9)
+    def same(got, want):
+        # pytest 9.2 refuses approx(None, rel=...), and an ungraded number is
+        # None on both sides (the gate may leave PBO unset), so compare None
+        # by identity and numbers within 1e-9.
+        if want is None:
+            assert got is None
+        else:
+            assert got == pytest.approx(want, rel=1e-9)
+
+    same(served["dsr_p_value"], expected.dsr_p_value)
+    same(served["pbo_score"], expected.pbo_score)
+    same(served["out_of_sample_sharpe"], expected.oos_sharpe)
+    same(served["deflated_sharpe_ratio"], expected.deflated_sharpe)
     assert served["passes_rigor_gate"] == expected.passes_all
     # #1358 A4: a curated strategy the live gate actually graded carries its
     # provenance — self-contained N=1 (decouple #2), never a bare/absent number.

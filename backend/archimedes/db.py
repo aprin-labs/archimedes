@@ -113,7 +113,24 @@ def _default_database_url() -> str:
     return f"sqlite:///{_BACKEND_DIR / 'archimedes_chat.db'}"
 
 
-DATABASE_URL = os.getenv("DATABASE_URL", _default_database_url())
+def _pin_psycopg2_driver(url: str) -> str:
+    """Spell out the psycopg2 driver on a bare ``postgresql://`` URL.
+
+    SQLAlchemy 2.1 changed the driver a bare ``postgresql://`` resolves to from
+    psycopg2 to psycopg (v3), which this repo does not install. Every URL source
+    (the ECS secret, compose, ``.env``, ``infra/outputs.tf``) writes the bare
+    scheme, so the driver is pinned here, where ``DATABASE_URL`` is read; the app
+    engine and ``migrations/env.py`` take the URL from that constant. Code that
+    builds its own engine from a raw environment URL (the two Postgres
+    integration tests) must call this too. A URL that already names a driver
+    (``postgresql+psycopg2://``, ``postgresql+asyncpg://``) is left alone.
+    """
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg2://" + url[len("postgresql://") :]
+    return url
+
+
+DATABASE_URL = _pin_psycopg2_driver(os.getenv("DATABASE_URL", _default_database_url()))
 
 
 def _get_engine_kwargs() -> dict:

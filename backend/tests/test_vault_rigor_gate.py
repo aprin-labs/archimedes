@@ -44,6 +44,14 @@ def _use_tmp_db(tmp_path, monkeypatch):
     engine.dispose()
 
 
+@pytest.fixture(autouse=True)
+def _roadmap_surfaces_on(monkeypatch):
+    """The create route 404s while the roadmap flag is off (#1432). These tests
+    pin what it does once it is on; the off case lives in
+    test_vault_create_roadmap_gate.py."""
+    monkeypatch.setenv("FEATURE_ROADMAP_SURFACES", "true")
+
+
 @contextlib.contextmanager
 def _override_verified_wallet(app, wallet: str = "0x000000000000000000000000000000000000dEaD"):
     """Override linked-wallet dependency, restoring prior override on exit."""

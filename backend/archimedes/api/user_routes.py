@@ -1,17 +1,30 @@
 """Optional wallet-address profile API owned by canonical Better Auth user.
 
 Endpoints:
-  GET  /api/user/profile/{wallet}   — retrieve profile (404 if not set)
+  GET  /api/user/profile/{wallet}   — retrieve own profile (404 if not set or not yours)
   POST /api/user/profile            — create or update profile
 
 Wallet key is legacy provenance, not application identity. Writes require both
 account session and matching proof-linked wallet.
 
-Security (Issue #181):
+Security (Issue #181, #1908):
   - Email is encrypted at rest via Fernet (services/email_crypto.py).
-  - Email / display_name / marketing_opt_in are only echoed to account owner.
-  - Non-owner GET returns only public-safe fields.
-  - All log output routes through log_scrubber to prevent PII leakage.
+  - Every profile field is owner-only. No field is public: display_name,
+    email and marketing_opt_in are personal data/consent, and interests and
+    attribution are the user's own answers to the welcome questions. Nothing
+    reads another wallet's profile, so a non-owner GET is answered exactly
+    like a missing profile, from the same branch after the same lookups (the
+    linked-wallet lookup runs before the profile query, not only when a row
+    exists). For two requests that differ only in the wallet, the app returns
+    the same 404 status, body and header names, and the same header values
+    except two produced per request, whatever the profile state:
+    X-Response-Time-Ms (measured), and Set-Cookie when the request carries no
+    archimedes_vid cookie (such as an API-key client that keeps no cookies),
+    because each such response mints a fresh random visitor id. Headers added
+    after the app, such as uvicorn's Date, are outside this. Timing is not
+    otherwise equalized.
+  - All log output routes through log_scrubber to prevent PII leakage; it
+    redacts every profile answer, so logs carry only the wallet address.
 """
 
 from __future__ import annotations
@@ -35,28 +48,16 @@ logger = logging.getLogger(__name__)
 
 user_router = APIRouter(prefix="/api/user", tags=["user"])
 
-# Public-safe fields returned to non-owner callers.
-PUBLIC_FIELDS = ("wallet_address", "interests", "attribution")
+_PROFILE_NOT_FOUND = "Profile not found"
 
 
-def _profile_to_response(p: UserProfile, *, owner: bool = False) -> UserProfileResponse:
-    """Build a response from a UserProfile ORM object.
+def _profile_to_response(p: UserProfile) -> UserProfileResponse:
+    """Build the owner's view of a UserProfile ORM object, email decrypted.
 
-    When *owner* is False (non-owner caller), PII fields are stripped.
-    When *owner* is True (caller owns profile), full data
-    is returned with email decrypted.
+    There is deliberately no non-owner view (#1908): callers must establish
+    ownership first, and a non-owner gets a 404 instead of a response.
     """
     interests = json.loads(p.interests) if p.interests else None
-
-    if not owner:
-        return UserProfileResponse(
-            wallet_address=p.wallet_address,
-            display_name=None,
-            email=None,
-            interests=interests,
-            attribution=p.attribution,
-            marketing_opt_in=False,  # default-safe
-        )
 
     try:
         email = decrypt_email(p.email)
@@ -86,33 +87,43 @@ def _extract_linked_wallet(request: Request) -> str | None:
 
 @user_router.get("/profile/{wallet}", response_model=UserProfileResponse)
 async def get_profile(wallet: str, request: Request):
-    """Retrieve a wallet's profile. Returns 404 if not set.
+    """Retrieve the caller's own profile for a wallet.
 
-    PII fields are included only for canonical account owner. Unclaimed legacy
-    profile additionally requires current account's verified linked wallet.
+    Owner-only (#1908): the canonical account owner, or — for an unclaimed
+    legacy profile — the account whose verified linked wallet matches. Any
+    other caller gets the same 404 as a wallet with no profile.
     """
+    # Ownership is the canonical account (legacy rows: the verified linked
+    # wallet), never a body/header address. Resolved before the profile query
+    # so a missing row and someone else's row do the same lookups.
+    user = get_current_user(request)
+    caller = _extract_linked_wallet(request)
     session: Session = get_session()
     try:
         wallet_lower = wallet.lower()
         profile = session.query(UserProfile).filter(UserProfile.wallet_address == wallet_lower).first()
-        if not profile:
-            raise HTTPException(status_code=404, detail="Profile not found")
-
-        # PII follows canonical account ownership, never a body/header address.
-        user = get_current_user(request)
-        caller = _extract_linked_wallet(request)
         is_owner = bool(
-            user
+            profile
+            and user
             and (
                 profile.owner_user_id == user.id or (profile.owner_user_id is None and caller == profile.wallet_address)
             )
         )
-        response = _profile_to_response(profile, owner=is_owner)
+        if not is_owner:
+            # One branch for "no row" and "not yours": same status, body and
+            # headers. The reason is for operators only, never the response.
+            logger.info(
+                "get_profile: wallet=%s not served reason=%s",
+                sanitize_log_value(wallet_lower),
+                "not_owner" if profile else "missing",
+            )
+            raise HTTPException(status_code=404, detail=_PROFILE_NOT_FOUND)
+
+        response = _profile_to_response(profile)
 
         logger.info(
-            "get_profile: wallet=%s owner=%s data=%s",
+            "get_profile: wallet=%s owner=True data=%s",
             sanitize_log_value(wallet_lower),
-            is_owner,
             scrub_profile(response.model_dump()),
         )
         return response
@@ -191,7 +202,7 @@ async def upsert_profile(payload: UserProfileCreate, request: Request, response:
             ),
         )
 
-        return _profile_to_response(profile, owner=True)
+        return _profile_to_response(profile)
     except HTTPException:
         raise
     except Exception as e:

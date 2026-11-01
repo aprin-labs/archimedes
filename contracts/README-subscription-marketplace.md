@@ -77,6 +77,11 @@ This is invoked automatically by the marketplace monolith on publish.
 Subscriptions are managed entirely in Postgres via the marketplace API:
 `POST /api/marketplace/subscribe`. A Circle Developer-Controlled Wallet is
 provisioned per subscriber for x402 micropayment signing and balance tracking.
+Marketplace is roadmap, not shipped: `POST /api/marketplace/subscribe` and
+`POST /api/marketplace/publish` answer `404` while the backend's
+`FEATURE_ROADMAP_SURFACES` flag is off, its default in every environment
+(#1432), because each has the backend signer deploy a vault owned by the
+caller's wallet.
 
 ### Settlement Sweep (Publisher Side)
 
