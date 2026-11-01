@@ -21,8 +21,10 @@ is in every environment unless set to `true` (`roadmap_surfaces_enabled()` in
 `infra/ecs.tf` nor the CI task-definition rewrite sets the flag. The same gate
 closes the two marketplace routes that also have the backend signer deploy a
 vault owned by the caller's wallet, `POST /api/marketplace/publish` and `POST
-/api/marketplace/subscribe`. Where this page describes what the create route
-does, it describes the route with the flag on.
+/api/marketplace/subscribe`, and `POST /api/vaults/metadata`, which records a
+vault the caller deployed themselves and has the backend signer anchor its
+strategies on-chain. Where this page describes what the create or metadata
+route does, it describes the route with the flag on.
 
 **Vaults are non-custodial by design.** With the roadmap flag on, `POST
 /api/vaults/create` deploys the vault with the backend signer, then transfers
@@ -32,8 +34,8 @@ the backend only as the rebalance-only agent — so `owner == user` and `agent
 re-point the oracle, widen slippage, pause, or otherwise drain the vault.
 
 **Server-side rigor enforcement, not just a UI gate.** Every path that binds
-a strategy to a vault — `POST /api/vaults/create` (while the roadmap flag is
-on; off, it binds nothing), `POST /api/vaults/metadata` — re-checks each
+a strategy to a vault — `POST /api/vaults/create` and `POST
+/api/vaults/metadata` (while the roadmap flag is on; off, they bind nothing) — re-checks each
 strategy against the live rigor gate
 at the caller's chosen `strictness_level` **before** spending gas or
 persisting the link, and refuses (`422`) any strategy that hasn't passed at
@@ -50,9 +52,10 @@ root endpoints) are anonymous. Anything that spends gas, writes vault
 metadata, or derives allocations (`POST /api/vaults/create`, `POST
 /api/vaults/metadata`, `POST /api/vaults/{address}/derive-allocations`)
 requires a Better Auth account session **and** a verified linked wallet
-(`require_linked_wallet`). `POST /api/vaults/create` has the roadmap gate in
-front of that: while the flag is off it answers `404` whether or not the
-caller is signed in, because the gate runs before the route's auth dependency. `POST
+(`require_linked_wallet`). `POST /api/vaults/create` and `POST
+/api/vaults/metadata` have the roadmap gate in front of that: while the flag is
+off they answer `404` whether or not the caller is signed in, because the gate
+runs before the route's auth dependency. `POST
 /api/traces/publish` is `internal-key` (`X-Internal-Agent-Key`, `hmac.compare_digest` against
 `INTERNAL_AGENT_API_KEY` — fails closed if that env var is unset). Examples
 needing a session assume an authenticated cookie jar at `/tmp/session.jar`.
@@ -127,7 +130,17 @@ curl -s https://archimedes-arc.com/api/vaults/<address>
 ### POST /api/vaults/metadata
 Store off-chain vault metadata (display name, strategy bindings) — the
 client-signed deploy path's choke point. | **Auth**: linked-wallet | **Flags**:
-rate limit `10/minute` (disabled under `TESTING`)
+`FEATURE_ROADMAP_SURFACES` (off unless set to `true`); rate limit `10/minute`
+(disabled under `TESTING`)
+
+**Roadmap-gated (#1432), exactly like `POST /api/vaults/create`.** While the
+flag is off this route answers `404` `{"detail": "Not offered: roadmap, not
+shipped"}` and nothing downstream of the gate runs: not the auth check, not
+body-schema validation, not the on-chain owner read, not the rigor gate, not
+the write, not the strategy anchoring. FastAPI's read of the body runs before
+the gate with the same outcomes as on the create route. The UI's only caller,
+`CreateVaultModal`, is behind the UI's roadmap build flag. `GET
+/api/vaults/{address}/metadata` is not gated.
 
 Request (`VaultMetadataRequest`): `{vault_address: "0x"+40hex, name: str(<=64)="", symbol: str(<=16)="", creator_address: str="", strategy_ids: [str]=[], strictness_level: int(1..5)=1}`.
 Response (`VaultMetadataResponse`): `{vault_address, name, symbol, creator_address, strategy_ids, created_at: str|null}`.

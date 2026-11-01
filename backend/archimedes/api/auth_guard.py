@@ -21,7 +21,10 @@ a deploy-time misconfiguration silently leaving internal endpoints open.
 User-facing endpoints (e.g. POST /api/vaults/create, POST /api/vaults/metadata)
 are deliberately NOT behind this guard — they're signed-by-system on behalf of
 a user who arrived via the UI, and the UI cannot carry the internal key. Use
-slowapi rate limits for DoS protection on those endpoints instead.
+slowapi rate limits for DoS protection on those endpoints instead. (Both of
+those two are roadmap-gated as well: they answer 404 unless the server's
+FEATURE_ROADMAP_SURFACES flag is on, #1432; see
+``feature_flags.require_roadmap_surfaces``.)
 """
 
 from __future__ import annotations

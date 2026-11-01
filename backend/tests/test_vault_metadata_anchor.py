@@ -12,11 +12,21 @@ import contextlib
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from archimedes.api.auth_siwe import _COOKIE_NAME, _sign_session
 from archimedes.main import app
 from fastapi.testclient import TestClient
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _roadmap_surfaces_on(monkeypatch):
+    """POST /metadata 404s while the roadmap flag is off (#1432). These tests
+    pin what it does once it is on; the off case lives in
+    test_vault_create_roadmap_gate.py."""
+    monkeypatch.setenv("FEATURE_ROADMAP_SURFACES", "true")
+
 
 _WALLET = "0x" + "a1" * 20
 
