@@ -51,7 +51,7 @@ test("the account-boundary header is kept", () => {
 const TRUE_STATEMENTS = [
 	"Email and password work without a wallet.",
 	"Wallet linking requires signature proof.",
-	"Generation settles real testnet USDC on Arc public testnet.",
+	"Generation is free unless the operator turns on the testnet USDC paywall.",
 ];
 
 // Slice the RENDERED const's array literal — a match in a code comment must not

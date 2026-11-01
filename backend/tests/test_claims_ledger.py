@@ -164,14 +164,8 @@ _RETRACTED_PHRASE_PINS: tuple[tuple[str, str], ...] = (
 _OPEN_OVERCLAIMS: tuple[tuple[str, str], ...] = (
     # The index.html generation-on-chain tags and the user-stories present-tense
     # vault sentence were FIXED by the 2026-09-01 copy-honesty pass. Their
-    # ledger rows moved OVER-CLAIMED → CHANGED in the same change. A new
-    # OVER-CLAIMED row must add a pin.
-    #
-    # 2026-11-01 local-first copy pass: README.md says the hosted site has closed,
-    # at the owner's direction, while a same-day probe found it still serving. Its
-    # row is OVER-CLAIMED until the teardown; TestHostedSiteClosureRow below is the
-    # pin that makes the row move when the deploy pipeline goes.
-    ("README.md", "The hosted site\nat archimedes-arc.com has closed"),
+    # ledger rows moved OVER-CLAIMED → CHANGED in the same change. No open
+    # over-claim pins remain here; a new OVER-CLAIMED row must add a pin.
 )
 
 
@@ -382,53 +376,6 @@ class TestVendorCutoverStillPending:
         )
         assert _pinned_env_value(fixture, "MARKET_DATA_DAILY_PROVIDER") == "tiingo"
         assert _pinned_env_value(fixture, "MARKET_DATA_PROVIDER") is None
-
-
-_CLOSURE_ROW_MARKER = "The hosted site at archimedes-arc.com has closed"
-_HOSTED_DEPLOY_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "deploy.yml"
-
-
-def _closure_row_status(rows: list[list[str]]) -> str:
-    matching = [row for row in rows if _CLOSURE_ROW_MARKER in row[0]]
-    assert len(matching) == 1, (
-        f"expected exactly one ledger row for {_CLOSURE_ROW_MARKER!r}, found {len(matching)} — "
-        "the README closure sentence must keep its row"
-    )
-    return matching[0][1].strip("`")
-
-
-class TestHostedSiteClosureRow:
-    """Self-retiring pin for the README row "The hosted site at archimedes-arc.com has closed".
-
-    The sentence was added on 2026-11-01 at the owner's direction, the same day an anonymous
-    probe found the hosted site still serving (`/health` at `b10453b2`, the quote answering
-    `payment_required: true`). So the row is `OVER-CLAIMED`, and it stays that way only while
-    the hosted deploy pipeline exists. The teardown removes `.github/workflows/deploy.yml`;
-    from that commit on this test is red until the row moves to `TRUE` (after a re-probe). Same
-    shape as `TestVendorCutoverStillPending`: a row that cannot rot true silently.
-    """
-
-    def test_closure_row_moves_when_the_hosted_deploy_pipeline_goes(self):
-        status = _closure_row_status(_claim_rows())
-        if _HOSTED_DEPLOY_WORKFLOW.is_file():
-            assert status == "OVER-CLAIMED", (
-                "README.md says the hosted site has closed, but .github/workflows/deploy.yml still "
-                f"deploys it and the ledger row reads {status!r}. Keep the row OVER-CLAIMED until "
-                "the teardown, or remove the sentence."
-            )
-        else:
-            assert status != "OVER-CLAIMED", (
-                ".github/workflows/deploy.yml is gone, so the teardown has run. Re-probe "
-                "https://archimedes-arc.com/, then move the README closure row in "
-                "docs/claims-ledger.md to TRUE with what the probe found."
-            )
-
-    def test_the_status_reader_is_not_vacuous(self):
-        """Anti-vacuity: proven against fixture rows, so a broken reader cannot pass forever."""
-        rows = [[f'"{_CLOSURE_ROW_MARKER}, so ..."', "`OVER-CLAIMED`", "`README.md:18`"], ["other", "`TRUE`", "x"]]
-        assert _closure_row_status(rows) == "OVER-CLAIMED"
-        rows[0][1] = "`TRUE`"
-        assert _closure_row_status(rows) == "TRUE"
 
 
 class TestLedgerRowsSayOnlyWhatTheyMay:

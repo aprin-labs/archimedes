@@ -16,7 +16,7 @@ Survivors run as paper deployments, so a gated strategy's results play out in th
 with full provenance.
 
 Archimedes is open-source software you run yourself, against Arc testnet. The hosted site
-at archimedes-arc.com has closed, so the way to use it is to run your own instance.
+at archimedes-arc.com is being shut down, so the way to use it is to run your own instance.
 
 ## Run it locally
 
@@ -184,7 +184,6 @@ exist.** Browse the tree itself on GitHub at
 | Use the command-line tool | [`cli/README.md`](cli/README.md) |
 | Load a grounded agent skill (every claim file:line cited) | [`skills/README.md`](skills/README.md) |
 | Understand Arc / Circle integration | [`docs/arc-integration.md`](docs/arc-integration.md) |
-| Operate the live stack | [`docs/runbooks/operations.md`](docs/runbooks/operations.md) |
 | Browse every design + planning doc | [`docs/doc-index.md`](docs/doc-index.md) |
 | Add a doc without misfiling it | [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) |
 | Write a test the way this repo wants | [`docs/testing-conventions.md`](docs/testing-conventions.md) |
@@ -236,8 +235,7 @@ it, is tracked in [`docs/claims-ledger.md`](docs/claims-ledger.md).
 
 Fork, branch, PR to `main`. The branch model in one paragraph:
 
-- **`main` is the only long-lived branch, and it is the deploy branch** — every merge builds
-  and deploys to the live stack. There is no `develop`. `main` moves continuously; branch
+- **`main` is the only long-lived branch.** There is no `develop`. `main` moves continuously; branch
   late, rebase right before merging, and merge in a tight window.
 - Short-lived per-owner branches, `<your-handle>/<short-name>` → PR → merge → delete.
 - **Merge commits only.** Squash- and rebase-merge are disabled in repo settings; use
