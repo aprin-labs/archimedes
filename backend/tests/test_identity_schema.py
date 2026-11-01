@@ -39,7 +39,7 @@ import os
 import uuid
 
 import pytest
-from archimedes.db import Base, get_session, init_db
+from archimedes.db import Base, _pin_psycopg2_driver, get_session, init_db
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import sessionmaker
@@ -276,10 +276,29 @@ def _postgres_test_dsn() -> str | None:
     Deliberately reads the raw `DATABASE_URL` env var directly rather than
     `archimedes.db.DATABASE_URL` — the latter falls back to a SQLite file
     when unset (see `db.py`'s `_default_database_url()`), which would make
-    this test silently exercise SQLite instead of skipping.
+    this test silently exercise SQLite instead of skipping. The value it reads
+    still goes through `_pin_psycopg2_driver`, as `db.DATABASE_URL` does.
     """
     dsn = os.environ.get("DATABASE_URL", "")
-    return dsn if dsn.startswith("postgresql") else None
+    return _pin_psycopg2_driver(dsn) if dsn.startswith("postgresql") else None
+
+
+def test_postgres_test_dsn_pins_the_psycopg2_driver(monkeypatch):
+    """The skip message below asks for a ``postgresql://`` DSN, and SQLAlchemy 2.1
+    resolves that bare scheme to psycopg (v3), which is not installed. Unpinned,
+    ``create_engine`` raises ModuleNotFoundError before the unreachable-DB skip
+    can run, so the integration test fails instead of testing the FK."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@h:5432/d")
+    dsn = _postgres_test_dsn()
+    assert dsn == "postgresql+psycopg2://u:p@h:5432/d"
+    engine = create_engine(dsn)
+    try:
+        assert engine.dialect.driver == "psycopg2"
+    finally:
+        engine.dispose()
+
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///x.db")
+    assert _postgres_test_dsn() is None
 
 
 @pytest.mark.integration
