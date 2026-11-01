@@ -540,13 +540,17 @@ export default function AuthPage({ mode, oauthError }) {
                 and on /sign-in as well as /sign-up: "Continue with Google" or
                 "Continue with GitHub" from /sign-in creates an account for an
                 address that has none (auth/auth.js socialProviders sets no
-                disableSignUp / disableImplicitSignUp). */}
+                disableSignUp / disableImplicitSignUp).
+                Reworded 2026-11-01 (#1432): there is no hosted service left to
+                agree to, and the 18-or-older rule went with it. The account is
+                written to the instance's own Postgres (auth/auth.js reads
+                DATABASE_URL). */}
             <p className="caption mt-4">
-              By creating an account you agree to the{' '}
-              <a className="text-[var(--accent)] underline" href="/terms">Terms of Service</a> and
-              confirm you are 18 or older. The{' '}
-              <a className="text-[var(--accent)] underline" href="/privacy">Privacy Policy</a> explains
-              what we keep.
+              Your account is stored in this instance&rsquo;s own database. The{' '}
+              <a className="text-[var(--accent)] underline" href="/privacy">Privacy notice</a> says
+              what the software keeps, and{' '}
+              <a className="text-[var(--accent)] underline" href="/terms">License and terms</a> covers
+              using it.
             </p>
 
             {/* Hairline only, no "or continue with" label: each button already
