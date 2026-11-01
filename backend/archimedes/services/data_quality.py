@@ -154,7 +154,7 @@ def verify_instrument(
     # defeating the 10% gap check for exactly those assets. Any material
     # weekend presence (≥5% of observations; true 7-day markets sit near 28%,
     # exchange-listed assets at 0%) switches the reference to calendar days.
-    weekend_frac = float((series.index.dayofweek >= 5).mean()) if n else 0.0
+    weekend_frac = float((series.index.day_of_week >= 5).mean()) if n else 0.0
     continuous = weekend_frac >= 0.05
     _cal = pd.date_range if continuous else pd.bdate_range
     expected = max(1, len(_cal(start_ts, end_ts)))
