@@ -29,11 +29,15 @@ uvicorn[standard]>=0.52.4
 # `create_engine()` now imports psycopg **3** instead of psycopg2, and this repo
 # only installs psycopg2 (see below). Every DATABASE_URL source writes the bare
 # scheme, so `db._pin_psycopg2_driver` rewrites it to `postgresql+psycopg2://`
-# at the one place every engine and `migrations/env.py` read it from. That is
+# where `db.DATABASE_URL` is read (the app engine and `migrations/env.py` use
+# that constant). Anything that builds an engine from a raw environment URL must
+# call the helper too: the two integration tests and the #1411 spike do. That is
 # what allows the 2.1 line here; `test_db.py::TestBarePostgresUrlResolvesToPsycopg2`
 # fails if the rewrite is dropped. (It was capped at <2.1 from 2026-09-25 to
-# 2026-10-03 for this reason.)
-sqlalchemy>=2.1.1,<2.2
+# 2026-10-03 for this reason.) The floor is 2.1.3, not 2.1.1: 2.1.2 fixed
+# regressions #13619, #13625 and #13626, and 2.1.3 fixed #13635;
+# `test_db.py::TestSqlalchemyFloorExcludesKnownRegressions` fails below 2.1.3.
+sqlalchemy>=2.1.3,<2.2
 # Schema migration tool (issue #1028) — replaces the hand-rolled idempotent
 # `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` patches in db.py for retrofitting
 # the already-populated prod Postgres DB. MIT license, maintained by the
