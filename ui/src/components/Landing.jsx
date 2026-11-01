@@ -184,9 +184,15 @@ const FAQS = [
 			"No. Today Archimedes generates, gates, and records strategies. Paper trading, when used, is simulated: paper_daily_returns is the graded track record the rigor gate sees, not on-chain execution proof. It never takes the other side of a trade.",
 	},
 	{
+		// Until 2026-11-01 this answer described the hosted site's live fee.
+		// That site is being shut down, and a local install's default is the opposite:
+		// .env.example sets GENERATION_PAYMENT_REQUIRED=false, and
+		// payment_required() in services/generation_payment.py turns the
+		// paywall on only for the literal "true". ui/test/public-visuals.test.js
+		// pins the old wording's absence.
 		question: "Is this running with real money?",
 		answer:
-			"No mainnet money. Archimedes runs on Arc public testnet. Generation fee is real testnet USDC. Read GET /api/generate/quote (prod answers dry_run: false). Faucet USDC is not mainnet cash. It is a research prototype, not a production investment product.",
+			"No mainnet money. Archimedes runs on Arc public testnet. Generation is free by default: the paywall is off unless the operator turns it on, and then it asks for a testnet USDC payment. GET /api/generate/quote gives this instance's answer. Faucet USDC is not mainnet cash. It is a research prototype, not a production investment product.",
 	},
 ];
 

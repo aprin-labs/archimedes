@@ -577,7 +577,40 @@ test("public announcement and shared footer do not say unqualified No real funds
 	assert.doesNotMatch(publicLayout, /No real funds/);
 	assert.doesNotMatch(landing, /No real funds/);
 	assert.match(publicLayout, /No mainnet money/);
-	assert.match(publicLayout, /Generation fee is real testnet\s+USDC/);
+});
+
+// The footer line and the FAQ answer described the hosted site's live fee
+// ("Generation fee is real testnet USDC", "prod answers dry_run: false").
+// That site is being shut down (2026-11-01), and a local install's paywall is off by
+// default (.env.example GENERATION_PAYMENT_REQUIRED=false), so both now say
+// generation is free unless the operator turns the paywall on.
+const HOSTED_FEE_WORDING = [
+	[/Generation fee is real testnet\s+USDC/, "Generation fee is real testnet\n\t\t\t\t\tUSDC."],
+	[/prod answers dry_run: false/, "Read GET /api/generate/quote (prod answers dry_run: false)."],
+];
+
+test("footer and landing FAQ no longer describe the hosted site's fee", () => {
+	for (const [pattern, example] of HOSTED_FEE_WORDING) {
+		// Anti-vacuity: each pattern rejects the literal it was written against.
+		assert.match(example, pattern);
+		assert.doesNotMatch(publicLayout, pattern);
+		assert.doesNotMatch(landing, pattern);
+	}
+	assert.match(
+		publicLayout,
+		/Generation is free unless the\s+operator turns on the testnet USDC paywall\./,
+	);
+	assert.match(
+		landing,
+		/Generation is free by default: the paywall is off unless the operator turns it on/,
+	);
+	assert.match(landing, /GET \/api\/generate\/quote gives this instance's answer/);
+	// The default the copy states is the default the template ships.
+	const envExample = readFileSync(
+		new URL("../../.env.example", import.meta.url),
+		"utf8",
+	);
+	assert.match(envExample, /^GENERATION_PAYMENT_REQUIRED=false$/m);
 });
 
 test("landing FAQ does not name the unmerged paper_agent_trades table as a visitor path", () => {

@@ -38,7 +38,7 @@ from archimedes_cli.exits import (
 from archimedes_cli.session import SESSION_COOKIE_NAME, SESSION_FILE_ENV, save_session
 from click.testing import CliRunner
 
-API = "https://archimedes-arc.com"
+API = "http://localhost:8080"
 COOKIE_VALUE = "s3cr3t-session-token-value"
 API_KEY_VALUE = "ak-live-do-not-print-me"
 

@@ -57,7 +57,7 @@ MANIFEST: dict = {
             "implemented": True,
             "description": "Authenticate with an Archimedes account and cache the session cookie.",
             "inputs": {
-                "--api-url": {"env": "ARCHIMEDES_API_URL", "default": "https://archimedes-arc.com"},
+                "--api-url": {"env": "ARCHIMEDES_API_URL", "default": "http://localhost:8080"},
                 "--session-file": SESSION_FILE_INPUT,
                 "--json": {"flag": True},
                 "email": {"env": "ARCHIMEDES_EMAIL", "prompted_if_absent": True},
@@ -73,7 +73,7 @@ MANIFEST: dict = {
             "inputs": {
                 "--api-url": {
                     "env": "ARCHIMEDES_API_URL",
-                    "default": "the cached session's URL, else https://archimedes-arc.com",
+                    "default": "the cached session's URL, else http://localhost:8080",
                 },
                 "--session-file": SESSION_FILE_INPUT,
                 "--json": {"flag": True},
@@ -95,7 +95,7 @@ MANIFEST: dict = {
                 "--local": {"flag": True, "implemented": False},
                 "--api-url": {
                     "env": "ARCHIMEDES_API_URL",
-                    "default": "the cached session's URL, else https://archimedes-arc.com",
+                    "default": "the cached session's URL, else http://localhost:8080",
                 },
                 "--session-file": SESSION_FILE_INPUT,
                 "--json": {"flag": True},
@@ -131,7 +131,7 @@ MANIFEST: dict = {
                 "--timeout": {"default": 900.0, "unit": "seconds", "meaning": "client-side wait budget, not a cancel"},
                 "--api-url": {
                     "env": "ARCHIMEDES_API_URL",
-                    "default": "the cached session's URL, else https://archimedes-arc.com",
+                    "default": "the cached session's URL, else http://localhost:8080",
                 },
                 "--session-file": SESSION_FILE_INPUT,
                 "--json": {"flag": True},

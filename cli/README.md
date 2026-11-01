@@ -11,7 +11,9 @@ four the series survives.
 
 ## Status
 
-**0.2.0** — `login`, `meter`, `verify`, and `generate` work against the hosted API.
+**0.2.0** — `login`, `meter`, `verify`, and `generate` work against an Archimedes API
+server. By default that is the local docker compose stack at `http://localhost:8080`; see
+[Which server](#which-server).
 `generate` is the new one: a research brief in, a rigor-gated strategy and its passport
 URL out, without leaving the terminal and without a wallet. `verify --local` and
 `backtest` still exit 3 (`NOT_IMPLEMENTED`); both need the local execution engine, which
@@ -51,6 +53,14 @@ or wherever `--session-file` / `ARCHIMEDES_SESSION_FILE` points, see below. `met
 `ARCHIMEDES_API_KEY` environment variable, which it sends as an `Authorization: Bearer`
 header for non-interactive use.
 
+## Which server
+
+`login` talks to `http://localhost:8080`, the address the repo's `docker compose` stack
+serves on with `.env.example`'s settings, unless `--api-url` or `ARCHIMEDES_API_URL` names
+another server. The session cache records the server it was created against, and `meter`,
+`verify` and `generate` go back to that server when neither the flag nor the variable is
+set.
+
 ## One session file per lane
 
 The session cache is a path, not a fixed location. `--session-file PATH` on `login`,
@@ -87,7 +97,7 @@ It quotes the price, starts the job, streams the pipeline's progress as it happe
 prints the strategy id and the URL of its passport when the run lands:
 
 ```
-Price: $2.000000 USDC
+This host reports payment_required=false for generation.
 Job job-7f3a accepted.
   brief_validated      brief accepted
   candidates_selected  stage=debate
@@ -95,7 +105,7 @@ Job job-7f3a accepted.
   best_selected        candidate_id=c1
   done                 served_model=amazon.nova-micro-v1:0
 Done. strategy_id=strat-91c4
-Passport: https://archimedes-arc.com/app/strategy/strat-91c4
+Passport: http://localhost:8080/app/strategy/strat-91c4
 ```
 
 The brief can come from a file or a pipe instead: `--brief-file brief.txt`, or
@@ -204,7 +214,7 @@ offered to do that for you would be running arbitrary code from strangers. So th
 drawn at the file boundary: `backtest` runs your Python on your machine and emits a returns
 series, and only that series is ever sent anywhere.
 
-The two places the hosted service touches code at all are read-only. The look-ahead audit
+The two places the server touches code at all are read-only. The look-ahead audit
 parses the file to an AST and inspects it. Strategy constants are read with `ast.parse` and
 `literal_eval`. Neither one imports the module or evaluates an expression.
 
@@ -215,6 +225,5 @@ too.
 
 - [Repository](https://github.com/aprin-labs/archimedes)
 - [Issues](https://github.com/aprin-labs/archimedes/issues)
-- [archimedes-arc.com](https://archimedes-arc.com)
 
 Released into the public domain under the [Unlicense](https://unlicense.org).

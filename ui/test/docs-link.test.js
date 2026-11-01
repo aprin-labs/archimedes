@@ -1,25 +1,26 @@
-// Guard: the documentation site is reachable from the product surfaces, at the
-// one canonical host (#1634).
+// Guard: the documentation is reachable from the product surfaces, at the one
+// place it still lives.
 //
-// The docs site is built by mkdocs and served from our own S3 + CloudFront
-// (docs-site/infra/main.tf). A site nobody can navigate to is the same as an
-// unpublished one, so the two public surfaces that carry navigation — the
-// shared footer's "Resources" nav and the public header nav, both in
-// PublicLayout.jsx now that the landing page carries no footer of its own
-// (see policy-pages.test.js and public-visuals.test.js) — must each link to it.
+// Until 2026-11-01 the docs were a mkdocs site served from our own S3 +
+// CloudFront at docs.archimedes-arc.com (#1634). That site is being shut down
+// with the hosted service, so the two public surfaces that carry navigation, the shared
+// footer's "Resources" nav and the public header nav (both in PublicLayout.jsx,
+// see policy-pages.test.js and public-visuals.test.js), now link to the
+// repository's docs/ folder on GitHub.
 //
-// Three things are asserted, and each one has failed somewhere in this repo
-// before:
+// Four things are asserted:
 //
-//   1. The link EXISTS on both surfaces.
-//   2. It points at the CANONICAL host. `docs.archimedes-arc.com` is the only
-//      docs hostname: `.app` was decommissioned (it caused the Circle passkey
-//      rpId bug) and GitHub Pages' `a-apin.github.io` is what #1634 moved off.
-//      A link to either would look fine in review and 404 (or worse, resolve
-//      to something we no longer control) in production.
-//   3. It agrees with `mkdocs.yml`'s `site_url`. The UI and the site config are
-//      two places the same hostname is written down; binding them here means a
-//      future rename has to change both or turn this red.
+//   1. The link EXISTS on both surfaces and points at the repo's docs/ folder,
+//      which must exist in this checkout (a link to a folder we deleted would
+//      look fine in review and 404 for every reader).
+//   2. It opens off-site safely, like every other external link there.
+//   3. NO surface names a docs host that is gone or going: docs.archimedes-arc.com
+//      (being shut down with the hosted service), `.app` (decommissioned; it caused the Circle passkey rpId
+//      bug) or GitHub Pages' `a-apin.github.io` (what #1634 moved off).
+//   4. The UI does not link to mkdocs.yml's `site_url`. Until 2026-11-01 this
+//      test bound the UI's docs host TO that site_url; the binding is inverted
+//      rather than deleted, because the config still names that host and a
+//      link copied from it will be dead once the shutdown completes.
 //
 // Hermetic: raw source-text reads (readFileSync), no JSX parsing, no network,
 // no DB, no `.env`. Run with `node --test test/docs-link.test.js` from `ui/`
@@ -34,12 +35,17 @@ import { existsSync, readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const DOCS_URL = "https://docs.archimedes-arc.com/";
-const DOCS_HOST = "docs.archimedes-arc.com";
+const DOCS_URL = "https://github.com/aprin-labs/archimedes/tree/main/docs";
 
-//: Hostnames that must never appear as the docs link. `github.io` is the
-//: GitHub Pages path #1634 replaced; `.app` is the decommissioned domain.
-const FORBIDDEN_HOSTS = ["a-apin.github.io", "docs.archimedes-arc.app"];
+//: Hostnames that must never appear as the docs link. `docs.archimedes-arc.com`
+//: is the docs site being shut down with the hosted service (2026-11-01);
+//: `github.io` is the GitHub Pages path #1634 replaced; `.app` is the
+//: decommissioned domain.
+const FORBIDDEN_HOSTS = [
+	"docs.archimedes-arc.com",
+	"a-apin.github.io",
+	"docs.archimedes-arc.app",
+];
 
 function repoFile(rel) {
 	return new URL(`../${rel}`, import.meta.url);
@@ -89,7 +95,7 @@ for (const [label, file, ariaLabel, sibling] of SURFACES) {
 		const section = navSection(read(file), ariaLabel, file);
 		assert.ok(
 			section.includes(`href="${DOCS_URL}"`),
-			`${file}'s "${ariaLabel}" nav has no href="${DOCS_URL}". The docs site is published (docs-site/infra) but unreachable from this surface.`,
+			`${file}'s "${ariaLabel}" nav has no href="${DOCS_URL}". The docs are in the repo but unreachable from this surface.`,
 		);
 	});
 
@@ -126,13 +132,23 @@ for (const [label, file, ariaLabel, sibling] of SURFACES) {
 		for (const host of FORBIDDEN_HOSTS) {
 			assert.ok(
 				!source.includes(host),
-				`${file} references ${host}. ${DOCS_HOST} is the only docs hostname (#1634).`,
+				`${file} references ${host}, a docs host that is gone or going. Link the repo's docs/ folder (${DOCS_URL}).`,
 			);
 		}
 	});
 }
 
-test("the UI's docs host matches mkdocs.yml's site_url", () => {
+test("the docs link points at a docs/ folder this repo actually has", () => {
+	const docsDir = new URL("../../docs/", import.meta.url);
+	assert.ok(existsSync(docsDir), "the repo has no docs/ folder; the Docs links would 404");
+	assert.ok(
+		existsSync(new URL("doc-index.md", docsDir)),
+		"docs/doc-index.md (the register README.md points at) is missing",
+	);
+	assert.match(DOCS_URL, /^https:\/\/github\.com\/aprin-labs\/archimedes\/tree\/main\/docs$/);
+});
+
+test("the UI does not link to mkdocs.yml's site_url (that site is being shut down)", () => {
 	const mkdocs = readFileSync(
 		new URL("../../mkdocs.yml", import.meta.url),
 		"utf8",
@@ -140,11 +156,13 @@ test("the UI's docs host matches mkdocs.yml's site_url", () => {
 	const match = mkdocs.match(/^site_url:\s*(\S+)\s*$/m);
 	assert.ok(
 		match,
-		"mkdocs.yml has no site_url — the site would be built with relative canonical URLs.",
+		"mkdocs.yml has no site_url; re-point this guard at whatever names the docs host now.",
 	);
-	assert.equal(
-		new URL(match[1]).host,
-		DOCS_HOST,
-		`mkdocs.yml builds the site for ${match[1]} but the UI links to ${DOCS_URL}. One of the two is wrong.`,
+	const siteHost = new URL(match[1]).host;
+	assert.notEqual(new URL(DOCS_URL).host, siteHost);
+	const source = read("src/components/PublicLayout.jsx");
+	assert.ok(
+		!source.includes(siteHost),
+		`PublicLayout.jsx links to ${siteHost}, mkdocs.yml's site_url. That site is being shut down with the hosted service (2026-11-01); link ${DOCS_URL}.`,
 	);
 });

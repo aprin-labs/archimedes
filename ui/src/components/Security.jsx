@@ -13,10 +13,10 @@ export default function Security() {
 						</h1>
 						<p className="security-hero__lede">
 							Archimedes separates account identity, wallet proof, and the
-							service credentials its own agents run under. Generation is a paid
-							call on this testnet, and that boundary is described here too.
-							These controls describe current code, not a promise that failure
-							is impossible.
+							service credentials its own agents run under. Generation can be
+							made a paid call on testnet, with the paywall off by default, and
+							that boundary is described here too. These controls describe
+							current code, not a promise that failure is impossible.
 						</p>
 					</div>
 					<ul className="security-status" aria-label="Current product status">
@@ -34,7 +34,7 @@ export default function Security() {
 						</li>
 						<li>
 							<span>Paid surface</span>
-							<strong>Generation (quoted live)</strong>
+							<strong>Generation (paywall off by default)</strong>
 						</li>
 					</ul>
 				</div>
@@ -145,10 +145,12 @@ export default function Security() {
 							<span>Payment</span>
 							<div>
 								<h3>
-									Generation is a paid call, bound to the wallet you proved.
+									When the paywall is on, generation is a paid call, bound to the
+									wallet you proved.
 								</h3>
 								<p>
-									Starting a generation without a signed payment returns HTTP
+									The paywall is off by default. When an operator turns it on,
+									starting a generation without a signed payment returns HTTP
 									402 carrying the full x402 requirements, and the same terms
 									(price, asset, chain, recipient, and whether the rail is live
 									or dry) are published anonymously at GET /api/generate/quote,
@@ -231,17 +233,19 @@ export default function Security() {
 						</li>
 						<li>
 							<strong>No execution:</strong> Archimedes does not trade with
-							capital today. Paid generation, the rigor gate, paper trading, and
-							the agent&apos;s trace anchoring are what run; nothing here should
-							be read as a claim that funds are being managed.
+							capital today. Generation (free unless the paywall is on), the rigor
+							gate, paper trading, and the agent&apos;s trace anchoring are what
+							run; nothing here should be read as a claim that funds are being
+							managed.
 						</li>
 						<li>
-							<strong>Live charge:</strong> the generation paywall is on and not
-							in dry-run, so a signed payment settles testnet USDC for real.
-							Anyone can confirm that anonymously at GET /api/generate/quote. A
-							settled fee lands in a platform-operated wallet Archimedes signs
-							for through its payment provider. It is a fee, not a balance held
-							for you, and there is nothing there to withdraw.
+							<strong>Charges:</strong> the generation paywall is off by
+							default, so by default generation moves no USDC. GET
+							/api/generate/quote reports its state anonymously. An operator who
+							turns it on charges testnet USDC per run, past the free allowance,
+							to the recipient address they set; in dry-run, no value moves. It
+							is a fee, not a balance held for you, and there is nothing there to
+							withdraw.
 						</li>
 						<li>
 							<strong>Model risk:</strong> Generation is LLM-driven and can be

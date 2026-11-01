@@ -1,7 +1,7 @@
 """The ``archimedes`` entry point.
 
 0.0.1 was a name-reservation release: the command tree and flags were fixed, but no
-subcommand did any work. 0.1.0 fills in three of them against the hosted API —
+subcommand did any work. 0.1.0 fills in three of them against the HTTP API —
 ``login`` (Better Auth email + password, ``POST /api/auth/sign-in/email``), ``meter``
 (``GET /api/account/usage`` — today's generation usage and the live price quote), and
 ``verify`` (``POST /api/rigor/verify`` — the rigor gate over a returns series).
@@ -46,7 +46,12 @@ from .session import (
     set_session_file,
 )
 
-DEFAULT_API_URL = "https://archimedes-arc.com"
+# The local stack: `docker compose up` publishes nginx, the stack's one ingress, on
+# host port ${ARCHIMEDES_HTTP_PORT:-80} (docker-compose.yml), and .env.example sets
+# ARCHIMEDES_HTTP_PORT=8080. Until 2026-11-01 this named the hosted site, which the owner
+# is shutting down as the project goes local-first.
+# cli/tests/test_api_url_resolution.py binds this value to both files.
+DEFAULT_API_URL = "http://localhost:8080"
 
 _json_option = click.option(
     "--json",
@@ -61,7 +66,7 @@ _api_url_option = click.option(
     default=DEFAULT_API_URL,
     show_default=True,
     metavar="URL",
-    help="Base URL of the Archimedes API.",
+    help="Base URL of the Archimedes API. The default is the local docker compose stack.",
 )
 
 
@@ -95,7 +100,10 @@ _api_url_session_option = click.option(
     envvar="ARCHIMEDES_API_URL",
     default=None,
     metavar="URL",
-    help=f"Base URL of the Archimedes API. Defaults to the cached session's URL, else {DEFAULT_API_URL}.",
+    help=(
+        f"Base URL of the Archimedes API. Defaults to the cached session's URL, else {DEFAULT_API_URL} "
+        "(the local docker compose stack)."
+    ),
 )
 
 
@@ -834,7 +842,7 @@ def verify(
     RETURNS_CSV is a two-column CSV of date and daily return (a header row, if present,
     is skipped automatically), or ``-`` to read the series from stdin.
 
-    Runs against the hosted API: ``POST /api/rigor/verify`` computes the deflated Sharpe
+    Runs against the API at ``--api-url``: ``POST /api/rigor/verify`` computes the deflated Sharpe
     ratio (DSR, deflated by ``--trials``) and a walk-forward out-of-sample consistency
     check against your real returns — the exact same functions and thresholds the
     strategy-passport verdict uses. A bare returns series cannot support the other two

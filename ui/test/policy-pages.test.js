@@ -208,6 +208,21 @@ test("the public footer lives in the shell, not on the landing page", () => {
 	assert.doesNotMatch(landing, /<footer/);
 });
 
+// The /terms page is titled "License and terms", and the public footer says
+// so. The app footer said "Terms" until 2026-11-01; both shells now use the
+// page's own name.
+test("both footers label /terms as the page is titled", () => {
+	for (const [name, shell] of [
+		["PublicLayout", publicLayout],
+		["Layout", layout],
+	]) {
+		assert.match(shell, /href="\/terms">License and terms<\/a>/, `${name} must label /terms "License and terms"`);
+		assertGone(shell, /href="\/terms">Terms<\/a>/, `${name} still labels /terms with the hosted-era "Terms"`);
+	}
+	// Anti-vacuity: the removal pattern rejects the label it replaced.
+	assert.match('<a href="/terms">Terms</a>', /href="\/terms">Terms<\/a>/);
+});
+
 test("the app shell footer sits below main, inside the sidebar-offset column", () => {
 	assert.match(layout, /<\/main>\s*(?:\{\/\*[\s\S]*?\*\/\})?\s*<footer className="app-footer">/);
 });
@@ -359,21 +374,28 @@ test("privacy names every service it contacts only when configured, and says who
 	assert.doesNotMatch(indexHtml, /<link[^>]+href="https?:\/\/[^"]*(?:fonts|cdn)/);
 });
 
-// The CLI and MCP server still default to the hosted address. The page says
-// so while that is true, and must stop saying so the day it is not.
-test("privacy's CLI/MCP exception tracks the clients' real default", () => {
-	const text = shown(privacy);
-	const cliDefault = /DEFAULT_API_URL = "https:\/\/archimedes-arc\.com"/;
-	const stillHosted =
-		cliDefault.test(repo("cli/src/archimedes_cli/cli.py")) ||
-		cliDefault.test(repo("mcp-server/src/archimedes_mcp/credentials.py"));
-	const exception = phrase("the command-line client and the MCP server still default to archimedes-arc.com.");
-	if (stillHosted) {
-		assert.match(text, exception);
-		assert.match(text, /ARCHIMEDES_API_URL/);
-	} else {
-		assert.doesNotMatch(text, exception, "the clients no longer default to the hosted address; drop the sentence");
+// The CLI and MCP server defaulted to the hosted address until 2026-11-01,
+// and the page carried an exception saying so. Both now default to the local
+// stack, so the exception is gone. The defaults are pinned here too: the
+// sentence may only stay gone while neither client points anywhere but the
+// instance you run.
+test("privacy names no hosted default for the CLI or the MCP server", () => {
+	for (const file of ["cli/src/archimedes_cli/cli.py", "mcp-server/src/archimedes_mcp/credentials.py"]) {
+		assert.match(
+			repo(file),
+			/^DEFAULT_API_URL = "http:\/\/localhost:8080"$/m,
+			`${file} must default to the local stack; if it points elsewhere, the page must say so`,
+		);
 	}
+	const exception = /One exception to these lists|still default to archimedes-arc\.com/;
+	// Anti-vacuity: the pattern rejects the sentence it replaced.
+	assert.match(
+		"One exception to these lists: the command-line client and the MCP server still default to archimedes-arc.com.",
+		exception,
+	);
+	const body = rendered(privacy);
+	assertGone(body, exception, "the clients no longer default to the hosted address");
+	assertGone(body, /archimedes-arc\.com/, "the page body names no hosted address");
 });
 
 test("privacy puts the operator of a shared instance in charge of its disclosure", () => {

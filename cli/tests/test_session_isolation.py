@@ -71,7 +71,7 @@ def _seed(path: Path, *, email: str, cookie: str) -> Path:
     """Write a session at ``path`` the way ``login`` would, and leave the override off."""
     set_session_file(path)
     try:
-        return save_session(api_url="https://archimedes-arc.com", cookies={SESSION_COOKIE_NAME: cookie}, email=email)
+        return save_session(api_url="http://localhost:8080", cookies={SESSION_COOKIE_NAME: cookie}, email=email)
     finally:
         set_session_file(None)
 
@@ -414,7 +414,7 @@ class TestTheAdvisoryLock:
         assert finished.wait(30), "load_session never completed after the lock was released"
         assert loaded == [
             {
-                "api_url": "https://archimedes-arc.com",
+                "api_url": "http://localhost:8080",
                 "cookies": {SESSION_COOKIE_NAME: "tok-a"},
                 "email": "a@example.com",
             }

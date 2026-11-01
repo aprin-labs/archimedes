@@ -12,8 +12,8 @@ just forwards it to Better Auth's ``/api/auth/get-session``
 
 **Two names, one cookie.** Better Auth issues :data:`SECURE_SESSION_COOKIE_NAME`
 (``__Secure-better-auth.session_token``) on any deploy with ``useSecureCookies: true``
-(``auth/auth.js`` sets that from ``production`` — so every HTTPS deploy, including
-``archimedes-arc.com``) and the bare :data:`SESSION_COOKIE_NAME` everywhere else, because
+(``auth/auth.js`` sets that from ``production`` — so every HTTPS deploy, including the
+former hosted site) and the bare :data:`SESSION_COOKIE_NAME` everywhere else, because
 the ``__Secure-`` prefix cannot legally be set without TLS. This module and
 ``archimedes_mcp.credentials`` both go through :func:`pick_session_cookie` rather than a
 single hardcoded name, so they work against local HTTP and production alike, and store
@@ -61,7 +61,7 @@ TLS, so local HTTP keeps using this bare name."""
 SECURE_SESSION_COOKIE_NAME = f"__Secure-{SESSION_COOKIE_NAME}"
 """The name Better Auth issues instead, in production. ``auth/auth.js`` sets
 ``useSecureCookies: production``, which prefixes every auth cookie with ``__Secure-``
-when the deploy is production — so ``archimedes-arc.com`` never sets the bare name above,
+when the deploy is production — so a production deploy never sets the bare name above;
 it sets this one. A client that only recognized :data:`SESSION_COOKIE_NAME` could sign in
 against prod (``POST /api/auth/sign-in/email`` 200s) and then find no session cookie in
 the response at all — the #1653-adjacent P0 this module fixes."""

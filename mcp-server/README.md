@@ -1,7 +1,7 @@
 # archimedes-mcp
 
-An MCP server for [Archimedes](https://archimedes-arc.com) — nine tools an agent can call
-instead of writing `curl`.
+An MCP server for [Archimedes](https://github.com/aprin-labs/archimedes) — nine tools an
+agent can call instead of writing `curl`.
 
 **It is a thin client and nothing else.** No business logic, no database, no Redis, no
 chain RPC, no wallet key, and no import of the `archimedes` backend package. Its entire
@@ -34,13 +34,17 @@ archimedes-mcp --help 2>/dev/null || true   # it speaks MCP over stdio; a client
     "archimedes": {
       "command": "archimedes-mcp",
       "env": {
-        "ARCHIMEDES_API_URL": "https://archimedes-arc.com",
+        "ARCHIMEDES_API_URL": "http://localhost:8080",
         "ARCHIMEDES_API_KEY": "archim_..."
       }
     }
   }
 }
 ```
+
+`ARCHIMEDES_API_URL` is optional too. Unset, the server uses the URL the cached session was
+created against, else `http://localhost:8080`, the repo's local `docker compose` stack.
+Set it to reach any other instance.
 
 `ARCHIMEDES_API_KEY` is optional. Without it the server falls back to the session cookie
 `archimedes login` caches at `~/.config/archimedes/session.json` (mode `600`), loaded
@@ -95,8 +99,8 @@ and the exception text — with a control test proving the search can find a pla
 
 `archimedes_generate_start` can spend real money. `GET /api/generate/quote` is the only
 authority on whether the host you are calling charges — the source defaults say the paywall
-is off and dry-run is on, production says the opposite, so `archimedes_quote` is the first
-call every time.
+is off and dry-run is on, and a deployment can set both the other way, so `archimedes_quote`
+is the first call every time.
 
 ## Results
 

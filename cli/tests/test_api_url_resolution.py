@@ -4,6 +4,8 @@ it was write-only — a staging login silently sent its cookie to prod)."""
 from __future__ import annotations
 
 import json
+import re
+from pathlib import Path
 
 import httpx
 from click.testing import CliRunner
@@ -13,6 +15,46 @@ from archimedes_cli.cli import DEFAULT_API_URL, _resolve_api_url, main
 from archimedes_cli.session import SESSION_FILE_ENV, save_session
 
 STAGING = "https://staging.archimedes.invalid"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _local_stack_url(root: Path = REPO_ROOT) -> str:
+    """The URL the repo's own `docker compose` stack serves on, read from the two files
+    that decide it: docker-compose.yml publishes nginx (the one ingress) on host port
+    ``${ARCHIMEDES_HTTP_PORT:-80}``, and .env.example sets ARCHIMEDES_HTTP_PORT."""
+    compose = (root / "docker-compose.yml").read_text()
+    assert '"${ARCHIMEDES_HTTP_PORT:-80}:8080"' in compose, (
+        "docker-compose.yml no longer publishes nginx on ${ARCHIMEDES_HTTP_PORT:-80}; "
+        "re-derive the CLI default from the new mapping"
+    )
+    env = (root / ".env.example").read_text()
+    match = re.search(r"^ARCHIMEDES_HTTP_PORT=(\d+)\s*$", env, re.MULTILINE)
+    assert match, ".env.example no longer sets ARCHIMEDES_HTTP_PORT"
+    return f"http://localhost:{match.group(1)}"
+
+
+def test_default_is_the_local_compose_stack():
+    """The default is the stack `docker compose up` starts from this repo with
+    .env.example's settings. It named the hosted site until 2026-11-01, when the project
+    went local-first."""
+    assert DEFAULT_API_URL == "http://localhost:8080"
+    assert _local_stack_url() == DEFAULT_API_URL
+
+
+def test_local_stack_url_reader_tracks_the_port(tmp_path):
+    """Anti-vacuity: the reader follows .env.example, so a port change there turns the
+    default test red instead of passing on a stale literal."""
+    (tmp_path / "docker-compose.yml").write_text((REPO_ROOT / "docker-compose.yml").read_text())
+    (tmp_path / ".env.example").write_text("ARCHIMEDES_HTTP_PORT=9090\n")
+    assert _local_stack_url(tmp_path) == "http://localhost:9090"
+    assert _local_stack_url(tmp_path) != DEFAULT_API_URL
+
+
+def test_login_help_shows_the_local_default():
+    result = CliRunner().invoke(main, ["login", "--help"])
+    assert result.exit_code == 0, result.output
+    assert "http://localhost:8080" in result.output
+    assert "archimedes-arc.com" not in result.output
 
 
 def test_resolution_order_explicit_then_session_then_default():

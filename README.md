@@ -15,7 +15,27 @@ static look-ahead audit, with the measured verdict recorded whichever way it lan
 Survivors run as paper deployments, so a gated strategy's results play out in the open
 with full provenance.
 
-Live at **<https://archimedes-arc.com/>**, running against Arc testnet.
+Archimedes is open-source software you run yourself, against Arc testnet. The hosted site
+at archimedes-arc.com has closed, so the way to use it is to run your own instance.
+
+## Run it locally
+
+```bash
+git clone --recurse-submodules https://github.com/aprin-labs/archimedes.git
+cd archimedes
+cp .env.example .env
+# REQUIRED: generate a local auth secret, then paste it after BETTER_AUTH_SECRET=
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+docker compose up -d --build
+```
+
+Then open <http://localhost:8080>. The backend shares that ingress:
+<http://localhost:8080/health> for the honesty flags, <http://localhost:8080/docs> for the
+API. LLM credentials are optional — without one, generation uses the canned fallback.
+
+**[`SETUP.md`](SETUP.md) is the full walkthrough** — prerequisites, platform notes
+(macOS / Linux / WSL2), host tooling for frontend and contract work, and the test suite.
+`make help` lists the dev targets.
 
 ## The spine
 
@@ -42,13 +62,14 @@ not. The locked spine is [`docs/user-stories.md`](docs/user-stories.md).
   to you with its DSR, PBO and out-of-sample numbers, so you can see exactly why. How many
   strategies in the curated library currently pass is **unestablished** — the live gate is
   the only authority on that, and this file will never quote a count.
-- **Research marketplace, not a casino.** Payments are real (USDC on Arc); marketplace
-  settlement is stubbed behind `PAYMENTS_DRY_RUN` pending mainnet. Single-user MVP —
-  multi-user library and social features are roadmap.
+- **Research marketplace, not a casino.** Payments are real USDC on Arc when an operator
+  turns them on; marketplace settlement is stubbed behind `PAYMENTS_DRY_RUN` pending
+  mainnet. Single-user MVP — multi-user library and social features are roadmap.
 - **Arc testnet only** (chain `5042002`). Faucet USDC comes from
   <https://faucet.circle.com/> (20 USDC / 2h — on Arc, USDC *is* gas). **No mainnet
-  money.** Generation still settles real testnet USDC — read `GET /api/generate/quote`
-  (prod answers `dry_run: false`). Arc has no mainnet yet; mainnet launch, real-funds
+  money.** A local install charges nothing for generation by default
+  (`GENERATION_PAYMENT_REQUIRED=false` in `.env.example`); `GET /api/generate/quote`
+  reports what your instance does. Arc has no mainnet yet; mainnet launch, real-funds
   custody, and the regulatory architecture are roadmap.
 
 ## The rigor gate
@@ -81,29 +102,8 @@ Mechanism in full: [`docs/specs/multi-agent-debate-spec.md`](docs/specs/multi-ag
 
 ## Quickstart
 
-### The live site
-
-<https://archimedes-arc.com/> runs against Arc testnet. Sign in with email and password,
-describe a brief, and read the verdict.
-
-### Run it locally
-
-```bash
-git clone --recurse-submodules https://github.com/aprin-labs/archimedes.git
-cd archimedes
-cp .env.example .env
-# REQUIRED: generate a local auth secret, then paste it after BETTER_AUTH_SECRET=
-python -c "import secrets; print(secrets.token_urlsafe(48))"
-docker compose up -d --build
-```
-
-Then open <http://localhost:8080>. The backend shares that ingress:
-<http://localhost:8080/health> for the honesty flags, <http://localhost:8080/docs> for the
-API. LLM credentials are optional — without one, generation uses the canned fallback.
-
-**[`SETUP.md`](SETUP.md) is the full walkthrough** — prerequisites, platform notes
-(macOS / Linux / WSL2), host tooling for frontend and contract work, and the test suite.
-`make help` lists the dev targets.
+Start your instance first ([Run it locally](#run-it-locally)), then sign up at
+<http://localhost:8080>, describe a brief, and read the verdict.
 
 ### The CLI
 
@@ -124,7 +124,9 @@ archimedes manifest         # JSON: every command, flag, exit code, and cost cla
 ```
 
 Sign in (Better Auth email + password — no wallet signature), then read your meter and run
-the gate:
+the gate. `archimedes login` signs in to <http://localhost:8080> unless `--api-url` or
+`ARCHIMEDES_API_URL` names another server, and later commands go back to the server the
+session was cached against:
 
 ```bash
 archimedes login            # prompts; or set ARCHIMEDES_EMAIL / ARCHIMEDES_PASSWORD
@@ -165,8 +167,8 @@ Full reference: [`cli/README.md`](cli/README.md) and
 ## Documentation
 
 [`docs/doc-index.md`](docs/doc-index.md) is the register — **a doc not listed there does not
-exist.** The same tree is published, curated, at <https://docs.archimedes-arc.com>.
-The entry points:
+exist.** Browse the tree itself on GitHub at
+<https://github.com/aprin-labs/archimedes/tree/main/docs>. The entry points:
 
 | If you want to… | Read |
 |---|---|
