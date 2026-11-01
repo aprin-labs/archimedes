@@ -897,15 +897,14 @@ export default function AccountSettings({ walletAddr, onDisconnect, linkError })
         <p className="caption mb-3">
           Anything already published to a blockchain stays there — no deletion here
           can reach it. Server and load-balancer logs age out on their own schedule rather than being
-          pulled out per account. The reasoning record of each paper-trading decision, kept in our
-          cache with your account id, is not removed either.
+          pulled out per account. The reasoning record of each paper-trading decision, kept in this
+          instance&rsquo;s cache with your account id, is not removed either.
         </p>
         <p className="caption mb-3">
-          If you also want what this leaves erased or scrubbed, or a copy of your data, write to{' '}
-          <a className="text-[var(--accent)] underline" href="mailto:privacy@archimedes-arc.com">privacy@archimedes-arc.com</a>{' '}
-          before you delete: afterwards we can find what the account left only through a wallet you
-          linked or paid with. The{' '}
-          <a className="text-[var(--accent)] underline" href="/privacy">Privacy Policy</a> explains.
+          What this leaves stays in this instance&rsquo;s database and cache. Whoever runs the
+          instance can erase it there. The{' '}
+          <a className="text-[var(--accent)] underline" href="/privacy">Privacy page</a> lists what an
+          instance stores.
         </p>
 
         <form className="flex flex-col gap-2 max-w-[420px]" onSubmit={submitDeleteAccount}>

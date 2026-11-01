@@ -271,8 +271,12 @@ test("privacy says the software is self-run and reports to no one", () => {
 		assert.match(code, /REDIS_URL = os\.getenv\("REDIS_URL"/, `${store} must count into the instance's Redis`);
 	}
 	assert.match(app, /fetch\(`\$\{API_BASE\}\/api\/metrics\/funnel\/event`/);
-	// Better Auth ships an opt-in telemetry package; nothing here opts in.
-	assert.doesNotMatch(repo("auth/auth.js"), /telemetry/i, "auth/auth.js must not configure Better Auth telemetry");
+	// Better Auth ships an opt-in telemetry package. auth/auth.js pins it off
+	// explicitly, and nothing turns it on.
+	const authConfig = repo("auth/auth.js");
+	assert.match(authConfig, /telemetry:\s*\{\s*enabled:\s*false\s*\}/, "auth/auth.js must pin Better Auth telemetry off");
+	assert.equal((authConfig.match(/telemetry:/g) || []).length, 1, "exactly one telemetry setting, the pinned-off one");
+	assert.doesNotMatch(authConfig, /BETTER_AUTH_TELEMETRY/);
 	assert.doesNotMatch(repo(".env.example"), /BETTER_AUTH_TELEMETRY/);
 	assert.doesNotMatch(repo("docker-compose.yml"), /BETTER_AUTH_TELEMETRY/);
 });

@@ -327,6 +327,11 @@ export function createAuth({ database, env = process.env, mailer = createMailer(
 
   return betterAuth({
     appName: 'Archimedes',
+    // Better Auth telemetry is off by default (1.6.25:
+    // options.telemetry?.enabled ?? false, or its environment switch). Pinned off
+    // here so a future default change cannot start reporting from a local install;
+    // the Privacy page says the software sends no telemetry.
+    telemetry: { enabled: false },
     baseURL,
     secret,
     database: db,
