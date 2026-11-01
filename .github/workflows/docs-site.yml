@@ -117,7 +117,7 @@ jobs:
       # a PR run stops at "did it build", with nothing uploaded.
       - name: Upload the built site
         if: ${{ github.event_name != 'pull_request' }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: docs-site
           path: _site

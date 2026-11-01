@@ -68,31 +68,67 @@ class TestDatabaseUrlEnvOverride:
 class TestBarePostgresUrlResolvesToPsycopg2:
     """SQLAlchemy 2.1.0 changed the DEFAULT driver a bare ``postgresql://`` URL
     resolves to — from ``psycopg2`` to ``psycopg`` (v3), which this repo does not
-    install (see the pin comment on ``sqlalchemy`` in requirements-base.txt).
-    Every bare-scheme call site — this module's own ``DATABASE_URL``,
-    ``migrations/env.py``, and every alembic offline-SQL test — imports the
-    driver at ``create_engine()`` time (no live connection needed), so a
-    resolution to the wrong dialect raises ``ModuleNotFoundError`` before a
-    single query runs. Reproduced directly: an isolated venv with sqlalchemy
-    2.1.1 + psycopg2-binary and no ``psycopg`` raises exactly that; the same
-    venv with 2.0.52 resolves ``...postgresql.psycopg2`` cleanly.
+    install. Every URL source (ECS secret, compose, ``.env``) writes the bare
+    scheme, and ``create_engine()`` imports the driver up front (no live
+    connection needed), so a resolution to the wrong dialect raises
+    ``ModuleNotFoundError`` before a single query runs.
 
-    This guard does not re-litigate the version pin (that is a text-only
-    comparison a future dependabot PR is meant to be able to bump past, with
-    review); it pins the OUTCOME the pin protects, so any future upgrade —
-    whether or not it changes this exact number — is caught by whether it
-    breaks bare-scheme resolution, not by whether it changed a version string.
+    ``db._pin_psycopg2_driver`` is what keeps that from happening on 2.1+. These
+    tests pin the OUTCOME through it, not the library default: on SQLAlchemy 2.1
+    a bare URL that skipped the pin resolves to psycopg and fails the first test.
     """
 
     def test_bare_postgres_url_resolves_to_psycopg2_dialect(self):
         from sqlalchemy import create_engine
 
-        engine = create_engine("postgresql://user:pass@host:5432/db")
+        url = db._pin_psycopg2_driver("postgresql://user:pass@host:5432/db")
+        engine = create_engine(url)
         assert engine.dialect.__class__.__module__ == "sqlalchemy.dialects.postgresql.psycopg2", (
             f"a bare `postgresql://` URL now resolves to {engine.dialect.__class__.__module__!r}, "
-            "not the psycopg2 dialect this repo installs — this is the exact SQLAlchemy 2.1 "
-            "regression the <2.1 ceiling on requirements-base.txt's sqlalchemy pin exists to "
-            "prevent. Either the ceiling was raised without also installing `psycopg` (v3) or "
-            "making every DATABASE_URL construction say `postgresql+psycopg2://` explicitly, "
-            "or something else changed the default. Do not loosen this assertion — fix the cause."
+            "not the psycopg2 dialect this repo installs. `db._pin_psycopg2_driver` must spell "
+            "out `postgresql+psycopg2://`, or `psycopg` (v3) must be installed. Do not loosen "
+            "this assertion — fix the cause."
         )
+
+    def test_pin_rewrites_only_the_bare_scheme(self):
+        assert db._pin_psycopg2_driver("postgresql://u:p@h:5432/d") == "postgresql+psycopg2://u:p@h:5432/d"
+        # A URL that already names a driver, or is not Postgres, passes through.
+        for url in (
+            "postgresql+psycopg2://u:p@h/d",
+            "postgresql+asyncpg://u:p@h/d",
+            "sqlite:///x.db",
+        ):
+            assert db._pin_psycopg2_driver(url) == url
+
+    def test_module_database_url_goes_through_the_pin(self):
+        # A subprocess, not importlib.reload: reloading `db` here would rebind
+        # the engine every other module already imported.
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        backend_dir = Path(db.__file__).resolve().parent.parent
+        # Whitelisted env + neutralized load_dotenv, per docs/testing-conventions.md,
+        # so a developer's .env cannot replace the URL under test.
+        env = {
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": os.environ.get("HOME", ""),
+            "PYTHONPATH": str(backend_dir),
+            "DATABASE_URL": "postgresql://u:p@h:5432/d",
+        }
+        script = (
+            "import dotenv\n"
+            "dotenv.load_dotenv = lambda *a, **k: False\n"
+            "from archimedes import db\n"
+            "print(db.DATABASE_URL, db.engine.dialect.driver)\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=backend_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.split()[-2:] == ["postgresql+psycopg2://u:p@h:5432/d", "psycopg2"]
