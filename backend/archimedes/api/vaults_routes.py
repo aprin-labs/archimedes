@@ -468,7 +468,20 @@ async def get_vault_detail(address: str):
 # ── Vault Metadata (off-chain) ───────────────────────────────
 
 
-@vaults_router.post("/metadata", response_model=VaultMetadataResponse)
+@vaults_router.post(
+    "/metadata",
+    response_model=VaultMetadataResponse,
+    # Roadmap-gated (#1432), the same gate as POST /create: 404 while
+    # FEATURE_ROADMAP_SURFACES is off. Its only caller is the UI's
+    # CreateVaultModal, which sits behind the UI's roadmap build flag, yet a
+    # direct caller could record a vault deployed from outside the site and
+    # have the backend signer anchor its strategies on-chain. While the flag is
+    # off nothing in this handler runs: no auth check, no body-schema
+    # validation, no ownership read, no rigor gate, no write, no anchoring.
+    # FastAPI's read of the body runs before the gate exactly as on POST
+    # /create. GET /{address}/metadata stays open: it is a read.
+    dependencies=[Depends(require_roadmap_surfaces)],
+)
 @limiter.limit("10/minute")
 async def store_vault_metadata(
     req: VaultMetadataRequest,
@@ -477,6 +490,10 @@ async def store_vault_metadata(
     wallet: str = Depends(require_linked_wallet),
 ):
     """Store off-chain vault metadata (strategy associations, display name).
+
+    Roadmap-gated like ``create_vault``: 404 unless the server's
+    ``FEATURE_ROADMAP_SURFACES`` flag is on, matching the UI, whose only
+    caller of this route (``CreateVaultModal``) is behind the roadmap build flag.
 
     Linked-wallet gated and owner-scoped: this write triggers `_anchor_strategies_async`,
     a backend-signed on-chain transaction. The caller must be the vault's

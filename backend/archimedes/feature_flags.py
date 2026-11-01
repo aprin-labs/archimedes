@@ -53,9 +53,11 @@ def roadmap_surfaces_enabled(environ: Mapping[str, str] | None = None) -> bool:
     of every shipped build behind ``VITE_ROADMAP_SURFACES``; this keeps the
     backend routes behind those surfaces equally closed, so a direct API call
     cannot reach what the site says it does not offer. Today it gates exactly
-    the three mounted routes that have the backend signer deploy a vault owned
-    by the caller's wallet: ``POST /api/vaults/create``, ``POST
-    /api/marketplace/publish`` and ``POST /api/marketplace/subscribe``
+    four mounted routes: the three that have the backend signer deploy a vault
+    owned by the caller's wallet, ``POST /api/vaults/create``, ``POST
+    /api/marketplace/publish`` and ``POST /api/marketplace/subscribe``, and
+    ``POST /api/vaults/metadata``, which records a vault the caller deployed
+    themselves and has the backend signer anchor its strategies on-chain
     (pinned by ``backend/tests/test_vault_create_roadmap_gate.py``).
 
     Only the word ``true`` (any case, surrounding space ignored) enables it.

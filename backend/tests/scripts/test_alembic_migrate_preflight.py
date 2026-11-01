@@ -117,8 +117,28 @@ class TestNeedsBaselineStamp:
 def _postgres_test_url() -> str | None:
     url = os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL")
     if url and url.startswith("postgresql"):
-        return url
+        from archimedes.db import _pin_psycopg2_driver
+
+        return _pin_psycopg2_driver(url)
     return None
+
+
+def test_postgres_test_url_pins_the_psycopg2_driver(monkeypatch):
+    """SQLAlchemy 2.1 resolves a bare ``postgresql://`` to psycopg (v3), which is
+    not installed. Unpinned, ``sa.create_engine`` in the integration test below
+    raises ModuleNotFoundError before its unreachable-DB skip can run."""
+    monkeypatch.delenv("TEST_DATABASE_URL", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@h:5432/d")
+    url = _postgres_test_url()
+    assert url == "postgresql+psycopg2://u:p@h:5432/d"
+    engine = sa.create_engine(url)
+    try:
+        assert engine.dialect.driver == "psycopg2"
+    finally:
+        engine.dispose()
+
+    monkeypatch.setenv("TEST_DATABASE_URL", "postgresql://t:p@h:5432/d")
+    assert _postgres_test_url() == "postgresql+psycopg2://t:p@h:5432/d"
 
 
 @pytest.mark.integration

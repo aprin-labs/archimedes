@@ -91,10 +91,11 @@ tracked here rather than silently absent.
   `/{address}/metadata`) are public. `POST /create`, `POST /metadata`, and
   `POST /{address}/derive-allocations` require `require_linked_wallet`
   (session + a verified linked wallet) — each spends backend-signer gas or
-  writes state. `POST /create` also sits behind the roadmap gate
-  (`require_roadmap_surfaces`, `FEATURE_ROADMAP_SURFACES`, off unless set to
-  `true`; #1432): while it is off the route answers `404` whether or not the
-  caller is signed in, because the gate runs before its auth dependency.
+  writes state. `POST /create` and `POST /metadata` also sit behind the
+  roadmap gate (`require_roadmap_surfaces`, `FEATURE_ROADMAP_SURFACES`, off
+  unless set to `true`; #1432): while it is off they answer `404` whether or
+  not the caller is signed in, because the gate runs before their auth
+  dependency. `POST /{address}/derive-allocations` is not gated.
 - **`strategies_router`** — curated/generated reads are public, with optional
   personalization via `get_current_user` (never mandatory). `GET /generated`
   and `PATCH /{strategy_id}` require `require_current_user`. **This router
