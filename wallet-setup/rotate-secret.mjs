@@ -33,7 +33,9 @@ try {
   }
   console.log("✅ Registered!\n");
 } catch (e) {
-  if (e.response?.status === 409) {
+  // SDK 10.x throws its own HttpResponseError (status on the error, axios error
+  // on .error); 7.x threw the axios error itself (status on .response). Read both.
+  if ((e.status ?? e.response?.status) === 409) {
     console.error("❌ 409 Conflict — an entity secret is already registered.");
     console.error("   Go to https://console.circle.com → Programmable Wallets → Configuration");
     console.error("   Click 'Reset Entity Secret', then re-run this script.\n");

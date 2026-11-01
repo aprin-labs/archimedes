@@ -42,7 +42,7 @@ sqlalchemy>=2.1.3,<2.2
 # `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` patches in db.py for retrofitting
 # the already-populated prod Postgres DB. MIT license, maintained by the
 # SQLAlchemy project itself.
-alembic>=1.19.1
+alembic>=1.20.1
 # Source-built, NOT `psycopg2-binary` (swapped 2026-09-01, issue #1632).
 #
 # The binary wheel vendors its OWN copy of libpq *and* libssl/libcrypto
@@ -90,7 +90,7 @@ numpy>=2.5.3,<3.0
 # Docker build (latest available is 3.0.3). Floor lowered to the newest
 # non-yanked release. (NB: environment.yml still floors pandas>=2.2 — a
 # pre-existing local-vs-prod major drift to reconcile separately.)
-pandas>=3.0.6
+pandas>=3.1.0
 scipy>=1.18.1
 scikit-learn>=1.9.1  # GaussianMixture + StandardScaler for the data-driven GmmRegimeDetector (issue #661); BSD-3-Clause
 
@@ -111,7 +111,7 @@ httpx>=0.28.1
 # urllib3 is transitive (requests / boto3 / arxiv). Pinned directly to close
 # PYSEC-2026-141 / PYSEC-2026-142 so a fresh resolve can't regress to a
 # vulnerable version (CVE bump 2026-06-25).
-urllib3>=2.7.0
+urllib3>=2.8.0
 
 # Backtesting
 backtrader>=1.9.78.123
@@ -184,7 +184,7 @@ slowapi>=0.1.10
 # Paper ingestion
 arxiv>=4.0.1
 # Floor raised to 6.13.3 to close 8 CVEs incl GHSA-jm82-fx9c-mx94 (CVE bump 2026-06-25).
-pypdf>=6.19.0
+pypdf>=6.21.4
 
 # AWS / S3
 boto3>=1.43.110
