@@ -16,7 +16,14 @@ Navigate to **Settings → Code security and analysis** for the repo
   `requirements.txt`, etc.) and opens alerts when a known vulnerability is
   found in a transitive dependency.
 - **Our config:** `.github/dependabot.yml` controls the weekly schedule and
-  PR limits.
+  PR limits for version updates.
+- **Also turn on Dependabot security updates** (same settings page, separate
+  toggle). Alerts alone never open a PR. With it on, Dependabot opens one that
+  bumps the vulnerable package to the first patched version, transitive
+  packages included. `dependabot.yml` does not drive this, and its
+  `open-pull-requests-limit` does not apply to it. Version updates only touch
+  packages a manifest names directly, so they will never fix a transitive
+  alert on their own.
 
 ### 2. Secret scanning
 

@@ -139,7 +139,7 @@ def pg_engine(monkeypatch):
     """Install a recording Postgres-dialect engine as the module's engine."""
     fake = _RecordingEngine()
     monkeypatch.setattr(db, "engine", fake)
-    monkeypatch.setattr(db, "DATABASE_URL", "postgresql://user:pw@host:5432/archimedes")
+    monkeypatch.setattr(db, "DATABASE_URL", "postgresql+psycopg2://user:pw@host:5432/archimedes")
     return fake
 
 
@@ -257,7 +257,7 @@ class TestInitDbPatchTransactions:
             raise_on=("ALTER TABLE papers ADD COLUMN IF NOT EXISTS cluster_id", lock_timeout_error("cluster_id")),
         )
         monkeypatch.setattr(db, "engine", fake)
-        monkeypatch.setattr(db, "DATABASE_URL", "postgresql://user:pw@host:5432/archimedes")
+        monkeypatch.setattr(db, "DATABASE_URL", "postgresql+psycopg2://user:pw@host:5432/archimedes")
 
         with caplog.at_level(logging.INFO, logger=db.__name__):
             db.init_db()  # must not raise
@@ -473,7 +473,7 @@ class TestTheAggregateLockBudget:
         monkeypatch.setattr(db, "time", clock)
         fake = self._contended(clock)
         monkeypatch.setattr(db, "engine", fake)
-        monkeypatch.setattr(db, "DATABASE_URL", "postgresql://user:pw@host:5432/archimedes")
+        monkeypatch.setattr(db, "DATABASE_URL", "postgresql+psycopg2://user:pw@host:5432/archimedes")
         monkeypatch.setattr(db, "PATCH_LOCK_BUDGET_SECONDS", 10.0)
         monkeypatch.setattr(db, "_ensure_ownership_columns", lambda **_kw: None)
 
@@ -494,7 +494,7 @@ class TestTheAggregateLockBudget:
         monkeypatch.setattr(db, "time", clock)
         fake = self._contended(clock)
         monkeypatch.setattr(db, "engine", fake)
-        monkeypatch.setattr(db, "DATABASE_URL", "postgresql://user:pw@host:5432/archimedes")
+        monkeypatch.setattr(db, "DATABASE_URL", "postgresql+psycopg2://user:pw@host:5432/archimedes")
         monkeypatch.setattr(db, "PATCH_LOCK_BUDGET_SECONDS", 10.0)
         monkeypatch.setattr(db, "_ensure_ownership_columns", lambda **_kw: None)
 
@@ -517,7 +517,7 @@ class TestTheAggregateLockBudget:
         monkeypatch.setattr(db, "time", clock)
         fake = self._contended(clock)
         monkeypatch.setattr(db, "engine", fake)
-        monkeypatch.setattr(db, "DATABASE_URL", "postgresql://user:pw@host:5432/archimedes")
+        monkeypatch.setattr(db, "DATABASE_URL", "postgresql+psycopg2://user:pw@host:5432/archimedes")
         monkeypatch.setattr(db, "PATCH_LOCK_BUDGET_SECONDS", 10.0)
         monkeypatch.setattr(
             sqlalchemy,
@@ -539,7 +539,7 @@ class TestTheAggregateLockBudget:
         monkeypatch.setattr(db, "time", clock)
         fake = _RecordingEngine()
         monkeypatch.setattr(db, "engine", fake)
-        monkeypatch.setattr(db, "DATABASE_URL", "postgresql://user:pw@host:5432/archimedes")
+        monkeypatch.setattr(db, "DATABASE_URL", "postgresql+psycopg2://user:pw@host:5432/archimedes")
         monkeypatch.setattr(db, "_ensure_ownership_columns", lambda **_kw: None)
 
         db.init_db()
@@ -631,7 +631,7 @@ class TestTheLockTimeoutValueIsValidated:
         syntax_error = OperationalError("SET LOCAL", {}, Exception('near "SET": syntax error'))
         fake = _RecordingEngine(raise_on=("'5 s'", syntax_error))
         monkeypatch.setattr(db, "engine", fake)
-        monkeypatch.setattr(db, "DATABASE_URL", "postgresql://user:pw@host:5432/archimedes")
+        monkeypatch.setattr(db, "DATABASE_URL", "postgresql+psycopg2://user:pw@host:5432/archimedes")
         monkeypatch.setattr(db, "_ensure_ownership_columns", lambda **_kw: None)
         monkeypatch.setattr(db, "PATCH_LOCK_TIMEOUT", "5 s")
 
