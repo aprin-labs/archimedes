@@ -111,7 +111,7 @@ httpx>=0.28.1
 # urllib3 is transitive (requests / boto3 / arxiv). Pinned directly to close
 # PYSEC-2026-141 / PYSEC-2026-142 so a fresh resolve can't regress to a
 # vulnerable version (CVE bump 2026-06-25).
-urllib3>=2.7.0
+urllib3>=2.8.0
 
 # Backtesting
 backtrader>=1.9.78.123
