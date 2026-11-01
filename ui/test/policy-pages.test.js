@@ -60,15 +60,29 @@ const ENTITIES = {
 	"&ndash;": "–",
 	"&hellip;": "…",
 };
+// Strip until nothing changes, so a tag split across another tag ("<<b>p>")
+// cannot survive one pass (CodeQL js/incomplete-multi-character-sanitization;
+// the output is only ever matched against, never rendered).
+const untilStable = (text, step) => {
+	for (let previous = null; previous !== text; ) {
+		previous = text;
+		text = step(text);
+	}
+	return text;
+};
 const visible = (fragment) =>
-	fragment
-		.replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
-		.replace(/>\s*\n\s*/g, ">")
-		.replace(/\s*\n\s*</g, "<")
-		.replace(/\{"\s*"\}/g, " ")
-		.replace(/\{'\s*'\}/g, " ")
-		.replace(/<\/?(?:p|li|ul|ol|h[1-6]|section|header|div)\b[^>]*>/g, " ")
-		.replace(/<[^>]*>/g, "")
+	untilStable(
+		untilStable(
+			fragment
+				.replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+				.replace(/>\s*\n\s*/g, ">")
+				.replace(/\s*\n\s*</g, "<")
+				.replace(/\{"\s*"\}/g, " ")
+				.replace(/\{'\s*'\}/g, " "),
+			(t) => t.replace(/<\/?(?:p|li|ul|ol|h[1-6]|section|header|div)\b[^>]*>/g, " "),
+		),
+		(t) => t.replace(/<[^>]*>/g, ""),
+	)
 		.replace(/&[a-z]+;/g, (entity) => ENTITIES[entity] ?? entity)
 		.replace(/\s+/g, " ");
 // The rendered part of a page, as text.
