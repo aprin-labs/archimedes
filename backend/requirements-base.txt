@@ -31,7 +31,7 @@ uvicorn[standard]>=0.52.4
 # scheme, so `db._pin_psycopg2_driver` rewrites it to `postgresql+psycopg2://`
 # where `db.DATABASE_URL` is read (the app engine and `migrations/env.py` use
 # that constant). Anything that builds an engine from a raw environment URL must
-# call the helper too: the two integration tests and the #1411 spike do. That is
+# call the helper too, as the two Postgres integration tests do. That is
 # what allows the 2.1 line here; `test_db.py::TestBarePostgresUrlResolvesToPsycopg2`
 # fails if the rewrite is dropped. (It was capped at <2.1 from 2026-09-25 to
 # 2026-10-03 for this reason.) The floor is 2.1.3, not 2.1.1: 2.1.2 fixed

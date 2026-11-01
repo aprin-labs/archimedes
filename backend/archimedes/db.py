@@ -121,8 +121,8 @@ def _pin_psycopg2_driver(url: str) -> str:
     (the ECS secret, compose, ``.env``, ``infra/outputs.tf``) writes the bare
     scheme, so the driver is pinned here, where ``DATABASE_URL`` is read; the app
     engine and ``migrations/env.py`` take the URL from that constant. Code that
-    builds its own engine from a raw environment URL (the integration tests, the
-    #1411 spike probe) must call this too. A URL that already names a driver
+    builds its own engine from a raw environment URL (the two Postgres
+    integration tests) must call this too. A URL that already names a driver
     (``postgresql+psycopg2://``, ``postgresql+asyncpg://``) is left alone.
     """
     if url.startswith("postgresql://"):

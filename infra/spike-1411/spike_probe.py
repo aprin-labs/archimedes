@@ -121,17 +121,6 @@ def _ssm_value(name: str) -> str:
     return client.get_parameter(Name=f"{prefix}{name}", WithDecryption=True)["Parameter"]["Value"]
 
 
-def _aurora_url() -> str:
-    """The Aurora URL to read from, with the psycopg2 driver spelled out.
-
-    The source value is a bare ``postgresql://`` URL, which SQLAlchemy 2.1
-    resolves to psycopg (v3), and the image installs only psycopg2.
-    """
-    from archimedes.db import _pin_psycopg2_driver
-
-    return _pin_psycopg2_driver(os.environ.get("DATABASE_URL_PROBE") or _ssm_value("DATABASE_URL"))
-
-
 def _probe_redis() -> dict:
     """PING + one read. No key is written: production's event log is not ours."""
     import redis
@@ -149,7 +138,8 @@ def _probe_aurora() -> dict:
     """SELECT-only: connectivity, server version, and the corpus row count."""
     from sqlalchemy import create_engine, text
 
-    engine = create_engine(_aurora_url(), connect_args={"connect_timeout": 8}, pool_pre_ping=False)
+    url = os.environ.get("DATABASE_URL_PROBE") or _ssm_value("DATABASE_URL")
+    engine = create_engine(url, connect_args={"connect_timeout": 8}, pool_pre_ping=False)
     with engine.connect() as conn:
         t0 = time.perf_counter()
         conn.execute(text("SELECT 1"))
@@ -239,7 +229,8 @@ def _prepare_write_isolated_db(paper_limit: int) -> dict:
         )
     init_db()
 
-    source_engine = create_engine(_aurora_url(), connect_args={"connect_timeout": 8})
+    source_url = os.environ.get("DATABASE_URL_PROBE") or _ssm_value("DATABASE_URL")
+    source_engine = create_engine(source_url, connect_args={"connect_timeout": 8})
     source_session = sessionmaker(bind=source_engine)()
     try:
         rows = source_session.query(PaperRecord).limit(paper_limit).all()
