@@ -24,8 +24,8 @@
     "motion": "13.2.0",
     "radix-ui": "1.6.7",
     "tailwind-merge": "3.6.0",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "react-force-graph-2d": "^1.29.2",
     "viem": "^2.57.0"
   },
