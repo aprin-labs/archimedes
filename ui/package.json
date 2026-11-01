@@ -38,7 +38,7 @@
     "@iconify-json/logos": "^1.2.15",
     "@iconify-json/lucide": "^1.2.142",
     "@iconify-json/simple-icons": "^1.2.99",
-    "@iconify-json/token-branded": "^1.2.44",
+    "@iconify-json/token-branded": "^1.2.46",
     "@tailwindcss/vite": "4.3.3",
     "@types/node": "24.13.3",
     "@types/react": "^19.3.0",
