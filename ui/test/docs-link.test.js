@@ -4,7 +4,7 @@
 // The docs site is built by mkdocs and served from our own S3 + CloudFront
 // (docs-site/infra/main.tf). A site nobody can navigate to is the same as an
 // unpublished one, so the two public surfaces that carry navigation — the
-// landing footer's "Resources" nav and the public header nav — must each link
+// shared footer's "Resources" nav and the public header nav — must each link
 // to it.
 //
 // Three things are asserted, and each one has failed somewhere in this repo
@@ -70,8 +70,8 @@ function navSection(source, ariaLabel, file) {
 //: [label, file, aria-label, a sibling link that must survive any refactor]
 const SURFACES = [
 	[
-		"landing footer",
-		"src/components/Landing.jsx",
+		"shared public footer",
+		"src/components/PublicLayout.jsx",
 		"Resource links",
 		"/.well-known/agent.json",
 	],
@@ -132,9 +132,15 @@ for (const [label, file, ariaLabel, sibling] of SURFACES) {
 }
 
 test("the UI's docs host matches mkdocs.yml's site_url", () => {
-	const mkdocs = readFileSync(new URL("../../mkdocs.yml", import.meta.url), "utf8");
+	const mkdocs = readFileSync(
+		new URL("../../mkdocs.yml", import.meta.url),
+		"utf8",
+	);
 	const match = mkdocs.match(/^site_url:\s*(\S+)\s*$/m);
-	assert.ok(match, "mkdocs.yml has no site_url — the site would be built with relative canonical URLs.");
+	assert.ok(
+		match,
+		"mkdocs.yml has no site_url — the site would be built with relative canonical URLs.",
+	);
 	assert.equal(
 		new URL(match[1]).host,
 		DOCS_HOST,

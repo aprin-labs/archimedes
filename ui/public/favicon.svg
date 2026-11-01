@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Archimedes">
-  <rect width="32" height="32" rx="5" fill="#F4F1E9"/>
-  <path d="M9 13V9h4M19 9h4v4M23 19v4h-4M13 23H9v-4" fill="none" stroke="#0D1218" stroke-width="2" stroke-linecap="square"/>
-  <circle cx="16" cy="16" r="3" fill="#4658E8"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-16 -35 196 196" fill="#132B28">
+  <style>@media (prefers-color-scheme: dark) { :root { fill: #F2F1E8; } }</style>
+  <path d="M0 126.555L77.7341 0L114.705 64.9364L88.6358 75.8382L75.3642 59.2486L36.0231 126.555H0Z"/>
+  <path d="M83.422 91.0058L123.237 75.8382L119.445 70.6243L164 47.8728V63.9884L127.977 80.578L146.936 126.555H103.804L83.422 91.0058Z"/>
 </svg>

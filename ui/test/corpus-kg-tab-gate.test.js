@@ -25,19 +25,26 @@ function repoFile(rel) {
 	return new URL(`../${rel}`, import.meta.url);
 }
 
-const explorer = readFileSync(repoFile("src/components/CorpusExplorer.jsx"), "utf8");
+const explorer = readFileSync(
+	repoFile("src/components/CorpusExplorer.jsx"),
+	"utf8",
+);
 const flags = readFileSync(repoFile("src/featureFlags.js"), "utf8");
 const envExample = readFileSync(repoFile(".env.example"), "utf8");
 
 // The exact line this change removed. If the guard below ever stops matching
 // it, the guard is broken rather than satisfied.
-const PRE_FIX_TABS = "const TABS = ['catalog', 'overview', 'graph', 'knowledge-graph']";
+const PRE_FIX_TABS =
+	"const TABS = ['catalog', 'overview', 'graph', 'knowledge-graph']";
 
-const UNGATED_TABS = /const TABS = \[[^\]]*['"]knowledge-graph['"][^\]]*\]\s*$/m;
+const UNGATED_TABS =
+	/const TABS = \[[^\]]*['"]knowledge-graph['"][^\]]*\]\s*;?\s*$/m;
 
-test("the flag is off unless the env var is exactly \"true\"", async () => {
+test('the flag is off unless the env var is exactly "true"', async () => {
 	// import.meta.env is undefined under node --test, which is the unset case.
-	const { KNOWLEDGE_GRAPH_TAB_ENABLED } = await import("../src/featureFlags.js");
+	const { KNOWLEDGE_GRAPH_TAB_ENABLED } = await import(
+		"../src/featureFlags.js"
+	);
 	assert.equal(
 		KNOWLEDGE_GRAPH_TAB_ENABLED,
 		false,
@@ -57,7 +64,7 @@ test("TABS is derived from the flag, not a bare literal", () => {
 	);
 	assert.match(
 		explorer,
-		/KNOWLEDGE_GRAPH_TAB_ENABLED \? \['knowledge-graph'\] : \[\]/,
+		/KNOWLEDGE_GRAPH_TAB_ENABLED\s*\?\s*\[['"]knowledge-graph['"]\]\s*:\s*\[\]/,
 		"TABS must spread the id in from the flag so Vite can fold the array away at build time",
 	);
 });
@@ -85,5 +92,9 @@ test("the honest zero-state stays for anyone who previews the tab", () => {
 	// #1392's /health-branched copy is explicitly out of scope for #1406 — it
 	// remains the fallback when the flag is on.
 	const kg = readFileSync(repoFile("src/components/CorpusKG.jsx"), "utf8");
-	assert.match(kg, /corpus_kg_built/, "CorpusKG.jsx must still branch on the live /health signal (#1392)");
+	assert.match(
+		kg,
+		/corpus_kg_built/,
+		"CorpusKG.jsx must still branch on the live /health signal (#1392)",
+	);
 });

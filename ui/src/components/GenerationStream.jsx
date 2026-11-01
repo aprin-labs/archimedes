@@ -177,8 +177,8 @@ export default function GenerationStream({ jobId, onDone, onReset, onPipelineSel
   }
 
   return (
-    <div className="card" style={{ padding: 20 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+    <div className="card generation-stream">
+      <div className="generation-stream__header">
         {/* Generation runs for minutes and every terminal outcome landed in
             plain <div>s: a screen-reader user who submitted a brief had no way
             to know the run was progressing, had finished, or had errored
@@ -187,7 +187,7 @@ export default function GenerationStream({ jobId, onDone, onReset, onPipelineSel
  implicit politeness, so an error is announced even when the user is not
  on the log below. */}
         <div>
-          <div className="label">Generating — job {jobId.slice(0, 10)}…</div>
+          <div className="label">Job {jobId.slice(0, 10)}…</div>
           {/* The live region holds ONLY the terminal outcome, and is mounted
               empty from the start so the message it later receives is actually
               announced. The running-state event counter below is deliberately
@@ -236,7 +236,7 @@ export default function GenerationStream({ jobId, onDone, onReset, onPipelineSel
             </button>
           )}
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="generation-stream__actions">
           {consideredCount > 1 && (
             <button
               className="btn btn-outline btn-sm"
@@ -300,19 +300,8 @@ export default function GenerationStream({ jobId, onDone, onReset, onPipelineSel
         aria-live="polite"
         aria-relevant="additions text"
         aria-label="Generation events"
-        style={{
-          // Raised from 320: the log now carries the debate turns and the
-          // per-paper table as cards, not one-liners, and a 320px window turned
-          // the thing this change exists to surface back into a scroll hunt.
-          maxHeight: 460,
-          overflowY: 'auto',
-          background: 'var(--glass)',
-          border: '1px solid var(--glass-border)',
-          borderRadius: 6,
-          padding: 12,
-          fontSize: '0.82rem',
-          fontFamily: 'var(--mono, monospace)',
-        }}
+        tabIndex={0}
+        className="generation-stream__log"
       >
         {events.length === 0 && (
           <div className="caption">Waiting for first event…</div>
@@ -322,32 +311,29 @@ export default function GenerationStream({ jobId, onDone, onReset, onPipelineSel
           const isTurn = ev.name === 'debate_turn'
           const isAttribution = ev.name === 'debate_attribution'
           return (
-            <div key={ev.id} style={{ marginBottom: isTurn || isAttribution ? 10 : 4, lineHeight: 1.4 }}>
-              <span style={{ color: 'var(--text-4)', marginRight: 8 }}>#{ev.id}</span>
-              <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{EVENT_LABELS[ev.name] || ev.name}</span>
-              {' — '}
-              <span>
-                {REGIME_BADGED_EVENTS.has(ev.name) && (
-                  <RegimeIcon regime={ev.data?.regime} fallbackBear={ev.name === 'candidate_failed'} />
+            <div key={ev.id} className="generation-event">
+              <span className="generation-event__id">#{ev.id}</span>
+              <div className="generation-event__body">
+                <span className="generation-event__label">{EVENT_LABELS[ev.name] || ev.name}</span>
+                <p className="generation-event__headline">
+                  {REGIME_BADGED_EVENTS.has(ev.name) && (
+                    <RegimeIcon regime={ev.data?.regime} fallbackBear={ev.name === 'candidate_failed'} />
+                  )}
+                  {REGIME_BADGED_EVENTS.has(ev.name) ? ' ' : ''}
+                  {eventHeadline(ev.name, ev.data)}
+                </p>
+                {showDetails && detail && (
+                  <div className="generation-event__detail">{detail}</div>
                 )}
-                {REGIME_BADGED_EVENTS.has(ev.name) ? ' ' : ''}
-                {eventHeadline(ev.name, ev.data)}
-              </span>
-              {showDetails && detail && (
-                <div style={{ color: 'var(--text-4)', paddingLeft: 28, wordBreak: 'break-word' }}>{detail}</div>
-              )}
-              {/* The debate itself, inline where it happened. The payloads are
-                  the sanitized turns the backend also persists, so this card and
-                  the passport's Reasoning section are the same rows. Rendered in
-                  the sans face — the surrounding log is monospace, and prose is
-                  not a wire dump. */}
-              {(isTurn || isAttribution) && (
-                <div style={{ marginTop: 6, fontFamily: 'var(--sans)', fontSize: '0.85rem' }}>
-                  {isTurn
-                    ? <DebateTurn turn={ev.data} />
-                    : <DebatePaperVerdicts entry={ev.data} compact showSummary={false} />}
-                </div>
-              )}
+                {/* Same sanitized debate rows as the passport, not a summary. */}
+                {(isTurn || isAttribution) && (
+                  <div className="generation-event__debate">
+                    {isTurn
+                      ? <DebateTurn turn={ev.data} />
+                      : <DebatePaperVerdicts entry={ev.data} compact showSummary={false} />}
+                  </div>
+                )}
+              </div>
             </div>
           )
         })}

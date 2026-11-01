@@ -109,7 +109,7 @@ export default function StorageDisclosure() {
 						{STORAGE_INVENTORY.length} entries, taken from the code rather than
 						from memory: the same list the consent gate reads before any write,
 						and the same list a test re-derives from the source on every run. No
-						third-party analytics, no advertising, no consent-management SDK —
+						third-party analytics, no advertising, no consent-management SDK;
 						this page&apos;s content-security policy would not load one.
 					</p>
 				</div>
@@ -117,7 +117,7 @@ export default function StorageDisclosure() {
 				{missingCookies.length > 0 ? (
 					<p className="storage-disclosure__error" role="alert">
 						Disclosure incomplete: {missingCookies.join(", ")} is missing from
-						the storage inventory. Report this — the page is under-disclosing.
+						the storage inventory. Report this: the page is under-disclosing.
 					</p>
 				) : null}
 

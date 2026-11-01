@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -10,24 +10,21 @@
     />
     <link
       rel="preload"
-      href="/fonts/gabarito-latin.woff2"
+      href="/fonts/dm-sans-latin.woff2"
       as="font"
       type="font/woff2"
       crossorigin
     />
-    <!-- Plain fallback first (browsers without media support read it; the
-         media-scoped pair below wins where supported). Matches the manifest. -->
-    <meta name="theme-color" content="#15131D" />
-    <meta
-      name="theme-color"
-      content="#EFEDFF"
-      media="(prefers-color-scheme: light)"
+    <link
+      rel="preload"
+      href="/fonts/inter-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
     />
-    <meta
-      name="theme-color"
-      content="#15131D"
-      media="(prefers-color-scheme: dark)"
-    />
+    <link rel="stylesheet" href="/theme.css" />
+    <!-- One application-owned color, never overridden by OS-scoped metadata. -->
+    <meta name="theme-color" content="#0d1917" />
 
     <meta
       property="og:title"
@@ -69,23 +66,7 @@
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
-    <script>
-      (function () {
-        try {
-          var stored = localStorage.getItem("archimedes.theme");
-          var systemDark = window.matchMedia(
-            "(prefers-color-scheme: dark)",
-          ).matches;
-          var theme = stored;
-          if (theme !== "dark" && theme !== "light") {
-            theme = systemDark ? "dark" : "light";
-          }
-          document.documentElement.setAttribute("data-theme", theme);
-        } catch (error) {
-          document.documentElement.setAttribute("data-theme", "light");
-        }
-      })();
-    </script>
+    <script src="/theme-init.js"></script>
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",

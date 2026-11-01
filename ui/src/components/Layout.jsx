@@ -8,7 +8,7 @@ import Breadcrumbs from "./Breadcrumbs";
 import { getStoredWalletName } from "../config";
 import { deriveChainStatus } from "../chainStatus";
 import { fetchHealth } from "../health";
-import { getStoredTheme, applyTheme } from "../theme";
+import ThemeSwitcher from "./ThemeSwitcher.jsx";
 import { visibleNavigation } from "../routes";
 import { lockBodyScroll, unlockBodyScroll } from "../utils/scrollLock";
 import { getProofStages } from "../proofStages.js";
@@ -66,7 +66,6 @@ export default function Layout({
 }) {
 	const [menuOpen, setMenuOpen] = useState(false);
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-	const [theme, setTheme] = useState(getStoredTheme);
 	const [health, setHealth] = useState(null);
 	const [healthError, setHealthError] = useState(false);
 	// Ops nav item (Insights) renders only after a successful admin-gate
@@ -223,12 +222,6 @@ export default function Layout({
 		};
 	}, [closeMenu, menuOpen]);
 
-	const toggleTheme = () => {
-		const next = theme === "light" ? "dark" : "light";
-		applyTheme(next);
-		setTheme(next);
-	};
-
 	// Circle wallet names describe wallet, never application identity.
 	const displayName = walletAddr ? getStoredWalletName(walletAddr) : null;
 
@@ -264,11 +257,9 @@ export default function Layout({
 			>
 				<div className="sidebar-brand">
 					<div className="sidebar-brand-main">
-						<BrandMark className="logo-mark" />
-						<div className="logo-copy flex-1 min-w-0">
-							<div className="logo-text">Archimedes</div>
-							<div className="logo-sub">Evidence workspace</div>
-						</div>
+						<a href="/" className="sidebar-identity" aria-label="Archimedes home">
+							<BrandMark />
+						</a>
 						<button
 							ref={closeButtonRef}
 							className="sidebar-close-btn"
@@ -389,26 +380,7 @@ export default function Layout({
 						{/* Personalized greeting moved into the WalletConnect dropdown
                 header so the topbar stays compact + the greeting lives next
                 to the wallet identity it belongs to. */}
-						<button
-							type="button"
-							className="topbar-icon-btn"
-							onClick={toggleTheme}
-							aria-label={
-								theme === "light"
-									? "Switch to dark theme"
-									: "Switch to light theme"
-							}
-							title={
-								theme === "light"
-									? "Switch to dark theme"
-									: "Switch to light theme"
-							}
-						>
-							<span
-								className={theme === "light" ? "i-lucide-moon" : "i-lucide-sun"}
-								style={{ width: 18, height: 18 }}
-							/>
-						</button>
+						<ThemeSwitcher />
 						{onOpenTour && (
 							<button
 								type="button"

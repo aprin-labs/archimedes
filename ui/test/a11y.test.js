@@ -104,6 +104,24 @@ function contrastRatio(hexA, hexB) {
 }
 
 const css = src("App.css");
+const criticalCss = readFileSync(new URL("../public/theme.css", import.meta.url), "utf8");
+
+// First matching token wins here: theme-specific overrides, base roles, then
+// compatibility aliases. Shells and portals inherit this same palette.
+function themeBlock(mode) {
+	const light = cssBlock(criticalCss, '\\[data-theme="light"\\]');
+	const dark = mode === "dark" ? cssBlock(criticalCss, '\\[data-theme="dark"\\]') : "";
+	return `${dark}\n${light}\n${cssBlock(criticalCss, ":root")}`;
+}
+
+function checkContrast(block, foreground, backgrounds, minimum) {
+	const ink = resolveHex(block, tokenValue(block, foreground));
+	for (const name of backgrounds) {
+		const surface = resolveHex(block, tokenValue(block, name));
+		const ratio = contrastRatio(ink, surface);
+		assert.ok(ratio >= minimum, `--${foreground} on --${name}: ${ratio.toFixed(2)}:1 < ${minimum}:1`);
+	}
+}
 const app = src("App.jsx");
 const authPage = src("components/AuthPage.jsx");
 const corpusExplorer = src("components/CorpusExplorer.jsx");
@@ -121,47 +139,16 @@ const walletConnect = src("components/WalletConnect.jsx");
 
 // ── 1.4.3 Contrast (Minimum) ──────────────────────────────────────────────
 //
-// The auth screen renders outside both .app-site and .public-site, so it is
-// the only surface left on the base palette — these three token values are
-// what make its labels, its password rules and its links readable. The public
-// --text-4 carries Architecture's error/loading copy. Ratios are against
-// --surface-2 in the matching theme.
+// Auth, both shells and body-level portals now share the Fulcro palette.
+// Measure actual foreground/background pairs, not superseded color literals.
 
 test("base and public palettes keep muted text above the 4.5:1 floor", () => {
-	// #71717a was 3.73:1 on #16161a (dark) and 4.01:1 on #eceae2 (light).
-	assert.match(css, /:root\s*\{[\s\S]*?--text-3:\s*#8a8a93;/);
-	assert.match(
-		css,
-		/:root\[data-theme="light"\]\s*\{[\s\S]*?--text-3:\s*#62626b;/,
-	);
-	// #9c6b0b was 3.86:1 as link text on the light card.
-	assert.match(
-		css,
-		/:root\[data-theme="light"\]\s*\{[\s\S]*?--accent:\s*#8a5f0a;/,
-	);
-	assert.match(
-		css,
-		/:root\[data-theme="light"\]\s*\{[\s\S]*?--accent-rgb:\s*138,\s*95,\s*10;/,
-	);
-	// Public --text-4 was #657a73 = 3.46:1 on the slate card, then #7d9189
-	// (3.94:1 on the lighter --surface-3, a #1318 residual). Pinning the
-	// foreground literal alone only guards that one side of the pair — the
-	// background (--surface-2 / --surface-3) can drift with the guard still
-	// green unless the ratio is actually computed, so this resolves both
-	// tokens out of the live .public-site block and checks the real WCAG
-	// contrast rather than trusting a snapshot value.
-	const publicBlock = cssBlock(css, "\\.public-site");
-	const publicText4 = resolveHex(publicBlock, tokenValue(publicBlock, "text-4"));
-	for (const surfaceName of ["surface-2", "surface-3"]) {
-		const surfaceHex = resolveHex(publicBlock, tokenValue(publicBlock, surfaceName));
-		const ratio = contrastRatio(publicText4, surfaceHex);
-		assert.ok(
-			ratio >= 4.5,
-			`--text-4 (${publicText4}) on --${surfaceName} (${surfaceHex}) is ${ratio.toFixed(2)}:1, below the 4.5:1 floor`,
-		);
+	for (const mode of ["light", "dark"]) {
+		for (const ink of ["text-3", "text-4", "accent"]) {
+			checkContrast(themeBlock(mode), ink, ["canvas", "sidebar", "surface-1", "surface-2", "surface-3", "selected"], 4.5);
+		}
 	}
-	// --text-4 is a border/decoration token on the base palette (it is #3f3f46
-	// there = 1.73:1) and must never be used as text on the auth screen.
+	// Keep the existing auth call sites on the named reading-text role.
 	assert.doesNotMatch(authPage, /text-\[var\(--text-4\)\]/);
 });
 
@@ -192,16 +179,10 @@ function filesCallingCreatePortal() {
 		.map((f) => f.slice(root.length + 1));
 }
 
-// Inside a portalled subtree --text-4 is a 1.83:1 hairline, so the only
-// legitimate use of it there is DECORATION. This is deliberately an
-// allowlist of the decoration spellings rather than a denylist of the text
-// spellings: anchoring on `color:` would silently miss a colour reached
-// through a ternary or a fallback — `x ? 'var(--negative)' : 'var(--text-4)'`,
-// `TYPE_COLORS[t] || 'var(--text-4)'`, `const muted = 'var(--text-4)'` — and
-// this tree contains five such text colours today (CorpusKG, Strategies x2,
-// RigorStrictnessControl, RejectedCandidates). All five render inside
-// .app-site rather than in a portal, so none is a defect here, but a
-// denylist would not have caught one if it were.
+// Historically --text-4 was a low-contrast decoration token in portals.
+// Retain the established reading-role call sites even though Fulcro also
+// makes that legacy alias readable. Check every non-decoration spelling so
+// ternaries and fallbacks cannot evade the source guard.
 const TEXT_4_AS_DECORATION = [
 	// DepositFlow's CONFIRMING spinner track: a 2px ring, not text.
 	/border:\s*['"]2px solid var\(--text-4\)['"]/,
@@ -231,22 +212,13 @@ function text4Offenders(label, source) {
 	return found;
 }
 
-test("portalled dialogs never paint text with the base decoration token", () => {
-	// #1318 residual. A dialog opened from .app-site still resolves the BASE
-	// palette once it is portalled to document.body, and there --text-4 is
-	// #3f3f46: 1.83:1 on --surface-1, the surface every one of these dialogs
-	// paints its card with. Eight of them were using it for body text — the
-	// asset / asset-group price captions, DepositFlow's step labels,
-	// CreateVaultModal's section headers, WelcomeProfileModal's "(optional)"
-	// hints, WalletConnect's passkey copy, the rigor modal's close control and
-	// the whole of RigorExplainer.
-	//
-	// Both sides are computed rather than pinned, for the reason the contrast
-	// helpers exist: the replacement token's ratio is asserted, not assumed,
-	// and the ban explains itself with --text-4's live ratio instead of a
-	// snapshot that can go stale.
-	const base = cssBlock(css, ":root");
-	assert.match(base, /--surface-1:/, "first :root block is not the base palette");
+test("portalled dialogs retain readable text roles in both themes", () => {
+	// Portals escape shell selectors. Verify their inherited root palette and
+	// retain the call-site fixes from #1318; neither half proves the other.
+	const base = themeBlock("dark");
+	for (const mode of ["light", "dark"]) {
+		checkContrast(themeBlock(mode), "text-3", ["surface-1", "surface-2", "surface-3"], 4.5);
+	}
 	const text3 = resolveHex(base, tokenValue(base, "text-3"));
 	const text4 = resolveHex(base, tokenValue(base, "text-4"));
 
@@ -265,10 +237,9 @@ test("portalled dialogs never paint text with the base decoration token", () => 
 
 	const surface1 = resolveHex(base, tokenValue(base, "surface-1"));
 	const decorationRatio = contrastRatio(text4, surface1);
-	assert.ok(
-		decorationRatio < 4.5,
-		`base --text-4 (${text4}) now measures ${decorationRatio.toFixed(2)}:1 on --surface-1. If that raise is deliberate it is no longer a decoration-only token — retire this guard and the App.css note with it (#1318).`,
-	);
+	// Fulcro deliberately raises the old decoration alias to readable muted
+	// ink. Preserve existing call-site discipline as well as the stronger floor.
+	assert.ok(decorationRatio >= 4.5);
 
 	const offenders = [];
 	for (const file of ALWAYS_PORTALLED) {
@@ -296,32 +267,18 @@ test("portalled dialogs never paint text with the base decoration token", () => 
 	assert.deepEqual(
 		offenders,
 		[],
-		`these portalled dialogs paint text with --text-4 (${text4} = ${decorationRatio.toFixed(2)}:1 on --surface-1, a decoration token on the base palette) instead of --text-3:\n${offenders.join("\n")}`,
+		`these portalled dialogs changed established --text-3 reading roles to legacy --text-4:\n${offenders.join("\n")}`,
 	);
 });
 
-test("--accent is a fill token; accent-coloured TEXT resolves --accent-text", () => {
-	// The public light theme's accent is the brand cobalt #625cf6. As a FILL it
-	// is correct; as TEXT it cannot work on this canvas — its ceiling against
-	// --surface-1 is 4.79:1 and it measured 3.91–3.97:1 on the pale cards, so
-	// the Architecture pipeline's step numbers and its "you act" labels were
-	// failing 1.4.3. This is the same defect the BASE palette already fixed by
-	// darkening its accent (see the --accent note at the top of App.css); the
-	// public theme fixes it by splitting the two roles instead, so darkening
-	// the text value can never darken a button. Ratios are computed, not
-	// pinned, so the background side cannot drift with the guard still green.
-	// Several tokens in this block are `var(--public-*)` references to the
-	// rebrand :root, so resolution has to see both. The light block goes first
-	// so its own definitions win the lookup.
-	const lightOwn = cssBlock(
-		css,
-		':root\\[data-theme="light"\\] \\.public-site',
-	);
-	const rebrandRoot = [...css.matchAll(/\n:root \{([\s\S]*?)\n\}/g)]
-		.map((m) => m[1])
-		.find((b) => b.includes("--public-paper:"));
-	assert.ok(rebrandRoot, "rebrand :root block not found");
-	const light = `${lightOwn}\n${rebrandRoot}`;
+test("primary fill and readable accent text remain separate roles", () => {
+	// Lime primary fill cannot also be readable ink on light surfaces.
+	// Legacy --accent and --accent-text both resolve the separate link role.
+	const light = themeBlock("light");
+	assert.notEqual(resolveHex(light, tokenValue(light, "primary")), resolveHex(light, tokenValue(light, "accent-text")));
+	for (const mode of ["light", "dark"]) {
+		checkContrast(themeBlock(mode), "on-primary", ["primary", "primary-hover"], 4.5);
+	}
 	const accentText = resolveHex(light, tokenValue(light, "accent-text"));
 	for (const surfaceName of ["surface-1", "surface-2", "surface-3"]) {
 		const surfaceHex = resolveHex(light, tokenValue(light, surfaceName));
@@ -331,9 +288,7 @@ test("--accent is a fill token; accent-coloured TEXT resolves --accent-text", ()
 			`--accent-text (${accentText}) on --${surfaceName} (${surfaceHex}) is ${ratio.toFixed(2)}:1, below the 4.5:1 floor`,
 		);
 	}
-	// --positive is drawn as the "Live" marker text on --surface-2. #147a69 was
-	// 4.02:1 there; #116c5e — already this theme's --public-theatre-positive —
-	// is 4.85:1.
+	// Live-status text must retain contrast independently of action colors.
 	const positive = resolveHex(light, tokenValue(light, "positive"));
 	const surface2 = resolveHex(light, tokenValue(light, "surface-2"));
 	const positiveRatio = contrastRatio(positive, surface2);
@@ -342,10 +297,7 @@ test("--accent is a fill token; accent-coloured TEXT resolves --accent-text", ()
 		`--positive (${positive}) on --surface-2 (${surface2}) is ${positiveRatio.toFixed(2)}:1, below the 4.5:1 floor`,
 	);
 	// No rule targeting the public shell may paint text with the raw fill
-	// token. Scoped by SELECTOR rather than by a slice of the file: the public
-	// layer is not the tail of the sheet (the .auth-* and .app-site layers come
-	// after it), and those two live on palettes whose --accent is already
-	// contrast-corrected — see the --accent note at the top of App.css.
+	// token. Scope by selector, not a slice of this layered stylesheet.
 	const offenders = [];
 	const ruleRe = /([^{}]+)\{([^{}]*)\}/g;
 	let rule;
@@ -359,14 +311,14 @@ test("--accent is a fill token; accent-coloured TEXT resolves --accent-text", ()
 		if (!/^\.public-[\w-]|^\.authority-boundary|^\.security-/.test(selector)) {
 			continue;
 		}
-		if (/^\s*color:\s*var\(--accent\);\s*$/m.test(rule[2])) {
+		if (/^\s*color:\s*var\(--primary\);\s*$/m.test(rule[2])) {
 			offenders.push(selector);
 		}
 	}
 	assert.deepEqual(
 		offenders,
 		[],
-		`these public rules paint text with --accent (a fill token) instead of --accent-text:\n${offenders.join("\n")}`,
+		`these public rules paint text with --primary (a fill token) instead of --accent-text:\n${offenders.join("\n")}`,
 	);
 });
 
@@ -374,14 +326,14 @@ test("chart axis labels clear 4.5:1 on every card they are drawn on", () => {
 	// Axis ticks are real 8-10px <text>. Neither shell overrides these tokens
 	// and the asset modal portals outside both, so the BASE values are the
 	// ones that must hold. 0.42 / 0.5 gave 3.88:1 and 3.74:1.
-	assert.match(css, /--chart-label:\s*rgba\(255,\s*255,\s*255,\s*0\.52\);/);
-	assert.match(css, /--chart-label:\s*rgba\(9,\s*9,\s*11,\s*0\.6\);/);
+	for (const mode of ["light", "dark"]) {
+		checkContrast(themeBlock(mode), "chart-label", ["canvas", "surface-1", "surface-2", "surface-3"], 4.5);
+	}
 });
 
-test("error text uses the defined --negative, never an undefined --danger", () => {
-	// `--danger` is not defined in any stylesheet, so `var(--danger, #b91c1c)`
-	// always resolved to the literal — 2.71:1 on the app card, for a
-	// role="alert" message.
+test("existing error paths retain the shared negative role", () => {
+	// Keep the established call-site fix. The legacy --negative role now
+	// aliases Fulcro --danger rather than falling back to a literal color.
 	const files = [];
 	const walk = (dir) => {
 		for (const entry of readdirSync(dir)) {
@@ -395,7 +347,8 @@ test("error text uses the defined --negative, never an undefined --danger", () =
 		readFileSync(f, "utf8").includes("--danger"),
 	);
 	assert.deepEqual(offenders, []);
-	assert.match(css, /--negative:\s*var\(--app-risk\);/);
+	assert.match(criticalCss, /--negative:\s*var\(--danger\);/);
+	for (const mode of ["light", "dark"]) checkContrast(themeBlock(mode), "negative", ["surface-1", "surface-2"], 4.5);
 });
 
 // ── 1.4.11 Non-text Contrast / 2.4.7 Focus Visible ────────────────────────
@@ -403,19 +356,10 @@ test("error text uses the defined --negative, never an undefined --danger", () =
 test("form fields carry a 3:1 boundary token in both shells", () => {
 	// Fields are filled with the canvas inside surface cards, so the fill gives
 	// no cue (1.08:1) and --glass-border was 1.22-1.45:1.
-	assert.match(css, /:root\s*\{[\s\S]*?--field-border:\s*rgba\(255,\s*255,\s*255,\s*0\.35\);/);
-	assert.match(
-		css,
-		/:root\[data-theme="light"\]\s*\{[\s\S]*?--field-border:\s*rgba\(9,\s*9,\s*11,\s*0\.5\);/,
-	);
-	assert.match(
-		css,
-		/\.app-site\s*\{[\s\S]*?--field-border:\s*rgba\(225,\s*230,\s*222,\s*0\.45\);/,
-	);
-	assert.match(
-		css,
-		/:root\[data-theme="light"\] \.app-site\s*\{[\s\S]*?--field-border:\s*rgba\(8,\s*18,\s*24,\s*0\.5\);/,
-	);
+	for (const mode of ["light", "dark"]) {
+		checkContrast(themeBlock(mode), "field-border", ["canvas", "sidebar", "surface-1", "surface-2", "surface-3"], 3);
+		checkContrast(themeBlock(mode), "focus", ["canvas", "sidebar", "surface-1", "surface-2"], 3);
+	}
 	assert.match(
 		css,
 		/^input,\nselect,\ntextarea \{[^}]*border: 1px solid var\(--field-border\);/m,

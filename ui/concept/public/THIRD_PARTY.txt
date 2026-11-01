@@ -1,0 +1,65 @@
+Archimedes Research Observatory — component notices
+
+Customized source adaptations (not unmodified registry installations):
+- shadcn/ui: button, dialog, tabs, slider, input/textarea, field, select,
+  checkbox, badge and class merging.
+  https://github.com/shadcn-ui/ui — Copyright (c) 2023 shadcn
+- Motion Primitives: Disclosure, adapted to a native button, linked ARIA region,
+  inert collapsed content and reduced-motion-aware height transitions.
+  https://github.com/ibelick/motion-primitives — Copyright (c) 2024 ibelick
+- Magic UI: BlurFade, used only for two landing entrances; blur deliberately omitted.
+  https://github.com/magicuidesign/magicui — Copyright (c) Magic UI
+
+- Kibo UI: Choicebox and reduced Table presentation/column-header adaptation.
+  https://github.com/shadcnblocks/kibo
+  Copyright (c) 2023 — Present shadcnblocks
+  Existing local React state replaces its TanStack/Jotai provider. No new package.
+- Tailark: Dusk Radix hero nine, features one and closing action one compositions.
+  https://github.com/tailark/blocks — Copyright (c) 2025 Irung
+  Product material, layout and copy reworked for the fictional Observatory.
+
+Detailed source URLs, implementation files, screens, behavior and customizations:
+  /component-usage.json (source: ui/concept/public/component-usage.json)
+Optional 21st.dev Animated Grid Pattern by Dillion Verma was evaluated, not adopted.
+
+All five component-source families above use the MIT license:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Runtime/build dependencies introduced for this preview (licenses also in node_modules):
+- Tailwind CSS and @tailwindcss/vite (MIT): requested v4 utilities and official Vite integration.
+- Motion (MIT): reduced-motion-aware research transitions; no background spectacle.
+- Radix UI (MIT): modal focus/Escape/scroll handling, keyboard tabs and slider.
+- class-variance-authority, clsx, tailwind-merge (Apache-2.0 / MIT): shadcn variants
+  and deterministic utility overrides, shared by all adopted controls.
+- TypeScript (Apache-2.0), typescript-eslint (MIT), @types/node (MIT): strict
+  preview checking, scoped lint and Vite-config Node types.
+
+Fulcro brand artwork: user-supplied archimedes-fulcro.svg retained byte-for-byte
+in brand/. The symbol/favicon reuses its original two paths, not a new mark.
+
+Active self-hosted fonts (SIL Open Font License 1.1):
+- DM Sans: Copyright 2014 The DM Sans Project Authors
+  https://github.com/googlefonts/dm-fonts — fonts/OFL-DM-Sans.txt
+- Inter: Copyright 2020 The Inter Project Authors
+  https://github.com/rsms/inter — fonts/OFL-Inter.txt
+Exact WOFF2 and license source URLs: /component-usage.json, brandAssets.fonts.
+Earlier preview font files/notices remain present but are no longer requested.
+Lucide symbol attribution is preserved separately in LICENSE-Lucide.txt.
+Production routes and styling do not import these preview components.
