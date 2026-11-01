@@ -6,7 +6,7 @@
     "create-wallet": "node --env-file=../.env create-wallet.mjs"
   },
   "dependencies": {
-    "@circle-fin/developer-controlled-wallets": "^7.0.0",
+    "@circle-fin/developer-controlled-wallets": "^10.8.1",
     "@circle-fin/smart-contract-platform": "^10.8.1"
   }
 }
