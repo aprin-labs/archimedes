@@ -39,7 +39,7 @@ jobs:
     name: Contracts — forge build + test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           # Restores contracts/lib/forge-std + contracts/lib/openzeppelin-contracts
           # at the revs pinned in .gitmodules / foundry.lock so forge can resolve the

@@ -30,7 +30,7 @@ jobs:
     # Don't recurse on our own auto-format commit.
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           # Need a real token to push back. The default GITHUB_TOKEN can
           # push to the same repo when permissions: contents: write is set.

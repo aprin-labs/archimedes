@@ -35,10 +35,14 @@ def _mock_redis(pfcounts=None, members=None, first_seen=1):
     r = MagicMock()
     r.pipeline = MagicMock(return_value=pipe)
     r.smembers = AsyncMock(return_value=members or set())
-    # Top-level (non-pipelined) SADD used by `record()`'s first-seen-only
-    # attribution gate — 1 = newly attributed (proceed), 0 = already
-    # attributed on an earlier visit (short-circuit, no re-bucketing).
-    r.sadd = AsyncMock(return_value=first_seen)
+    # Top-level (non-pipelined) calls made by `record()`'s first-seen-only
+    # attribution gate (#1908): SET NX on the visitor's marker — True = newly
+    # attributed (proceed), None = already attributed on an earlier visit
+    # (short-circuit, no re-bucketing) — then the pre-#1908 set's EXPIRE NX
+    # and SISMEMBER (not a member here).
+    r.set = AsyncMock(return_value=True if first_seen else None)
+    r.expire = AsyncMock(return_value=True)
+    r.sismember = AsyncMock(return_value=0)
     return r, pipe
 
 
@@ -186,7 +190,7 @@ async def test_capture_records_humans(monkeypatch):
 
 
 class _FakeHLLRedis:
-    """Minimal in-memory Redis with HLL semantics (PFADD/PFCOUNT via a set) + SADD.
+    """Minimal in-memory Redis with HLL semantics (PFADD/PFCOUNT via a set) + SET NX.
 
     Mirrors the boundary the stores use (``pipeline`` → ``pfadd``/``pfcount``/
     ``sadd``/``expire`` → ``execute``). PFCOUNT is exact here (a set), which is
@@ -196,6 +200,7 @@ class _FakeHLLRedis:
     def __init__(self) -> None:
         self.hll: dict[str, set[str]] = {}
         self.sets: dict[str, set[str]] = {}
+        self.strings: dict[str, str] = {}
 
     def pipeline(self):
         return _FakePipe(self)
@@ -203,17 +208,23 @@ class _FakeHLLRedis:
     async def smembers(self, key: str):
         return set(self.sets.get(key, set()))
 
-    async def sadd(self, key: str, member: str) -> int:
-        """Top-level (non-pipelined) SADD — used by the first-seen gate.
+    async def set(self, key: str, value: str, nx: bool = False, ex: int | None = None):
+        """Top-level SET NX — the first-seen gate's per-visitor marker (#1908).
 
-        Exact SET semantics (unlike PFADD/HLL): returns 1 if newly added,
-        0 if the member was already present.
+        True if the key was created, None if it already existed (redis-py's
+        return values for SET NX). TTLs are not modelled here; the retention
+        tests at the bottom of this file use fakeredis for that.
         """
-        bucket = self.sets.setdefault(key, set())
-        if member in bucket:
-            return 0
-        bucket.add(member)
-        return 1
+        if nx and key in self.strings:
+            return None
+        self.strings[key] = value
+        return True
+
+    async def expire(self, *a, **kw) -> bool:
+        return False
+
+    async def sismember(self, key: str, member: str) -> int:
+        return int(member in self.sets.get(key, set()))
 
 
 class _FakePipe:
@@ -481,3 +492,163 @@ def test_capture_helper_docstring_does_not_overclaim():
     """The capture helper docstring must not claim it excludes crawlers as 'real visitors' (#830)."""
     doc = vmod.__doc__ or ""
     assert "real visitors, not datacenter" not in doc
+
+
+# ─── retention: the first-seen gate expires with the visitor cookie (#1908) ──
+#
+# The gate has to remember a raw visitor id for as long as that id can still
+# arrive, and no longer. The id rides in the ``archimedes_vid`` cookie, which
+# the middleware mints once with a fixed max-age and never refreshes, so the
+# cookie's lifetime is the bound. These run against fakeredis so TTLs are real.
+
+_VID_TTL_SECONDS = 180 * 24 * 60 * 60  # api/funnel_middleware._VID_TTL_SECONDS, pinned below
+_GATE_PATTERN = "archimedes:visitors:attributed*"
+
+
+def _fakeredis_store():
+    import fakeredis
+
+    r = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    store = VisitorInsightsStore()
+    store._get_redis = AsyncMock(return_value=r)
+    return store, r
+
+
+async def _gate_ttls(r) -> dict[str, int]:
+    return {k: await r.ttl(k) async for k in r.scan_iter(_GATE_PATTERN)}
+
+
+async def _holds_member(r, key: str, member: str) -> bool:
+    return await r.type(key) == "set" and bool(await r.sismember(key, member))
+
+
+def test_cookie_lifetime_this_retention_is_pinned_to_is_still_180_days():
+    """The retention bound below is the cookie's max-age. If that changes, so must this."""
+    from archimedes.api.funnel_middleware import _VID_TTL_SECONDS as cookie_ttl
+
+    assert cookie_ttl == _VID_TTL_SECONDS
+
+
+async def test_first_seen_gate_holds_no_raw_visitor_id_past_the_cookie_lifetime():
+    """Every gate key that remembers a visitor id carries a TTL no longer than the cookie's.
+
+    Before #1908 the gate was one Redis SET of every raw id ever seen, with no
+    TTL: a visitor id outlived its cookie forever.
+    """
+    store, r = _fakeredis_store()
+
+    await store.record("US", "desktop", "vid-retention")
+
+    ttls = await _gate_ttls(r)
+    assert ttls, "the first-seen gate wrote nothing to Redis"
+    for key, ttl in ttls.items():
+        assert 0 < ttl <= _VID_TTL_SECONDS, f"{key} keeps visitor ids with TTL {ttl} (-1 = never expires)"
+
+
+async def test_each_visitor_gets_a_full_cookie_lifetime_of_first_seen_protection():
+    """Expiry is per visitor, not one shared clock.
+
+    A single shared key with a TTL would forget a visitor first seen yesterday
+    as soon as the key's clock (started by someone else, months ago) ran out,
+    and that visitor's next landing would be counted again. Simulate an old
+    gate by cutting every existing gate key down to 10 days left, then record a
+    new visitor: their protection must still last a full cookie lifetime.
+    """
+    store, r = _fakeredis_store()
+    await store.record("US", "desktop", "vid-early")
+    for key in await _gate_ttls(r):
+        await r.expire(key, 10 * 24 * 60 * 60)
+
+    await store.record("DE", "mobile", "vid-late")
+
+    late = {}
+    for key, ttl in (await _gate_ttls(r)).items():
+        if "vid-late" in key or await _holds_member(r, key, "vid-late"):
+            late[key] = ttl
+    assert late, "vid-late was not remembered by the gate"
+    for key, ttl in late.items():
+        assert ttl > _VID_TTL_SECONDS - 60, f"{key}: vid-late protected for only {ttl}s"
+
+
+async def test_repeat_visit_inside_the_cookie_lifetime_is_still_not_rebucketed():
+    """First-seen counting is unchanged: a second landing never re-buckets."""
+    store, _r = _fakeredis_store()
+
+    await store.record("US", "desktop", "vid-repeat")
+    await store.record("DE", "mobile", "vid-repeat")
+
+    countries, devices = await store.get_insights()
+    assert countries == {"US": 1}
+    assert devices["desktop"] == 1
+    assert devices["mobile"] == 0
+
+
+async def test_ids_in_the_pre_1908_unbounded_set_are_honoured_then_expire():
+    """The old SET is read during the transition and given a TTL, never re-counted.
+
+    Every id in it was added by the old code, through a cookie minted no later
+    than the end of the rolling deploy, so it can arrive for at most one cookie
+    lifetime after the rollout ends. Expiring the whole key one lifetime after
+    the first post-deploy write can therefore forget an id that can still come
+    back only for at most the length of the rollout (see the comment on
+    ``_LEGACY_ATTRIBUTED_KEY``).
+    """
+    store, r = _fakeredis_store()
+    await r.sadd("archimedes:visitors:attributed", "vid-legacy")
+    assert await r.ttl("archimedes:visitors:attributed") == -1  # as found in production
+
+    await store.record("DE", "mobile", "vid-legacy")
+
+    countries, devices = await store.get_insights()
+    assert countries == {}, "a visitor attributed before #1908 was counted a second time"
+    assert devices["mobile"] == 0
+    legacy_ttl = await r.ttl("archimedes:visitors:attributed")
+    assert 0 < legacy_ttl <= _VID_TTL_SECONDS, f"the pre-#1908 set still never expires (TTL {legacy_ttl})"
+
+
+def _trace_top_level_commands(r) -> list[str]:
+    """Record the name of every non-pipelined command sent to ``r`` from now on."""
+    sent: list[str] = []
+    execute = r.execute_command
+
+    async def traced(*args, **options):
+        sent.append(str(args[0]).upper())
+        return await execute(*args, **options)
+
+    r.execute_command = traced
+    return sent
+
+
+async def test_the_pre_1908_set_expires_a_lifetime_after_the_first_recording_and_nothing_later_moves_it():
+    """The old SET gets ONE TTL, from the first post-deploy recording, and keeps it.
+
+    "The old SET expires 180 days after the first post-deploy recording" needs
+    two things in ``_claim_first_seen``. EXPIRE must say NX: without it every
+    new visitor restarts the old set's clock, so on a live site it never runs
+    out. And it must come after the SET NX first-seen check: issued before it,
+    it would also run on every repeat visit, which then costs two round trips
+    instead of one (and, without NX, restarts the clock on every visit).
+    """
+    legacy = "archimedes:visitors:attributed"
+    store, r = _fakeredis_store()
+    await r.sadd(legacy, "vid-legacy")
+    await store.record("US", "desktop", "vid-first")
+    assert 0 < await r.ttl(legacy) <= _VID_TTL_SECONDS
+
+    # 170 days on: cut what is left of the old set's TTL to 10 days.
+    ten_days = 10 * 24 * 60 * 60
+    await r.expire(legacy, ten_days)
+
+    # A new visitor and an id from the old set both pass the first-seen check,
+    # so both reach the EXPIRE; neither may move the expiry back.
+    for vid in ("vid-new", "vid-legacy"):
+        await store.record("DE", "mobile", vid)
+        ttl = await r.ttl(legacy)
+        assert 0 < ttl <= ten_days, f"recording {vid} pushed the old set's expiry back to {ttl}s"
+
+    # A repeat visitor stops at the first-seen check: one command, the SET NX.
+    sent = _trace_top_level_commands(r)
+    await store.record("FR", "tablet", "vid-first")
+    assert sent == ["SET"], f"a repeat visit sent {sent}; the first-seen check alone decides it"
+    ttl = await r.ttl(legacy)
+    assert 0 < ttl <= ten_days, f"a repeat visit pushed the old set's expiry back to {ttl}s"

@@ -30,7 +30,7 @@ rows were measured against `main` on 2026-09-03; no other row was re-measured.
 | `CHANGED` | The surface used to over-claim. The row records what it said, and the PR/commit that narrowed it. |
 | `RETRACTED` | The claim was removed outright, and a guard exists to stop it coming back. |
 | `OVER-CLAIMED` | Still live, still wrong, not fixed by this ledger. These are the open ones. |
-| `PENDING ADR MERGE` | The position is the owner's stated one; the decision record it rests on is not merged yet. |
+| `PENDING VENDOR CUTOVER` | The decision record is merged and the mechanism is built; the owner has not yet applied the deploy action that switches a seam's default vendor. |
 
 Two things this file deliberately does **not** do. It does not quote a curated-library
 pass count — `CLAUDE.md` forbids it and the live gate is the only authority. And it does
@@ -135,13 +135,13 @@ unset, so the boundary holds under both answers.
 | Claim | Status | What backs it |
 |---|---|---|
 | "executed in non-custodial USDC vaults on Arc testnet" (llms.txt header) | `CHANGED` | Was the highest-severity open row here: present tense, on the surface built for agent consumers, while no user vault has ever been created. #1650 rewrote it to "Executing strategies in non-custodial USDC vaults on Arc is roadmap, not shipped" — `ui/public/llms.txt:10`, mirroring `CLAUDE.md`'s own framing — and the paper-trade step of the agent journey with it. The mention is kept, in the future tense, on purpose. |
-| `agent.json` `description` — "executed in a non-custodial USDC vault on the Arc testnet" | `CHANGED` | Same sentence, same fix, then split the paper books: `ui/public/.well-known/agent.json:4` says simulated paper deployments are live (`paper_daily_returns`), `paper_agent_trades` (PR #1704, not on main) is not a live path, generation is not anchored, and vault execution is roadmap, not shipped. The served twin — `/api/agent/manifest`'s `blurb`, `backend/archimedes/api/agent_manifest_routes.py:152` — carries the identical string, and `backend/tests/test_agent_manifest_static_consistency.py` asserts the two are equal and that neither says "executed in". |
+| `agent.json` `description` — "executed in a non-custodial USDC vault on the Arc testnet" | `CHANGED` | Same sentence, same fix, then split the paper books: `ui/public/.well-known/agent.json:4` says simulated paper deployments are live (`paper_daily_returns`), `paper_agent_trades` (PR #1704, not on main) is not a live path, generation is not anchored, and vault execution is roadmap, not shipped. The served twin — `/api/agent/manifest`'s `blurb`, `backend/archimedes/api/agent_manifest_routes.py:164` — carries the identical string, and `backend/tests/test_agent_manifest_static_consistency.py` asserts the two are equal and that neither says "executed in". |
 | `agent.json` `skills[deploy-vault].status: "live"` / `endpoints.deploy.status: "live"` | `CHANGED` | #1650 moved the *skill* to `status: "roadmap"` while leaving `endpoints.deploy.status: "live"` as route-truthful. The 2026-09-01 copy-honesty pass moved the endpoint too: `ui/public/.well-known/agent.json` `endpoints.deploy.status` is `"roadmap"`, matching the served manifest (`backend/archimedes/api/agent_manifest_routes.py`). Marketplace skills `publish` / `subscribe` moved from `"live"` to `"roadmap"` in the same pass — marketplace is not a public surface. `backend/tests/test_agent_manifest_static_consistency.py` pins deploy / marketplace / monitor as `"roadmap"`. |
 | `agent.json` `endpoints.paper.note` — "deploy is also live and puts real capital on-chain" | `CHANGED` | Testnet faucet USDC is not real capital. Rewritten by #1650, then split: `ui/public/.well-known/agent.json:114` `status: "live"` names simulated `POST /api/paper/deployments` whose graded book is `paper_daily_returns`. `paper_agent_trades` is PR #1704, not on main, and is not what that status advertises. Vault execution is roadmap, not shipped. |
 | `agent-registration.json` `description` — same present-tense vault sentence | `CHANGED` | Not previously in this ledger, and it should have been: `ui/public/.well-known/agent-registration.json:4` carried the agent-card sentence verbatim. #1650 rewrote the prose to match and touched nothing else in the file — the ERC-8004 semantics (`registrations`, `supportedTrust`, `erc8004`, `active`) are #1626's lane and are unchanged. |
 | The machine surfaces cannot regress to present-tense vault execution | `TRUE` | `ui/test/roadmap-copy.test.js:280` scans `ui/public/`'s six machine surfaces and requires every sentence mentioning a vault, custody, or "real capital" to carry `roadmap` or `not shipped` in that same sentence; `:295` and `:304` are the two patterns. Anti-vacuity is explicit: the six sentences removed by #1650 are kept verbatim in the file and each must still trip the guard, the identifier exemption is asserted not to swallow any of them, and a separate test requires the roadmap mention to still be *present* so a scrub cannot pass by deletion. |
 | `agent.json` `endpoints.generate.note` — quote is public and authoritative; prod answers `payment_required: true`, `dry_run: false`, `$2.000000`; the code defaults are the opposite | `TRUE` | `backend/archimedes/services/generation_payment.py:56` reads `GENERATION_PAYMENT_REQUIRED` and defaults off; `:72` defaults dry-run on. `backend/archimedes/api/generate_routes.py:449` is the 402 that carries the x402 requirements. |
-| "x402-gated strategy access ... no endpoint returns 402 with payment requirements" (the 2026-08-10 retraction) | `CHANGED` | The retraction is itself out of date. `POST /api/generate/start` now returns 402 carrying x402 requirements (`backend/archimedes/api/generate_routes.py:449`), and 409 `wallet_link_required` first (`:459`). What remains true is the marketplace half: `GET /api/marketplace/published/{strategy_id}` is public (`backend/archimedes/api/marketplace_routes.py:753`). |
+| "x402-gated strategy access ... no endpoint returns 402 with payment requirements" (the 2026-08-10 retraction) | `CHANGED` | The retraction is itself out of date. `POST /api/generate/start` now returns 402 carrying x402 requirements (`backend/archimedes/api/generate_routes.py:449`), and 409 `wallet_link_required` first (`:459`). What remains true is the marketplace half: `GET /api/marketplace/published/{strategy_id}` is public (`backend/archimedes/api/marketplace_routes.py:779`). |
 | `agent.json` `erc8004` — "NO ERC-8004 identity, reputation, or validation claim is made" | `TRUE` | `ui/public/.well-known/agent.json` — self-disclosing, with `agentId` and `tokenURI` null, `status: "registration_pending"`, and the reason spelled out in the `note`. No `register()` transaction has been sent. |
 | `agent.json` `endpoints.marketplace.note` — "does not assert that a subscription's recurring USDC charge settles for real" | `TRUE` | `ui/public/.well-known/agent.json`. Correctly separates the two dry-run switches — `backend/archimedes/services/generation_payment.py:64` documents the split that let the generation rail go live without un-drying marketplace settlement — and declines to claim the one no public endpoint publishes. |
 | `agent.json` / llms.txt `POST /api/rigor/verify` — PBO and look-ahead "always report `not_evaluable`", `passes` is a capped quorum | `TRUE` | `backend/archimedes/api/rigor_verify_routes.py:47` states the capping contract; `:787` hard-codes both legs to `not_evaluable`; `:803` makes `passes` require every runnable leg to have run and passed. |
@@ -218,20 +218,25 @@ of over-claim this file exists to catch, because it is unfalsifiable rather than
 ## Market data — the Explore page and what paid analysis runs on
 
 The owner's framing, recorded here because the ledger is where the public position lives.
-The decision record is `docs/adr/market-data-sourcing.md`, added by the now-merged
-[#1218](https://github.com/aprin-labs/archimedes/issues/1218) work — open as
-[PR #1627](https://github.com/aprin-labs/archimedes/pull/1627), not merged as of 2026-08-31.
-The rows below are marked `PENDING ADR MERGE` until it lands, and they should be re-pointed
-at the ADR then; the guard in `backend/tests/test_claims_ledger.py` fails the moment the
-file appears, so that re-pointing cannot be forgotten. Checked against that PR's diff:
-it keeps `yfinance` as the default on both seams and adds Tiingo as the paid-analysis
-provider, which is what the rows below say.
+The decision record is `docs/adr/market-data-sourcing.md`, added by
+[#1218](https://github.com/aprin-labs/archimedes/issues/1218)'s work and merged
+(`Status: Accepted`, amended 2026-09-01 by
+[#1798](https://github.com/aprin-labs/archimedes/issues/1798) to route per seam rather
+than by one global variable). The mechanism the ADR describes has landed — `infra/ecs.tf`
+wires the `TIINGO_API_TOKEN` secret and `backend/tests/test_ecs_backend_secrets.py` pins
+its presence and ARN shape — but landing the mechanism is not the same as flipping it on:
+the row below stays `PENDING VENDOR CUTOVER` until the owner actually points a seam's
+default at Tiingo, which is a deploy action (`infra/apply.sh --apply` + one task-definition
+rollout), not a code change. `TestVendorCutoverStillPending` in
+`backend/tests/test_claims_ledger.py` pins today's absence of that pin in `infra/ecs.tf`, so
+this row cannot rot true by silent drift — the day the owner performs the cutover, that
+test goes red and this row must move off `PENDING VENDOR CUTOVER`.
 
 | Claim | Status | What backs it |
 |---|---|---|
 | The Explore page is free, open, and ungated | `TRUE` | `ui/src/routes.js:43` puts `explore` in `ANON_APP_PAGES`, so it renders with no session; `backend/archimedes/api/explore_routes.py:24` and `:30` carry no auth dependency. The code is public domain (`LICENSE`). |
 | Explore is a FOSS viewer over yfinance streams, not a redistribution product | `TRUE` | The mechanism is true and labelled on the page — `ui/src/components/Explore.jsx:380` tells the visitor which cards are oracle-priced and which come from yfinance, and `ui/src/components/AssetModal.jsx:22` labels the source per asset. The licensing position is stated in `docs/adr/market-data-sourcing.md` (landed with #1627): split sourcing, no commercial redistribution of yfinance data, Tiingo Business named as the mainnet prerequisite. |
-| Paid analysis runs on licensed data | `PENDING ADR MERGE` | A statement of policy, not of current state, and the ledger must not launder one into the other. The vendor seam exists on both sides — `analytics-engine/src/archimedes_analytics_engine/market_data.py:96` and `backend/archimedes/services/market_data_provider.py:358` (a real Tiingo provider) — and one `MARKET_DATA_PROVIDER` value selects across both. **The default on both seams is still `yfinance`**, so today the paid path and the free path read the same source. |
+| Paid analysis runs on licensed data | `PENDING VENDOR CUTOVER` | Not a statement of current state, and the ledger must not launder policy into fact. The vendor seam exists on both sides — `analytics-engine/src/archimedes_analytics_engine/market_data.py:96` and `backend/archimedes/services/market_data_provider.py:1060` (`provider_name`, a real Tiingo provider behind it) — and per-seam routing since #1798 means the daily seam (`MARKET_DATA_DAILY_PROVIDER`, falling back to `MARKET_DATA_PROVIDER`) can move to Tiingo without moving the intraday/live seam with it. **`infra/ecs.tf` pins neither variable today, so both seams still resolve to the code default, `yfinance`** — the paid path and the free path read the same source until the owner applies the cutover. |
 | yfinance is an unlicensed commercial dependency on the critical path | `TRUE` | #1218's own finding, unchanged: `analytics-engine/src/archimedes_analytics_engine/market_data.py:32` imports it and `:96` makes it the default, and every strategy pulls its declared universe through it. |
 
 ---

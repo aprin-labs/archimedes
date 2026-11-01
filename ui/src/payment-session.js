@@ -30,7 +30,7 @@
 // balance (never the passkey wallet's own funds — those stay behind the
 // enclave). Losing the device/storage strands the remainder. Both bounds
 // are deliberate v1 trade-offs, surfaced in the pay panel copy; deposits
-// default small.
+// default small and are capped (payment-deposit-cap.js).
 //
 // ACCOUNT BINDING. The generation paywall requires authorization.from to be
 // a wallet LINKED to the paying account (enforce_generation_payment). The

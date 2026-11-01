@@ -198,6 +198,46 @@ pattern the other three subsystems needed and did not have.
 someone? If the answer is "nothing" and a user-visible claim depends on the value, the
 fallback is a defect regardless of how defensively it reads.
 
+### SSM-sourced env var classification (2026-09-30 trace, issue #1899)
+
+`secrets_service.load_ssm_secrets()` itself is deliberately fail-soft (see its docstring) —
+it is a *fallback* path for local/dev, never the thing production trusts to boot correctly.
+Production's actual load-bearing guarantee for the web/auth ECS services is the task
+definition's `secrets` block in [`infra/ecs.tf`](../infra/ecs.tf): ECS refuses to launch the
+task at all if any of `DATABASE_URL`, `REDIS_URL`, `AURORA_MASTER_PASSWORD`,
+`EMAIL_ENCRYPTION_KEY`, `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`, `WALLET_ID`, or
+`TIINGO_API_TOKEN` fails to resolve — a startup abort, not a silent degrade. For the
+standalone oracle/agent EC2 runner, the equivalent gate is
+[`infra/runner-user-data.sh`](../infra/runner-user-data.sh)'s `fetch-secrets.sh`, which
+`exit 4`s before writing the `--env-file` (so `systemctl start` never launches the
+container) if `DATABASE_URL`, `REDIS_URL`, `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`,
+`WALLET_ID`, or `AGENT_DRY_RUN` is absent.
+
+Traced every other credential-shaped var the runner's bootstrap comment names as pulled
+along (`ARC_AGENT_PRIVATE_KEY`, `WALLET_ADDRESS`, `INTERNAL_AGENT_API_KEY`) against where
+the code actually consumes them — none needed adding to that boot check:
+
+| Var | Load-bearing? | Where it actually fails |
+|---|---|---|
+| `ARC_AGENT_PRIVATE_KEY` | No — alternative to Circle, not additive | `chain/executor.py` raises `RuntimeError("No agent account configured — set CIRCLE_API_KEY or ARC_AGENT_PRIVATE_KEY")` at first signer use if *neither* Circle nor the raw key is configured. Since `CIRCLE_API_KEY` is already a boot-time requirement, this is genuinely an either/or fallback, not a silently-optional load-bearing var — forcing it into the boot check would wrongly require both signing paths at once. |
+| `WALLET_ADDRESS` | No, by design | `executor.py::backend_signer_address` only ever uses it defensively (an owner≠agent `==` check); `backend_signer_address_confirmed` (#1412) never trusts it and re-derives the real signer from Circle instead. A stale or missing value degrades a defensive check, not a claim. |
+| `INTERNAL_AGENT_API_KEY` | No, for this box | Protects `POST /api/agent/bootstrap-amm-liquidity` and `POST /api/traces/publish` (`auth_guard.require_internal_agent_key`, fail-closed: unset key rejects every request). Neither `chain/agent_runner.py` nor `chain/oracle_runner.py` ever sends `X-Internal-Agent-Key` — these are operator-triggered endpoints, not runner-loop calls, so the var rides along in the shared `/archimedes/prod/*` pull unused by the runner box, exactly as the bootstrap script's own comment says other unused vars do. |
+
+Also checked and already correctly fail-closed at the code layer (not the infra layer, so no
+`ecs.tf`/`fetch-secrets.sh` entry needed): `email_crypto.py` (production mode raises rather
+than using a silent ephemeral key) and `auth_guard.require_internal_agent_key` (blank key
+rejects every request, on both the hit and miss path).
+
+Genuinely-optional vars checked and correctly left soft: `ANTHROPIC_API_KEY` /
+`ANTHROPIC_AUTH_TOKEN` / `LLM_API_KEY` / `LLM_AUTH_TOKEN` (BYOK/local-Ollama paths only —
+prod's `bedrock_converse` provider authenticates via the task's IAM role, not an API key,
+per [the Bedrock migration ADR](adr/glm-to-bedrock-llm-migration.md)).
+
+Conclusion: no fix required. Every load-bearing SSM-sourced var already fails loud, at
+either the infra layer (task launch / boot) or the code layer (first use) — see
+[`PaymentSplitter.withdraw`'s verification](https://github.com/aprin-labs/archimedes/issues/1898#issuecomment-5900850793)
+for the same pattern applied to a different subsystem the same week.
+
 ## Two-tier marketplace: how the primitives apply to each tier
 
 Per [`specs/ecosystem-design-spec.md`](specs/ecosystem-design-spec.md), Archimedes runs a

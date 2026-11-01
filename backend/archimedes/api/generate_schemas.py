@@ -119,7 +119,7 @@ class GenerateStartRequest(BaseModel):
     mode: str | None = Field(
         default=None,
         description=(
-            "Optional pipeline override (API compatibility; ignored as of T1.1 Phase-3 cutover). "
+            "Optional pipeline override (API compatibility; currently ignored). "
             "The debate society is the sole generation pipeline — non-debate overrides are logged and discarded."
         ),
     )
@@ -127,7 +127,7 @@ class GenerateStartRequest(BaseModel):
         default=None,
         description=(
             "Optional LLM model id chosen on the Generate page (matches ui/src/data/modelPricing.json). "
-            "Two server-side gates apply: (1) the paid-tier entitlement gate (T1.8) rejects a premium "
+            "Two server-side gates apply: (1) the paid-tier entitlement gate rejects a premium "
             "(Anthropic) model from a non-entitled caller with HTTP 402 — see PREMIUM_MODELS_ENABLED / "
             "PREMIUM_MODELS_ALLOWLIST; (2) the free-tier allowlist then honors the id only if it is an "
             "allowlisted free model, otherwise it falls back to the env default. Absent → env default."

@@ -368,19 +368,22 @@ test('a refused sign-in does not silently re-send verification mail — the user
 // exhausted /request-password-reset for everybody.
 //
 // The fix (option A in #1691): nginx SETS `X-Client-IP: $remote_addr` — its
-// realip-resolved address, bound to the trusted ALB CIDR — and auth.js points
-// ipAddressHeaders at that one header. The tests below are a matched set:
+// realip-resolved address (ALB CIDR + CloudFront origin-facing ranges, #1908) —
+// and auth.js points ipAddressHeaders at that one header. The tests below are a
+// matched set:
 //   1. control      — buckets separate per client when X-Client-IP resolves,
 //                     WITH the multi-hop X-Forwarded-For production sends.
 //   2. adversarial  — a caller rotating X-Forwarded-For, and forging its own
 //                     X-Client-IP as an XFF token, buys no extra bucket.
+//   2b. adversarial — an IPv6 viewer rotating its own address inside its /64
+//                     buys no extra bucket (ipv6Subnet: 64, #1908).
 //   3. adversarial  — nginx OVERWRITES a client-supplied X-Client-IP, so a
 //                     spoof from a non-edge source never reaches this process
 //                     (source-pinned against nginx/nginx.conf).
 //   4. fail-safe    — no X-Client-IP at all (a request that skipped nginx)
 //                     falls back to the shared bucket, i.e. over-limits rather
 //                     than handing the caller a key it controls.
-//   5. mechanism    — the library-level reads the four above rest on.
+//   5. mechanism    — the library-level reads the tests above rest on.
 // Test 1 is the mutation guard: revert either half of the fix and it fails.
 //
 // NOTE ON FIDELITY: these run with the process's own NODE_ENV unset, so
@@ -460,6 +463,34 @@ test('SECURITY: forging X-Forwarded-For buys no extra bucket — the key follows
   )
 })
 
+test('an IPv6 viewer rotating addresses inside its /64 gets no extra bucket; another /64 and IPv4 neighbours do (#1908)', async () => {
+  const { auth } = await harness({ NODE_ENV: 'production' })
+  // Since #1908 X-Client-IP is the viewer's own address, and for an IPv6
+  // viewer that is a /128 the host picks from its /64. auth.js sets
+  // advanced.ipAddress.ipv6Subnet to 64, the prefix the two backend limiters
+  // key on too (backend/archimedes/services/client_ip.py).
+  //
+  // MUTATION GUARD: set ipv6Subnet to 128 and the fourth request below, from a
+  // fresh address in the same /64, is a 200 instead of a 429.
+  const v6 = address => ({ 'x-client-ip': address, 'x-forwarded-for': MULTI_HOP_XFF(address) })
+  for (let i = 1; i <= 3; i += 1) {
+    assert.equal(await signUpOverHttp(auth, `v6-a${i}@example.com`, v6(`2001:db8:1:2::${i}`)), 200)
+  }
+  assert.equal(
+    await signUpOverHttp(auth, 'v6-a4@example.com', v6('2001:db8:1:2:ffff:ffff:ffff:fffe')),
+    429,
+    'a new address inside the same /64 minted a fresh bucket — IPv6 is keyed per /128',
+  )
+  assert.equal(await signUpOverHttp(auth, 'v6-b1@example.com', v6('2001:db8:1:3::1')), 200, 'a different /64 shared the bucket')
+
+  // IPv4 is the address, never widened: two neighbours in one /24 are two callers.
+  for (let i = 1; i <= 3; i += 1) {
+    assert.equal(await signUpOverHttp(auth, `v4-a${i}@example.com`, v6('203.0.113.7')), 200)
+  }
+  assert.equal(await signUpOverHttp(auth, 'v4-a4@example.com', v6('203.0.113.7')), 429)
+  assert.equal(await signUpOverHttp(auth, 'v4-b1@example.com', v6('203.0.113.8')), 200, 'IPv4 neighbours shared a bucket')
+})
+
 test('SECURITY: nginx SETS X-Client-IP, so a spoof from a non-edge source never reaches this process', async () => {
   // The auth container trusts x-client-ip because nothing outside the edge can
   // write it. That property lives in nginx.conf, so it is pinned there —
@@ -475,13 +506,22 @@ test('SECURITY: nginx SETS X-Client-IP, so a spoof from a non-edge source never 
   assert.equal((conf.match(/proxy_set_header X-Client-IP/g) ?? []).length, 1)
 
   // $remote_addr is only ever influenced by X-Forwarded-For when the socket
-  // peer is inside the ALB CIDR: `real_ip_header` is bound by set_real_ip_from,
-  // and that CIDR is the narrowed one from AUDIT I7 (not the RFC1918 ranges,
-  // which would have let the box itself spoof). A request from any other
-  // source contributes nothing to the value it is keyed on.
+  // peer is a trusted proxy, and realip's recursive walk stops at the first hop
+  // outside the trusted set. That set is the VPC CIDR narrowed by AUDIT I7 (not
+  // the RFC1918 ranges, which would have let the box itself spoof) plus
+  // CloudFront's origin-facing ranges from a generated include (#1908), so the
+  // value is the viewer CloudFront saw. Which VPC hosts can be the peer is set
+  // by the task SG (infra/ecs.tf): the two public subnets, which hold the ALB's
+  // ENIs and also the two fck-nat instances, so the peer is not always the ALB.
+  // nginx.conf's "Who can be the socket peer" block says why the NATs are not a
+  // way to forge a hop. The include's contents are pinned by
+  // backend/tests/test_nginx_real_client_ip.py; here: no other set_real_ip_from
+  // DIRECTIVE may appear in nginx.conf itself.
   assert.match(conf, /^\s*set_real_ip_from 10\.0\.0\.0\/16;$/m)
+  assert.match(conf, /^\s*include \/etc\/nginx\/cloudfront-origin-facing\.conf;$/m)
   assert.match(conf, /^\s*real_ip_header X-Forwarded-For;$/m)
-  assert.equal(/set_real_ip_from (?!10\.0\.0\.0\/16)/.test(conf), false)
+  assert.match(conf, /^\s*real_ip_recursive on;$/m)
+  assert.equal(/^\s*set_real_ip_from (?!10\.0\.0\.0\/16;)/m.test(conf), false)
 })
 
 test('fail-safe: a request that never passed through nginx gets the shared bucket, not a key it controls', async () => {

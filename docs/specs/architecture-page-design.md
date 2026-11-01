@@ -2,7 +2,7 @@
 
 > **status:** implemented
 > **owner:** Dan Browne
-> **updated:** 2026-08-20
+> **updated:** 2026-09-01
 > **superseded-by:** —
 
 > **IMPLEMENTED 2026-07-28 in PR #1192.** This is no longer a proposal. The page described
@@ -87,7 +87,7 @@ Arc public testnet, and what is landing next, labeled as such.
 **Hero stat strip** (live-fetched; fallback "—"):
 - `{universe}` tradable synthetic assets *(from `/api/explore/assets`; ~281 today)*
 - `{contracts}` core contracts on Arc *(from `/api/config/contracts`; chain 5042002)*
-- `{papers}` research papers in the corpus manifest *(from corpus stats; caption: "manifest — see §What's real today")*
+- `{papers}` paper metadata records *(from `/health` `corpus_db_count`; caption names the Corpus page count — not a subset of a "manifest")*
 - 4 statistical gates before any strategy earns the badge
 
 ### 2 — The system, in one picture
@@ -238,8 +238,12 @@ production state today). Retrieved papers are
 embargo-filtered — nothing published after a decision point can inform it — and every citation
 carries its arXiv ID and content hash.
 
-**Honesty card (live-driven):** The corpus is being hydrated: `{ingested}` of the
-manifest papers are fully ingested and retrievable today *(live count from `/health`)*. The knowledge-graph
+**Honesty card (live-driven):** The papers table holds `{corpus_db_count}` metadata
+records (the Corpus page count). Generation currently loads `{corpus_papers}`. These are
+different populations — `corpus_papers` is `count_corpus_papers()` (embargo-mirrored SQL
+COUNT, published by `/health`) and `corpus_db_count` is `COUNT(papers)` — not a completeness
+ratio of a committed manifest. Do not concatenate the two `/health` counts with a subset
+preposition: a subset cannot be larger than its superset. The knowledge-graph
 layer (citation graph over the corpus) is built by a pipeline that has not yet produced its
 first production artifact — the Corpus page shows exactly that, rather than a synthesized
 graph. Generation requires at least two relevant papers or it declines to run.

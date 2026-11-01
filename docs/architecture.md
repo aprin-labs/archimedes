@@ -2,7 +2,7 @@
 
 > **status:** current
 > **owner:** Dan Browne
-> **updated:** 2026-09-01
+> **updated:** 2026-10-02
 > **superseded-by:** —
 
 > Identity and deploy topology amended for Better Auth account ownership (2026-08). (2026-07-14)
@@ -80,9 +80,9 @@ canvas `#09090B`).
 | Account auth | [`api/account_auth.py`](../backend/archimedes/api/account_auth.py), `auth/` | Better Auth sidecar owns email/password (+ optional OAuth) sessions; FastAPI resolves immutable canonical user IDs from cookies. Works headless — the agent-native auth path |
 | Linked wallets | [`api/wallet_routes.py`](../backend/archimedes/api/wallet_routes.py) | Account-bound, single-use EIP-4361 proof (EOA; ERC-1271/6492 via [`api/_erc6492.py`](../backend/archimedes/api/_erc6492.py)); the wallet never creates a session |
 | Generate | [`api/generate_routes.py`](../backend/archimedes/api/generate_routes.py) | SSE streaming generation jobs (Better Auth account-scoped; per-account + per-IP daily caps; linked wallet optional) |
-| Vaults | [`api/vaults_routes.py`](../backend/archimedes/api/vaults_routes.py) (line ~275) | Agent-API deploy path: backend signer creates the vault, **transfers Ownable ownership to the user, pins the backend as rebalance-only agent**; vault metadata writes gated on the on-chain owner (line 376) |
+| Vaults | [`api/vaults_routes.py`](../backend/archimedes/api/vaults_routes.py) (line ~275) | Agent-API deploy path (roadmap, not shipped: `POST /api/vaults/create` answers 404 while `FEATURE_ROADMAP_SURFACES` is off, #1432): with the flag on, backend signer creates the vault, **transfers Ownable ownership to the user, pins the backend as rebalance-only agent**; vault metadata writes gated on the on-chain owner (line 376) |
 | Rigor gate | [`api/selection_bias_routes.py`](../backend/archimedes/api/selection_bias_routes.py) | The external gate endpoint (`/api/selection-bias/gate/...`); strictness ladder |
-| Marketplace | [`api/marketplace_routes.py`](../backend/archimedes/api/marketplace_routes.py) | `/api/marketplace/publish`, `/subscribe`, `/unsubscribe`, `/published`, `/my-published`, `/publish/{id}/withdraw`, `/my-subscriptions` |
+| Marketplace | [`api/marketplace_routes.py`](../backend/archimedes/api/marketplace_routes.py) | `/api/marketplace/publish`, `/subscribe`, `/unsubscribe`, `/published`, `/my-published`, `/publish/{id}/withdraw`, `/my-subscriptions`. `POST /publish` and `POST /subscribe` deploy a vault for the caller, so they answer 404 while `FEATURE_ROADMAP_SURFACES` is off (#1432) |
 | Corpus | [`api/corpus_routes.py`](../backend/archimedes/api/corpus_routes.py) | Honest 503 ("pipeline not yet run") until real KB artifacts exist — no metadata-synthesized graphs |
 | Config | [`api/config_routes.py`](../backend/archimedes/api/config_routes.py) | `GET /api/config/contracts` — serves the contract addresses from the ECS task env ([`infra/ecs.tf`](../infra/ecs.tf)) |
 | Agent manifest | [`api/agent_manifest_routes.py`](../backend/archimedes/api/agent_manifest_routes.py) | Agent-discoverability surface (`/api/agent/manifest`) per [`docs/agent-api.md`](agent-api.md) |
@@ -235,7 +235,9 @@ Runbook: [`infra/runbooks/ecs-fargate-cutover.md`](../infra/runbooks/ecs-fargate
 
 ## 4. Flow — Marketplace (x402 nanopayments)
 
-1. **Publish** (`POST /api/marketplace/publish`, `api/marketplace_routes.py:43`): strategy registered on-chain ([`chain/strategy_publisher.py`](../backend/archimedes/chain/strategy_publisher.py) → `StrategyRegistry`), a 90/10 `PaymentSplitter` pool created for the creator, publisher loop started ([`marketplace/service.py`](../backend/archimedes/marketplace/service.py) — in-process monolith, no per-agent containers).
+Steps 1 and 2 answer 404 while the server's `FEATURE_ROADMAP_SURFACES` flag is off, its default in every environment (#1432): marketplace is roadmap, not shipped. The steps describe the flow with the flag on.
+
+1. **Publish** (`POST /api/marketplace/publish`, `api/marketplace_routes.py` `publish_strategy`): strategy registered on-chain ([`chain/strategy_publisher.py`](../backend/archimedes/chain/strategy_publisher.py) → `StrategyRegistry`), a 90/10 `PaymentSplitter` pool created for the creator, publisher loop started ([`marketplace/service.py`](../backend/archimedes/marketplace/service.py) — in-process monolith, no per-agent containers).
 2. **Subscribe** (`POST /api/marketplace/subscribe`): a Circle Developer-Controlled Wallet is auto-provisioned for the subscriber ([`marketplace/wallet_provisioner.py`](../backend/archimedes/marketplace/wallet_provisioner.py)); per-user spend caps on the subscribe path (PR #1099 — still a draft, the one unlanded piece).
 3. **Charge per action** ([`marketplace/payments.py`](../backend/archimedes/marketplace/payments.py) — the only circlekit import): x402 flow = 402 payment-required → EIP-712 payment header signed with the subscriber's ephemeral key → Circle **Gateway facilitator** verifies + records the micropayment (sub-cent USDC).
 4. **Settlement sweep** ([`marketplace/settlement.py`](../backend/archimedes/marketplace/settlement.py)): Stage A Gateway → agent wallet (threshold), Stage B wallet → `PaymentSplitter.depositToPool`, Stage C creator `withdraw` (the Withdraw button).

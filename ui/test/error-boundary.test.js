@@ -48,6 +48,18 @@ test("the fallback names the failure and offers a real reload control, not a bla
 	assert.match(boundary, /window\.location\.reload\(\)/);
 });
 
+test("the fallback carries the data-error-boundary=\"crashed\" marker the deploy render gate fails on", () => {
+	// .github/scripts/spa_render_check.mjs renders / and /app in headless
+	// Chrome before an image reaches ECR and again after rollout. The crash
+	// card fills #root, so without this marker the gate reads a crashed app as
+	// "rendered". Pinned on the same element as role="alert" (the fallback's
+	// root), so moving it to a child that a refactor drops is caught too.
+	assert.match(
+		boundary,
+		/<div(?=[^>]*\brole="alert")(?=[^>]*\bdata-error-boundary="crashed")[^>]*>/,
+	);
+});
+
 test("main.jsx wraps <App in <ErrorBoundary", () => {
 	assert.match(main, /import ErrorBoundary from ['"]\.\/components\/ErrorBoundary(\.jsx)?['"]/);
 	assert.match(main, /<ErrorBoundary>[\s\S]*?<App\s*\/>[\s\S]*?<\/ErrorBoundary>/);

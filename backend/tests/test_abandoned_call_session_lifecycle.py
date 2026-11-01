@@ -295,7 +295,7 @@ class TestTheInvariant:
 
         The stand-in is the one already established in
         ``test_health_always_answers.py::test_gives_up_on_an_awaitable_that_refuses_to_be_cancelled``
-        — an awaitable that swallows cancellation, modelling web3 7.16's
+        — an awaitable that swallows cancellation, modelling web3's (7.16 and 8.0)
         ``await loop.run_in_executor(thread_pool, lock.acquire)``, which runs
         uninterruptibly in a worker thread and entirely outside aiohttp's request
         timeout.

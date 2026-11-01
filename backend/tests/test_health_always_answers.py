@@ -404,7 +404,7 @@ class TestRunWithDeadlineGivesUpRatherThanWaiting:
         therefore holds the "timeout" open indefinitely — the timeout bounds
         nothing.
 
-        That is not hypothetical here. Every async JSON-RPC in web3 7.16 passes
+        That is not hypothetical here. Every async JSON-RPC in web3 7.16 and 8.0 passes
         through `HTTPSessionManager.async_cache_and_return_session`, which opens
         with `async with async_lock(self.session_pool, self._lock)` — i.e.
         `await loop.run_in_executor(thread_pool, lock.acquire)` over a

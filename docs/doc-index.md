@@ -46,7 +46,7 @@ Repo root: [`../README.md`](../README.md) · [`../SETUP.md`](../SETUP.md) · [`.
 | [`database-relations.md`](database-relations.md) | current | Dan Browne | 2026-08-31 | Identity/ownership/money-table relational structure: the schema-relations audit (corrections + gap found), the Phase 1 indices + FKs from [PR #1438](https://github.com/aprin-labs/archimedes/pull/1438) — **merged 2026-08-31**, with #1429 reconciling the account-deletion policy — the target ERD, and the Phase 2 proposal (G1 shipped; the rest not built). |
 | [`deployment.md`](deployment.md) | reference | Dan Browne | 2026-08-31 | Compose topology from one file: the `localdb` profile gate and the nginx runtime-DNS fix, both still accurate. Its **production** column is pre-Fargate (EC2 + `docker compose pull`) and is superseded by `local-vs-prod.md`. |
 | [`local-vs-prod.md`](local-vs-prod.md) | current | Dan Browne | 2026-08-31 | The deployment contract (#1044): the row-by-row local/production selector table with the variable that decides each one, the four config leaks and where each stands, the recorded "no local auth bypass" decision, the fresh-clone ollama smoke path, and `make check-local`. |
-| [`architectural-principles.md`](architectural-principles.md) | current | Dan Browne | 2026-07-28 | The four primitives the product is built to defend. |
+| [`architectural-principles.md`](architectural-principles.md) | current | Dan Browne | 2026-09-30 | The four primitives the product is built to defend. |
 | [`anti-features.md`](anti-features.md) | current | Dan Browne | 2026-07-28 | What Archimedes deliberately does not build. |
 
 ## API reference
@@ -119,7 +119,7 @@ Repo root: [`../README.md`](../README.md) · [`../SETUP.md`](../SETUP.md) · [`.
 | [`specs/component-interfaces-spec.md`](specs/component-interfaces-spec.md) | spec | Dan Browne | — | Component interfaces and the team work split. |
 | [`specs/ecosystem-design-spec.md`](specs/ecosystem-design-spec.md) | spec | Dan Browne | — | Marketplace/ecosystem design. Marketplace ships behind `PAYMENTS_DRY_RUN`. |
 | [`specs/xia-2026-protocols.md`](specs/xia-2026-protocols.md) | spec | Dan Browne | — | Xia et al. 2026 named protocols as implemented here. |
-| [`specs/architecture-page-design.md`](specs/architecture-page-design.md) | implemented | Dan Browne | 2026-07-28 | Design for the Architecture page, **implemented in PR #1192**. Should leave `specs/` for `architecture/` or `archive/` once #1192 merges, per `CONVENTIONS.md` § 1. |
+| [`specs/architecture-page-design.md`](specs/architecture-page-design.md) | implemented | Dan Browne | 2026-09-01 | Design for the Architecture page, **implemented in PR #1192**. Honesty card must not treat `corpus_db_count` as a subset of `corpus_papers`. Should leave `specs/` for `architecture/` or `archive/` once #1192 merges, per `CONVENTIONS.md` § 1. |
 | [`diagrams/strategy-passport-architecture.md`](diagrams/strategy-passport-architecture.md) | reference | Dan Browne | — | Passport architecture diagram + reference. |
 | [`bedrock-model-cost-comparison.md`](bedrock-model-cost-comparison.md) | reference | Dan Browne | — | Bedrock model costs, us-east-1 on-demand. LLM is `bedrock_converse` / `amazon.nova-micro-v1:0`. |
 | [`cost-estimates/generate-llm-costs.md`](cost-estimates/generate-llm-costs.md) | reference | Dan Browne | — | Per-generation LLM cost estimate. |
@@ -232,6 +232,7 @@ Repo root: [`../README.md`](../README.md) · [`../SETUP.md`](../SETUP.md) · [`.
 | [`audits/2026-06-13-Onder-findings.md`](audits/2026-06-13-Onder-findings.md) | audit | Önder Akkaya | 2026-06-13 | Resilience and stress-test report. |
 | [`audits/2026-07-09-curated-consolidation.md`](audits/2026-07-09-curated-consolidation.md) | audit | Önder Akkaya | 2026-07-09 | Curated-example consolidation build and verification. |
 | [`audits/merge-handoff-2026-06-10.md`](audits/merge-handoff-2026-06-10.md) | historical log | Dan Browne | 2026-06-10 | Merge handoff for the 2026-06-10 remediation PRs. |
+| [`audits/2026-09-27-owasp-fourlane-audit.md`](audits/2026-09-27-owasp-fourlane-audit.md) | audit | Önder Akkaya | 2026-09-27 | OWASP Top 10/ASVS/CWE 4-lane SAST pass (backend, contracts, frontend, infra/CI). 4 High findings: `Vault.sol` `creator` role outlives ownership transfer + contradicts the non-custodial ADR, `setTargetAllocations()` churn-guard bypass, unbounded client-side payment-key deposit, and a PR-triggered Terraform OIDC role that can reach the prod Aurora password. No fixes applied. |
 | [`audits/rigor-gate-fixes.md`](audits/rigor-gate-fixes.md) | needs owner | Önder Akkaya | — | A bare patch list with no findings, owner or dates. Should be tracked issues, then deleted. |
 
 ## Handovers and session logs (historical — not current state)

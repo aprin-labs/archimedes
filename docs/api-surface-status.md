@@ -2,7 +2,7 @@
 
 > **status:** current
 > **owner:** Dan Browne
-> **updated:** 2026-08-20
+> **updated:** 2026-10-02
 > **superseded-by:** —
 
 One row per router `backend/archimedes/main.py` actually mounts via
@@ -91,7 +91,10 @@ tracked here rather than silently absent.
   `/{address}/metadata`) are public. `POST /create`, `POST /metadata`, and
   `POST /{address}/derive-allocations` require `require_linked_wallet`
   (session + a verified linked wallet) — each spends backend-signer gas or
-  writes state.
+  writes state. `POST /create` also sits behind the roadmap gate
+  (`require_roadmap_surfaces`, `FEATURE_ROADMAP_SURFACES`, off unless set to
+  `true`; #1432): while it is off the route answers `404` whether or not the
+  caller is signed in, because the gate runs before its auth dependency.
 - **`strategies_router`** — curated/generated reads are public, with optional
   personalization via `get_current_user` (never mandatory). `GET /generated`
   and `PATCH /{strategy_id}` require `require_current_user`. **This router
@@ -135,7 +138,12 @@ tracked here rather than silently absent.
   registered: `GET /published` and `GET /published/{strategy_id}` are public
   reads; the other seven routes (`publish`, `subscribe`,
   `unsubscribe`, `stop_publish`, `my-published`, `withdraw`,
-  `my-subscriptions`) require `require_linked_wallet`.
+  `my-subscriptions`) require `require_linked_wallet`. `POST /publish` and
+  `POST /subscribe` each have the backend signer deploy a vault owned by the
+  caller's wallet, so they also sit behind the roadmap gate that closes
+  `POST /api/vaults/create` (#1432): while `FEATURE_ROADMAP_SURFACES` is off
+  they answer `404` whether or not the caller is signed in, because the gate
+  runs before their auth dependency. The other seven are not gated.
 - **`risk_router`** and **`portfolio_router`** — `GET /risk/cvar`, `GET
   /risk/greeks`, `POST /portfolio/optimize`, and `POST
   /portfolio/parameter-sweep` additionally require the `require_quant_feature`

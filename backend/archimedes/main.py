@@ -408,6 +408,20 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     except Exception as exc:
         _logger.warning("startup: example strategy seed failed (non-fatal): %s", exc)
 
+    # 2b. Prime request-path caches BEFORE yield (#1713). Uvicorn is not
+    # listening yet, so the ALB target cannot go healthy until the Library
+    # page's cohort-returns + rigor caches are warm. A timed-out warmup
+    # MUST NOT become an ALB-ready target — that *is* the #1713 bug — so
+    # RequestPathWarmupTimeout is not caught here: uvicorn never binds and
+    # ECS does not register a cold task. Per-step failures inside the
+    # helper still fail-soft. The helper is the indirection that keeps
+    # evaluate_rigor_gate / BacktestResultRecord out of this frame — the
+    # 2026-08-19 OOM was this function pinning artifact_json blobs at yield.
+    from archimedes.services.request_path_warmup import arm_request_path_warmup
+
+    await arm_request_path_warmup(_app)
+    _logger.info("startup: request-path warmup armed")
+
     # Both money-affecting switches FAIL SAFE (default to dry) and must be
     # turned on together and deliberately. Previously PAYMENTS_DRY_RUN
     # defaulted to "false" while PAPER_TRADING defaulted to "true", so an

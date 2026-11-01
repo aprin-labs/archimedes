@@ -171,7 +171,7 @@ jobs:
 
     steps:
       # No `submodules:` — no .tf file references a submodule path.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       # Fail with a sentence somebody can act on, rather than letting
       # configure-aws-credentials fail on an empty `role-to-assume` with a
@@ -191,7 +191,7 @@ jobs:
           fi
 
       - name: Install Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           # The wrapper mangles exit codes in multi-line run blocks, and this
@@ -199,7 +199,7 @@ jobs:
           terraform_wrapper: false
 
       - name: Configure AWS credentials (OIDC, read-only plan role)
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.TF_PLAN_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -257,7 +257,7 @@ jobs:
       # renderings must not leave the runner.
       - name: Upload the plan (human-readable only)
         if: always() && steps.plan.outcome != 'skipped'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: terraform-plan-${{ github.run_id }}
           path: plan.txt
