@@ -257,7 +257,7 @@ jobs:
       # renderings must not leave the runner.
       - name: Upload the plan (human-readable only)
         if: always() && steps.plan.outcome != 'skipped'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: terraform-plan-${{ github.run_id }}
           path: plan.txt

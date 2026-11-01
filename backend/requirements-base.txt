@@ -25,17 +25,19 @@ fastapi>=0.141.1
 # backend imports neither GZipMiddleware nor FileResponse (checked 2026-08-30).
 starlette>=1.7.0
 uvicorn[standard]>=0.52.4
-# Upper-bounded 2026-09-25: 2.1.0 (released after this floor was set) changes the
-# DEFAULT driver a bare `postgresql://` URL resolves to — `create_engine()` now
-# imports `sqlalchemy.dialects.postgresql.psycopg` (psycopg **3**) instead of
-# `...postgresql.psycopg2`, and this repo only installs psycopg2 (see below).
-# Every bare-scheme call site (`db.py`'s `DATABASE_URL`, `migrations/env.py`, the
-# alembic offline-SQL tests) broke with `ModuleNotFoundError: No module named
-# 'psycopg'` on a fresh CI install the moment pip could resolve 2.1.x — reproduced
-# in an isolated venv both directions (2.0.52 clean, 2.1.1 breaks) before pinning.
-# Raise this ceiling only alongside either installing `psycopg` (v3) or making
-# every DATABASE_URL construction say `postgresql+psycopg2://` explicitly.
-sqlalchemy>=2.0.52,<2.1
+# 2.1.0 changed the DEFAULT driver a bare `postgresql://` URL resolves to:
+# `create_engine()` now imports psycopg **3** instead of psycopg2, and this repo
+# only installs psycopg2 (see below). Every DATABASE_URL source writes the bare
+# scheme, so `db._pin_psycopg2_driver` rewrites it to `postgresql+psycopg2://`
+# where `db.DATABASE_URL` is read (the app engine and `migrations/env.py` use
+# that constant). Anything that builds an engine from a raw environment URL must
+# call the helper too, as the two Postgres integration tests do. That is
+# what allows the 2.1 line here; `test_db.py::TestBarePostgresUrlResolvesToPsycopg2`
+# fails if the rewrite is dropped. (It was capped at <2.1 from 2026-09-25 to
+# 2026-10-03 for this reason.) The floor is 2.1.3, not 2.1.1: 2.1.2 fixed
+# regressions #13619, #13625 and #13626, and 2.1.3 fixed #13635;
+# `test_db.py::TestSqlalchemyFloorExcludesKnownRegressions` fails below 2.1.3.
+sqlalchemy>=2.1.3,<2.2
 # Schema migration tool (issue #1028) — replaces the hand-rolled idempotent
 # `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` patches in db.py for retrofitting
 # the already-populated prod Postgres DB. MIT license, maintained by the
@@ -65,9 +67,9 @@ alembic>=1.19.1
 # build time and `libpq5` at runtime (both wired in backend/Dockerfile), and
 # local `conda env create` needs conda-forge `libpq` for `pg_config` (wired in
 # environment.yml). Do not "fix a slow build" by putting -binary back.
-psycopg2>=2.9.12
+psycopg2>=2.9.13
 redis>=8.1.0
-pydantic>=2.13.5
+pydantic>=2.14.0
 # Declared because backend code IMPORTS IT DIRECTLY — `PydanticCustomError` in
 # `api/rigor_verify_routes.py`, which is how that route's refusals carry a stable
 # machine-readable `type` (#1803). pydantic exposes no public re-export of it
@@ -79,7 +81,7 @@ pydantic>=2.13.5
 # the dependency is declared where every consumer of this file can see it.
 pydantic-core>=2.46.4
 pydantic-settings>=2.15.0
-python-dotenv>=1.2.3
+python-dotenv>=1.2.4
 
 # Data + numerics
 numpy>=2.5.3,<3.0
@@ -90,7 +92,7 @@ numpy>=2.5.3,<3.0
 # pre-existing local-vs-prod major drift to reconcile separately.)
 pandas>=3.0.6
 scipy>=1.18.1
-scikit-learn>=1.9.0  # GaussianMixture + StandardScaler for the data-driven GmmRegimeDetector (issue #661); BSD-3-Clause
+scikit-learn>=1.9.1  # GaussianMixture + StandardScaler for the data-driven GmmRegimeDetector (issue #661); BSD-3-Clause
 
 # Market data
 yfinance>=1.7.0
@@ -101,7 +103,7 @@ yfinance>=1.7.0
 requests>=2.32,<2.34
 # Bumped from 3.13.5 to close CVE-2026-34993 / CVE-2026-47265 (HTTP parser
 # DoS/smuggling).
-aiohttp>=3.14.3
+aiohttp>=3.14.4
 # httpx is directly imported by services/corpus_service.py (arXiv intake) and
 # services/llm_backend.py (OpenAI-compatible + Ollama backends). Pinned directly
 # so we don't rely on it arriving transitively via anthropic/fastapi.
@@ -151,7 +153,7 @@ circle-titanoboa-sdk[x402,wallets] @ git+https://github.com/vyperlang/circle-tit
 # this is stale).
 
 # LLM
-anthropic>=1.5.0
+anthropic>=1.9.0
 
 # On-chain / Web3
 # web3 8 requires eth-abi>=6, so web3 and eth-abi move TOGETHER: bumping one
@@ -182,9 +184,9 @@ slowapi>=0.1.10
 # Paper ingestion
 arxiv>=4.0.1
 # Floor raised to 6.13.3 to close 8 CVEs incl GHSA-jm82-fx9c-mx94 (CVE bump 2026-06-25).
-pypdf>=6.16.2
+pypdf>=6.19.0
 
 # AWS / S3
-boto3>=1.43.92
+boto3>=1.43.110
 # Imported directly for AWS exceptions/config; boto3 constrains compatibility.
-botocore>=1.43.88
+botocore>=1.43.110

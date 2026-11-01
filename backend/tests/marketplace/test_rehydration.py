@@ -6,7 +6,8 @@ subscribers are provided, and Redis as a rebuildable cache.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest import mock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from archimedes.marketplace.service import MarketService, Subscriber
@@ -223,8 +224,8 @@ async def test_two_strategies_independent_subscribers(market: MarketService):
     }
     market.state.save_subscribers.assert_has_awaits(
         [
-            call("strat_f", expected_a),
-            call("strat_g", expected_b),
+            mock.call("strat_f", expected_a),
+            mock.call("strat_g", expected_b),
         ]
     )
 

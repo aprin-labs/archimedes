@@ -60,7 +60,7 @@ class TestDatabaseUrlEnvOverride:
         sqlite_kwargs = db._get_engine_kwargs()
         assert sqlite_kwargs == {"connect_args": {"check_same_thread": False}}
 
-        monkeypatch.setattr(db, "DATABASE_URL", "postgresql://user:pass@host:5432/db")
+        monkeypatch.setattr(db, "DATABASE_URL", "postgresql+psycopg2://user:pass@host:5432/db")
         postgres_kwargs = db._get_engine_kwargs()
         assert postgres_kwargs == {"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10}
 
@@ -68,31 +68,105 @@ class TestDatabaseUrlEnvOverride:
 class TestBarePostgresUrlResolvesToPsycopg2:
     """SQLAlchemy 2.1.0 changed the DEFAULT driver a bare ``postgresql://`` URL
     resolves to — from ``psycopg2`` to ``psycopg`` (v3), which this repo does not
-    install (see the pin comment on ``sqlalchemy`` in requirements-base.txt).
-    Every bare-scheme call site — this module's own ``DATABASE_URL``,
-    ``migrations/env.py``, and every alembic offline-SQL test — imports the
-    driver at ``create_engine()`` time (no live connection needed), so a
-    resolution to the wrong dialect raises ``ModuleNotFoundError`` before a
-    single query runs. Reproduced directly: an isolated venv with sqlalchemy
-    2.1.1 + psycopg2-binary and no ``psycopg`` raises exactly that; the same
-    venv with 2.0.52 resolves ``...postgresql.psycopg2`` cleanly.
+    install. Every URL source (ECS secret, compose, ``.env``) writes the bare
+    scheme, and ``create_engine()`` imports the driver up front (no live
+    connection needed), so a resolution to the wrong dialect raises
+    ``ModuleNotFoundError`` before a single query runs.
 
-    This guard does not re-litigate the version pin (that is a text-only
-    comparison a future dependabot PR is meant to be able to bump past, with
-    review); it pins the OUTCOME the pin protects, so any future upgrade —
-    whether or not it changes this exact number — is caught by whether it
-    breaks bare-scheme resolution, not by whether it changed a version string.
+    ``db._pin_psycopg2_driver`` is what keeps that from happening on 2.1+. These
+    tests pin the OUTCOME through it, not the library default: on SQLAlchemy 2.1
+    a bare URL that skipped the pin resolves to psycopg and fails the first test.
     """
 
     def test_bare_postgres_url_resolves_to_psycopg2_dialect(self):
         from sqlalchemy import create_engine
 
-        engine = create_engine("postgresql://user:pass@host:5432/db")
+        url = db._pin_psycopg2_driver("postgresql://user:pass@host:5432/db")
+        engine = create_engine(url)
         assert engine.dialect.__class__.__module__ == "sqlalchemy.dialects.postgresql.psycopg2", (
             f"a bare `postgresql://` URL now resolves to {engine.dialect.__class__.__module__!r}, "
-            "not the psycopg2 dialect this repo installs — this is the exact SQLAlchemy 2.1 "
-            "regression the <2.1 ceiling on requirements-base.txt's sqlalchemy pin exists to "
-            "prevent. Either the ceiling was raised without also installing `psycopg` (v3) or "
-            "making every DATABASE_URL construction say `postgresql+psycopg2://` explicitly, "
-            "or something else changed the default. Do not loosen this assertion — fix the cause."
+            "not the psycopg2 dialect this repo installs. `db._pin_psycopg2_driver` must spell "
+            "out `postgresql+psycopg2://`, or `psycopg` (v3) must be installed. Do not loosen "
+            "this assertion — fix the cause."
+        )
+
+    def test_pin_rewrites_only_the_bare_scheme(self):
+        assert db._pin_psycopg2_driver("postgresql://u:p@h:5432/d") == "postgresql+psycopg2://u:p@h:5432/d"
+        # A URL that already names a driver, or is not Postgres, passes through.
+        for url in (
+            "postgresql+psycopg2://u:p@h/d",
+            "postgresql+asyncpg://u:p@h/d",
+            "sqlite:///x.db",
+        ):
+            assert db._pin_psycopg2_driver(url) == url
+
+    def test_pin_is_anchored_to_the_scheme(self):
+        # SQLAlchemy's URL parser accepts the scheme text later in the URL, in a
+        # password or a query value. Only the leading scheme may be rewritten.
+        assert (
+            db._pin_psycopg2_driver("postgresql://u:postgresql://@h/d") == "postgresql+psycopg2://u:postgresql://@h/d"
+        )
+        driver_named = "postgresql+asyncpg://u:p@h/d?application_name=postgresql://x"
+        assert db._pin_psycopg2_driver(driver_named) == driver_named
+
+    def test_module_database_url_goes_through_the_pin(self):
+        # A subprocess, not importlib.reload: reloading `db` here would rebind
+        # the engine every other module already imported.
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        backend_dir = Path(db.__file__).resolve().parent.parent
+        # Whitelisted env + neutralized load_dotenv, per docs/testing-conventions.md,
+        # so a developer's .env cannot replace the URL under test.
+        env = {
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": os.environ.get("HOME", ""),
+            "PYTHONPATH": str(backend_dir),
+            "DATABASE_URL": "postgresql://u:p@h:5432/d",
+        }
+        script = (
+            "import dotenv\n"
+            "dotenv.load_dotenv = lambda *a, **k: False\n"
+            "from archimedes import db\n"
+            "print(db.DATABASE_URL, db.engine.dialect.driver)\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=backend_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.split()[-2:] == ["postgresql+psycopg2://u:p@h:5432/d", "psycopg2"]
+
+
+class TestSqlalchemyFloorExcludesKnownRegressions:
+    """2.1.1 and 2.1.2 ship regressions that 2.1.3 fixes: #13619, #13625 and
+    #13626 (fixed in 2.1.2) and #13635 (fixed in 2.1.3), per SQLAlchemy's 2.1
+    changelog. #13635 makes a ``.params()`` value compile to NULL under
+    ``literal_binds``. Nothing in the backend uses the affected features today,
+    so the floor in ``requirements-base.txt`` is the only thing keeping a resolver
+    from installing those releases. A plain text read, like
+    ``test_single_openssl.py``'s requirement guard, so it runs everywhere.
+    """
+
+    def test_requirements_floor_is_at_least_2_1_3(self):
+        import re
+        from pathlib import Path
+
+        requirements = Path(__file__).resolve().parents[1] / "requirements-base.txt"
+        specs = []
+        for line in requirements.read_text().splitlines():
+            body = line.split("#", 1)[0].strip()
+            match = re.match(r"(?i)^sqlalchemy(?:\[[^\]]*\])?\s*(?P<spec>[<>=!~].*)?$", body)
+            if match:
+                specs.append(match.group("spec") or "")
+        assert len(specs) == 1, f"expected one sqlalchemy line in {requirements.name}, found {specs}"
+        floor = re.search(r">=\s*(\d+)\.(\d+)\.(\d+)\b", specs[0])
+        assert floor, f"the sqlalchemy line has no >=X.Y.Z floor: {specs[0]!r}"
+        assert tuple(int(part) for part in floor.groups()) >= (2, 1, 3), (
+            f"sqlalchemy floor {specs[0]!r} admits 2.1.1/2.1.2, which carry regressions 2.1.3 fixes"
         )
