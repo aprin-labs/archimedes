@@ -55,9 +55,10 @@
 //     (cli/src/archimedes_cli/cli.py DEFAULT_API_URL,
 //     mcp-server/src/archimedes_mcp/credentials.py DEFAULT_API_URL). When
 //     those defaults change, delete the sentence that says so.
-//   - The sentence marked OWNER-CONFIRM is the page's only statement about
-//     the former hosted service. The teardown session confirms it; do not
-//     state it anywhere else.
+//   - No sentence here says what became of the former hosted service at
+//     archimedes-arc.com or its data. The owner chose (2026-11-01) not to
+//     wait on the teardown: add one only once the teardown has actually
+//     deleted that data, and say only what it confirms.
 export default function Privacy() {
 	return (
 		<div className="page-content policy-page">
@@ -78,11 +79,6 @@ export default function Privacy() {
 					code sends no telemetry, analytics or error reports to the project or
 					to anyone else. Your data stays where you run it, except what your
 					instance sends to the services listed below.
-				</p>
-				<p>
-					{/* OWNER-CONFIRM */}
-					The former hosted service at archimedes-arc.com has closed, and its
-					data has been deleted.
 				</p>
 			</section>
 

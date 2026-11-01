@@ -376,24 +376,17 @@ test("privacy puts the operator of a shared instance in charge of its disclosure
 	);
 });
 
-// Exactly one sentence states that the former hosted service closed and its
-// data was deleted. The owner's teardown session confirms it, so it carries
-// the OWNER-CONFIRM marker and appears nowhere else.
-test("the hosted-service closure is one marked sentence, on the privacy page only", () => {
-	assert.equal((privacy.match(/\{\/\* OWNER-CONFIRM \*\/\}/g) || []).length, 1, "exactly one OWNER-CONFIRM marker");
-	assert.match(
-		rendered(privacy),
-		/\{\/\* OWNER-CONFIRM \*\/\}\s*The former hosted service at archimedes-arc\.com has closed, and its\s+data has been deleted\./,
-		"the marker must sit on the closure sentence",
-	);
-	const closure = /has closed|has been deleted|was deleted/;
-	assert.equal((shown(privacy).match(new RegExp(closure, "g")) || []).length, 2, "one sentence: 'has closed' and 'has been deleted'");
+// No page says what became of the former hosted service or its data. That
+// waits for the teardown to actually delete it (owner, 2026-11-01), so no
+// sentence here can claim it early.
+test("no page claims the former hosted service's data was deleted", () => {
+	const closure = /has closed|has been deleted|was deleted|OWNER-CONFIRM/;
 	for (const [name, source] of [
+		["Privacy", privacy],
 		["Terms", terms],
 		["AuthPage", authPage],
 	]) {
-		assertGone(source, /OWNER-CONFIRM/, `${name} must not carry the marker`);
-		assertGone(rendered(source), closure, `${name} must not restate the closure`);
+		assertGone(source, closure, `${name} must not claim the hosted service closed or its data was deleted`);
 	}
 });
 
