@@ -52,10 +52,10 @@ export default function ConsentBanner() {
 				<div className="consent-banner__copy">
 					<h2 className="consent-banner__title">What this site stores</h2>
 					<p>
-						{necessaryCount} cookies and keys are strictly necessary — sign-in,
-						wallet proof, and the checks that keep them correct. {optionalCount}{" "}
-						more, in your browser, are optional: preferences, progress markers,
-						and one landing marker. Until you choose, those are{" "}
+						{necessaryCount} cookies and keys are strictly necessary for
+						sign-in, wallet proof, and the checks that keep them correct.{" "}
+						{optionalCount} more, in your browser, are optional: preferences,
+						progress markers, and one landing marker. Until you choose, those are{" "}
 						<strong>off</strong>; our server still sets its anonymous visitor
 						cookie (archimedes_vid) either way.
 					</p>
@@ -73,7 +73,11 @@ export default function ConsentBanner() {
 					>
 						Accept all
 					</button>
-					<button type="button" className="consent-btn" onClick={rejectOptional}>
+					<button
+						type="button"
+						className="consent-btn"
+						onClick={rejectOptional}
+					>
 						Reject optional
 					</button>
 					<button

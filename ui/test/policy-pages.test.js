@@ -190,6 +190,15 @@ test("both shells link to both policy pages", () => {
 	}
 });
 
+// The shared public footer (#1864) said no privacy or terms page was published,
+// which was true until these pages shipped. The links replace that line, under
+// the names the pages carry; the line must not come back beside them.
+test("the public footer links the policy pages instead of saying none exist", () => {
+	assertGone(publicLayout, /No privacy or terms page published/i, "the pages are published now");
+	assert.match(publicLayout, /href="\/privacy">Privacy<\/a>/);
+	assert.match(publicLayout, /href="\/terms">License and terms<\/a>/);
+});
+
 // The public footer moved out of Landing.jsx into PublicLayout.jsx so that
 // Architecture, Privacy, Terms and not-found carry it too. If it is ever
 // copied back, every public page renders two footers and the policy links

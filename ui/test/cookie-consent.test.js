@@ -67,7 +67,8 @@ const {
 
 // ── 1. the raw-write census ─────────────────────────────────────────────
 
-const WRITE_RE = /localStorage\.setItem|sessionStorage\.setItem|document\.cookie/;
+const WRITE_RE =
+	/localStorage\.setItem|sessionStorage\.setItem|document\.cookie/;
 
 // Every (file, line) in src/ that writes browser storage.
 const writeSites = [];
@@ -138,7 +139,8 @@ test("direction A: every storage-key literal in ui/src is disclosed in the map",
 	for (const { path, text } of SRC_FILES) {
 		for (const match of text.matchAll(KEY_LITERAL_RE)) {
 			const literal = match[2];
-			if (inventoryNames.has(literal) || inventoryDisplays.has(literal)) continue;
+			if (inventoryNames.has(literal) || inventoryDisplays.has(literal))
+				continue;
 			undisclosed.push(`${path}: ${literal}`);
 		}
 	}
@@ -153,7 +155,8 @@ test("direction B: every key in the map really is in the code it names", () => {
 	const phantom = [];
 	for (const entry of STORAGE_INVENTORY) {
 		const source = readFileSync(join(REPO, entry.source), "utf8");
-		if (!source.includes(entry.name)) phantom.push(`${entry.name} @ ${entry.source}`);
+		if (!source.includes(entry.name))
+			phantom.push(`${entry.name} @ ${entry.source}`);
 	}
 	assert.deepEqual(
 		phantom,
@@ -263,7 +266,10 @@ test("the banner ships Accept, Reject and Customize as real controls (#1647 AC3)
 	assert.match(consentBanner, /Customize\s*<\/button>/);
 	assert.match(consentBanner, /onClick=\{acceptAll\}/);
 	assert.match(consentBanner, /onClick=\{rejectOptional\}/);
-	assert.match(consentBanner, /const rejectOptional = \(\) =>\s*decide\(\{\s*functional: false,\s*analytics: false\s*\}\)/);
+	assert.match(
+		consentBanner,
+		/const rejectOptional = \(\) =>\s*decide\(\{\s*functional: false,\s*analytics: false\s*\}\)/,
+	);
 	// Customize toggles a real panel, referenced by aria-controls.
 	assert.match(consentBanner, /aria-expanded=\{customizing\}/);
 	assert.match(consentBanner, /aria-controls=\{panelId\}/);
@@ -271,7 +277,10 @@ test("the banner ships Accept, Reject and Customize as real controls (#1647 AC3)
 });
 
 test("the banner is mounted app-wide, not just on one layout", () => {
-	assert.match(mainJsx, /import ConsentBanner from '\.\/components\/ConsentBanner\.jsx'/);
+	assert.match(
+		mainJsx,
+		/import ConsentBanner from '\.\/components\/ConsentBanner\.jsx'/,
+	);
 	assert.match(mainJsx, /<ConsentBanner \/>/);
 	// Not a modal: no focus trap, no portal, no page-blocking overlay.
 	assert.doesNotMatch(consentBanner, /createPortal/);
@@ -290,7 +299,9 @@ test("no third-party consent SDK was introduced (#1647 anti-goal 2)", () => {
 	const pkg = JSON.parse(readFileSync(join(REPO, "ui/package.json"), "utf8"));
 	const deps = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
 	const suspicious = deps.filter((d) =>
-		/cookie|consent|osano|onetrust|cookiebot|klaro|analytics|segment|posthog|mixpanel/i.test(d),
+		/cookie|consent|osano|onetrust|cookiebot|klaro|analytics|segment|posthog|mixpanel/i.test(
+			d,
+		),
 	);
 	assert.deepEqual(suspicious, []);
 	for (const source of [consentBanner, consentChoices, disclosure]) {
@@ -321,7 +332,10 @@ test("the policy page names all three session/analytics cookies (#1647 AC7)", ()
 	]) {
 		assert.ok(disclosure.includes(name), `disclosure must name ${name}`);
 		const entry = lookupEntry(name);
-		assert.ok(entry && entry.store === "cookie", `${name} must be a cookie entry`);
+		assert.ok(
+			entry && entry.store === "cookie",
+			`${name} must be a cookie entry`,
+		);
 		// "with their stated purpose" — rendered from the shared inventory, so
 		// the purpose can never drift from the gate's own copy.
 		assert.ok(entry.purpose.length > 20);
@@ -342,7 +356,10 @@ test("the disclosure renders from the shared inventory and is reachable", () => 
 	// Every category the inventory uses has a rendered section.
 	const rendered = disclosure.match(/const SECTION_ORDER = \[([\s\S]*?)\]/)[1];
 	for (const category of new Set(STORAGE_INVENTORY.map((e) => e.category))) {
-		assert.ok(rendered.includes(`"${category}"`), `no section renders ${category}`);
+		assert.ok(
+			rendered.includes(`"${category}"`),
+			`no section renders ${category}`,
+		);
 	}
 });
 
@@ -364,7 +381,12 @@ function makeStore() {
 
 let setAttributeCalls = [];
 globalThis.document = {
-	documentElement: { setAttribute: (...args) => setAttributeCalls.push(args) },
+	documentElement: {
+		dataset: {},
+		style: {},
+		setAttribute: (...args) => setAttributeCalls.push(args),
+	},
+	querySelector: () => null,
 };
 
 const { applyTheme, getStoredTheme } = await import("../src/theme.js");
@@ -398,8 +420,8 @@ test("REJECT suppresses the functional write entirely (the revert-demo case)", (
 	assert.deepEqual(Object.keys(globalThis.localStorage.snapshot()), [
 		CONSENT_STORAGE_KEY,
 	]);
-	// The fallback the disclosure promises: default dark on the next load.
-	assert.equal(getStoredTheme(), "dark");
+	// The fallback the disclosure promises: System on the next load.
+	assert.equal(getStoredTheme(), "system");
 });
 
 test("ACCEPT restores the write, so the guard is a gate and not a deletion", () => {
@@ -472,7 +494,11 @@ test("an undisclosed key fails closed (this is AC1's runtime half)", () => {
 test("legacy keys are never writable", () => {
 	saveConsent({ functional: true, analytics: true });
 	for (const entry of entriesInCategory("legacy")) {
-		assert.equal(canStore(entry.name), false, `${entry.name} must stay unwritable`);
+		assert.equal(
+			canStore(entry.name),
+			false,
+			`${entry.name} must stay unwritable`,
+		);
 	}
 });
 
@@ -480,7 +506,10 @@ test("withdrawing consent deletes what was already stored, and only that", () =>
 	saveConsent({ functional: true, analytics: true });
 	globalThis.localStorage.setItem("archimedes.theme", "light");
 	globalThis.localStorage.setItem("archimedes_wallet", '{"providerId":"x"}');
-	globalThis.localStorage.setItem("archimedes_circle_username", "legacy-leftover");
+	globalThis.localStorage.setItem(
+		"archimedes_circle_username",
+		"legacy-leftover",
+	);
 	globalThis.sessionStorage.setItem("archimedes_landed", "1");
 	globalThis.sessionStorage.setItem("archimedes:pending-link", "google");
 
@@ -488,7 +517,10 @@ test("withdrawing consent deletes what was already stored, and only that", () =>
 	purgeDisallowed();
 
 	assert.equal(globalThis.localStorage.getItem("archimedes.theme"), null);
-	assert.equal(globalThis.localStorage.getItem("archimedes_circle_username"), null);
+	assert.equal(
+		globalThis.localStorage.getItem("archimedes_circle_username"),
+		null,
+	);
 	assert.equal(globalThis.sessionStorage.getItem("archimedes_landed"), null);
 	// Necessary keys and the consent record are untouched — a purge that signs
 	// the user out would be worse than no purge at all.
@@ -496,7 +528,10 @@ test("withdrawing consent deletes what was already stored, and only that", () =>
 		globalThis.localStorage.getItem("archimedes_wallet"),
 		'{"providerId":"x"}',
 	);
-	assert.equal(globalThis.sessionStorage.getItem("archimedes:pending-link"), "google");
+	assert.equal(
+		globalThis.sessionStorage.getItem("archimedes:pending-link"),
+		"google",
+	);
 	assert.ok(globalThis.localStorage.getItem(CONSENT_STORAGE_KEY));
 });
 

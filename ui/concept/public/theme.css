@@ -1,0 +1,99 @@
+/* Fulcro identity. Loaded before React so first paint and portals share roles. */
+@font-face {
+	font-family: "DM Sans";
+	src: url("/fonts/dm-sans-latin.woff2") format("woff2");
+	font-weight: 500 600;
+	font-style: normal;
+	font-display: swap;
+}
+@font-face {
+	font-family: Inter;
+	src: url("/fonts/inter-latin.woff2") format("woff2");
+	font-weight: 400 500;
+	font-style: normal;
+	font-display: swap;
+}
+
+:root,
+[data-theme="light"] {
+	color-scheme: light;
+	--canvas: #f2f1e8;
+	--sidebar: #e9ebe2;
+	--surface: #ffffff;
+	--surface-2: #fafaf5;
+	--surface-3: #e2e8dc;
+	--line: #d5ddd3;
+	--ink: #132b28;
+	--muted: #56675f;
+	--accent: #d5f268;
+	--on-accent: #132b28;
+	--selected: #dbe7cb;
+	--focus: #132b28;
+	/* Subtle dividers are not control boundaries. These roles retain contrast. */
+	--line-strong: #6d8176;
+	--control: #132b28;
+	--on-control: #f2f1e8;
+	--action-border: #6d8176;
+	--accent-hover: #e0f58f;
+	--link: #132b28;
+	--disabled: #e2e7df;
+	--positive: #316344;
+	--warning: #88571f;
+	--danger: #a13935;
+	--series-1: #426a60;
+	--series-2: #966330;
+	--series-3: #546da7;
+	--series-4: #87648c;
+	--chart-benchmark: #6a7b70;
+	--scrim: rgb(13 25 23 / 55%);
+	--elevation-shadow: 0 16px 48px rgb(13 25 23 / 18%);
+	--display: "DM Sans", Arial, sans-serif;
+	--sans: Inter, Arial, sans-serif;
+	--mono: var(--sans);
+	--space-1: 0.25rem;
+	--space-2: 0.5rem;
+	--space-3: 0.75rem;
+	--space-4: 1rem;
+	--space-6: 1.5rem;
+	--space-8: 2rem;
+	--space-12: 3rem;
+	--space-16: 4rem;
+	--gutter: clamp(20px, 4vw, 64px);
+	--page-width: 88rem;
+}
+[data-theme="dark"] {
+	color-scheme: dark;
+	--canvas: #0d1917;
+	--sidebar: #101f1c;
+	--surface: #132b28;
+	--surface-2: #1b3530;
+	--surface-3: #234038;
+	--line: #34504a;
+	--ink: #f2f1e8;
+	--muted: #a6b9ae;
+	--accent: #d5f268;
+	--on-accent: #132b28;
+	--selected: #294139;
+	--focus: #d5f268;
+	--line-strong: #7d9689;
+	--control: #f2f1e8;
+	--on-control: #132b28;
+	--action-border: #d5f268;
+	--accent-hover: #e0f58f;
+	--link: #d5f268;
+	--disabled: #263c34;
+	--positive: #9bc9aa;
+	--warning: #e3bd80;
+	--danger: #f0aaa2;
+	--series-1: #bed4bc;
+	--series-2: #ccae83;
+	--series-3: #9ab4db;
+	--series-4: #cbb0c5;
+	--chart-benchmark: #8ea79a;
+	--scrim: rgb(3 12 10 / 70%);
+	--elevation-shadow: 0 16px 48px rgb(3 12 10 / 38%);
+}
+html {
+	background: var(--canvas);
+	color: var(--ink);
+}

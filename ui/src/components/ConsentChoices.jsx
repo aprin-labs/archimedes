@@ -47,7 +47,7 @@ export default function ConsentChoices({ onSaved }) {
 		<div className="consent-choices">
 			<fieldset className="consent-choices__set">
 				<legend className="consent-choices__legend">
-					Optional storage — your choice
+					Optional storage: your choice
 				</legend>
 				{OPTIONAL_CATEGORIES.map((category) => {
 					const inputId = `${groupId}-${category}`;
@@ -94,7 +94,7 @@ export default function ConsentChoices({ onSaved }) {
 						? "Saved. Anything you switched off has been deleted from this browser's storage. The server's archimedes_vid cookie stays; this page cannot delete it."
 						: consent
 							? `Current choice: functional ${consent.functional ? "on" : "off"}, analytics ${consent.analytics ? "on" : "off"}.`
-							: "No choice recorded yet — everything optional in your browser is currently off (the server sets archimedes_vid either way)."}
+							: "No choice recorded yet. Everything optional in your browser is currently off (the server sets archimedes_vid either way)."}
 				</p>
 			</div>
 		</div>

@@ -1,0 +1,243 @@
+{
+  "title": "Archimedes Research Observatory component usage",
+  "scope": "Independent ui/concept preview only; fictional, deterministic research data remains in-memory and resets on reload. Only explicit appearance preference persists locally. No production integration.",
+  "reviewedOn": "2026-09-07",
+  "stack": "React 19, Vite 8, TypeScript 6, Tailwind CSS 4; existing Radix UI 1.6.7 and Motion 13.2.0",
+  "adoptionPolicy": "Source adaptations, not unmodified registry installs. No packages added in this refinement. Keep existing equivalent state and accessibility behavior. All adopted controls use the preview's Archimedes Fulcro token contract in ui/concept/public/theme.css and ui/concept/styles.css, including portal content through document theme roles.",
+  "tokens": {
+    "light": "Fulcro Ivory canvas #F2F1E8, white surface #FFFFFF, Forest ink #132B28, Lime primary action #D5F268",
+    "dark": "Canvas #0D1917, Forest surface #132B28, Ivory ink #F2F1E8, Lime primary action #D5F268",
+    "type": "Self-hosted DM Sans Medium headings, original outlined DM Sans SemiBold wordmark, Inter Regular/Medium interface and tabular numerals",
+    "interaction": "44px minimum control targets, distinct selected surface, strong control boundaries, readable disabled states, explicit status labels/icons, shared focus ring, reduced-motion support",
+    "appearance": "Previous compact 44px sun/moon icon trigger, with accessible Light / Dark / System popup; no labeled appearance field. Validated preview-only localStorage key archimedes.observatory.appearance; pre-React initialization, live system changes, visible feedback if persistence is unavailable. No route-driven theme changes."
+  },
+  "brandAssets": {
+    "source": "User-supplied archimedes-fulcro.svg and exact Fulcro specification. Figma reference returned HTTP 403; its screen contents were not inspected.",
+    "logo": "brand/archimedes-fulcro.svg is the byte-identical supplied horizontal artwork, SHA-256 8fb9d89427563551c13544c135c3402973768c11403f487f9daa22ffb797f9b4. CSS masks apply Forest/Ivory without altering geometry or wordmark proportions.",
+    "symbol": "brand/fulcro-symbol.svg uses the original two symbol paths with a square clear-space viewBox. Shared by narrow navigation and the adaptive browser-theme favicon.",
+    "fonts": [
+      { "family": "DM Sans", "file": "fonts/dm-sans-latin.woff2", "sourceUrl": "https://fonts.gstatic.com/s/dmsans/v17/rP2Yp2ywxg089UriI5-g4vlH9VoD8Cmcqbu0-K6z9mXg.woff2", "license": "fonts/OFL-DM-Sans.txt", "licenseSourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/dmsans/OFL.txt" },
+      { "family": "Inter", "file": "fonts/inter-latin.woff2", "sourceUrl": "https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7W0Q5nw.woff2", "license": "fonts/OFL-Inter.txt", "licenseSourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/inter/OFL.txt" }
+    ]
+  },
+  "components": [
+    {
+      "component": "Kibo Choicebox",
+      "sourceUrl": "https://www.kibo-ui.com/components/choicebox",
+      "sourceCodeUrl": "https://github.com/shadcnblocks/kibo/blob/main/packages/choicebox/index.tsx",
+      "implementationFile": "ui/concept/components/kibo-ui/choicebox.tsx",
+      "screen": "Hypothesis desk (#/new), ui/concept/Workflows.tsx",
+      "behavior": "Radix radio group presents three existing lens presets with titles, explanations and selected indicators. Arrow keys select presets; selection replaces actual draft, lens and risk budget while preserving cost.",
+      "customization": "Flattened upstream item/context composition into one labeled radio button per option; explicit title/description IDs, neutral control-color selected border and Fulcro selected surface, inset rule, readable explanations. No separate radio-group dependency: existing radix-ui supplies it.",
+      "adoption": "New, reduced source adaptation",
+      "license": "MIT; Copyright (c) 2023–Present shadcnblocks"
+    },
+    {
+      "component": "Kibo Table presentation and TableColumnHeader",
+      "sourceUrl": "https://www.kibo-ui.com/components/table",
+      "sourceCodeUrl": "https://github.com/shadcnblocks/kibo/blob/main/packages/table/index.tsx",
+      "implementationFile": "ui/concept/components/kibo-ui/table.tsx",
+      "screen": "Research library (#/library), ui/concept/Research.tsx; view state in ui/concept/App.tsx",
+      "behavior": "Semantic table with name and metric sorting in both directions, aria-sort, optional growth/return/drawdown/Sharpe/volatility columns, search, category/saved filters and two-or-three-study comparison. Query, sort, column visibility and selection survive route navigation. Narrow screens use labeled rows and the same state.",
+      "customization": "Presentation/header adaptation only, NOT the full Kibo TableProvider or a drop-in registry installation. Existing local React filtering/sorting replaces upstream TanStack and Jotai; no new dependencies. Direct sort toggles replace sort menus; column disclosure uses existing Motion Primitives. DM Sans names, Inter tabular metrics, flat ruled rows, tokenized selection, explicit horizontal scroll for wide column sets.",
+      "adoption": "New presentation adaptation; reused existing state algorithms",
+      "license": "MIT; Copyright (c) 2023–Present shadcnblocks"
+    },
+    {
+      "component": "shadcn Field",
+      "sourceUrl": "https://ui.shadcn.com/docs/components/radix/field",
+      "sourceCodeUrl": "https://ui.shadcn.com/r/styles/new-york-v4/field.json",
+      "implementationFile": "ui/concept/components/ui/field.tsx",
+      "screen": "Hypothesis desk and study scenario controls, Workflows.tsx and Research.tsx",
+      "behavior": "Groups labels, descriptions, hypothesis validation and supported assumptions. Errors announce through role=alert; helper text is associated explicitly.",
+      "customization": "Only used Field, FieldLabel, FieldDescription and FieldError exports retained. Native semantic elements, shared type/spacing, no form-library or separator abstraction.",
+      "adoption": "New subset adaptation",
+      "license": "MIT; shadcn"
+    },
+    {
+      "component": "shadcn Textarea",
+      "sourceUrl": "https://ui.shadcn.com/docs/components/radix/textarea",
+      "implementationFile": "ui/concept/components/ui/fields.tsx",
+      "screen": "Hypothesis desk, Workflows.tsx",
+      "behavior": "Controlled hypothesis narrative, 800-character ceiling, inline validation; submitted narrative becomes the generated study record.",
+      "customization": "Reused existing native-field adaptation. Strongly bounded writing area on a secondary surface, generous line height, Archimedes placeholder/focus/error tokens.",
+      "adoption": "Existing equivalent retained",
+      "license": "MIT; shadcn"
+    },
+    {
+      "component": "shadcn Input",
+      "sourceUrl": "https://ui.shadcn.com/docs/components/radix/input",
+      "implementationFile": "ui/concept/components/ui/fields.tsx",
+      "screen": "Hypothesis risk input and library search, Workflows.tsx and Research.tsx",
+      "behavior": "Precise numeric risk entry is paired bidirectionally with the slider; invalid/empty/out-of-range values block submission. Search filters actual session catalog, including assets and hypotheses.",
+      "customization": "Existing Input reused, compact tabular risk input plus explicit %/year units, full-width labeled search. No custom numeric parser.",
+      "adoption": "Existing equivalent reused in new numeric pairing",
+      "license": "MIT; shadcn"
+    },
+    {
+      "component": "shadcn Select",
+      "sourceUrl": "https://ui.shadcn.com/docs/components/radix/select",
+      "sourceCodeUrl": "https://ui.shadcn.com/r/styles/new-york-v4/select.json",
+      "implementationFile": "ui/concept/components/ui/select.tsx",
+      "screen": "Hypothesis lens/monthly cost; study monthly-cost scenario; global Light/Dark/System appearance, Workflows.tsx, Research.tsx and App.tsx",
+      "behavior": "Controlled Radix selections with typeahead, keyboard navigation, focus restoration and collision-aware portals. Research supports only existing lenses and 5/10/20 bps costs. Header appearance controls explicit browser-local preference without resetting the research state.",
+      "customization": "Minimal Root/Value/Trigger/Content/Item subset, existing Lucide SVG sprite, 44px items, wrapping text, tokenized portal surface and focus state. Existing native simulation-mode and library-sort selects retained where equivalent.",
+      "adoption": "New Radix source adaptation",
+      "license": "MIT; shadcn"
+    },
+    {
+      "component": "shadcn Slider",
+      "sourceUrl": "https://ui.shadcn.com/docs/components/radix/slider",
+      "implementationFile": "ui/concept/components/ui/slider.tsx",
+      "screen": "Hypothesis risk budget, Workflows.tsx",
+      "behavior": "Keyboard-operated 8–18% research-risk control shares actual mandate state with numeric Input; meaningful aria-valuetext includes units.",
+      "customization": "Existing single-thumb Radix adaptation retained, tokenized track/thumb/focus. Invalid numeric drafts remain visible and are validated instead of silently accepted.",
+      "adoption": "Existing equivalent retained",
+      "license": "MIT; shadcn"
+    },
+    {
+      "component": "shadcn Button",
+      "sourceUrl": "https://ui.shadcn.com/docs/components/radix/button",
+      "implementationFile": "ui/concept/components/ui/button.tsx",
+      "screen": "Landing, composer, progression, study, library, dialogs; App.tsx, Workflows.tsx, Research.tsx, UI.tsx",
+      "behavior": "Actual navigation, submission, retry/cancel, sorting/filtering, comparison, source inspection and temporary saves. Radix Slot preserves link semantics when composed asChild.",
+      "customization": "Existing CVA variants retained, Lime/Forest primary-action roles and neutral secondary controls, wrapping labels and 44px minimum targets. Pending-stage explanatory text stays fully opaque, even when its button is disabled.",
+      "adoption": "Existing foundation expanded across requested actions",
+      "license": "MIT; shadcn"
+    },
+    {
+      "component": "shadcn Checkbox",
+      "sourceUrl": "https://ui.shadcn.com/docs/components/radix/checkbox",
+      "sourceCodeUrl": "https://ui.shadcn.com/r/styles/new-york-v4/checkbox.json",
+      "implementationFile": "ui/concept/components/ui/checkbox.tsx",
+      "screen": "Library saved filter, comparison selection, column settings; study benchmark, Research.tsx",
+      "behavior": "Controlled Radix checked state, keyboard Space, labeled controls, disabled fourth comparison choice, same state on desktop and mobile.",
+      "customization": "44px hit area around small squared indicator; neutral Forest/Ivory control and check SVG rather than default black/white or full-size filled button.",
+      "adoption": "New Radix source adaptation",
+      "license": "MIT; shadcn"
+    },
+    {
+      "component": "shadcn Badge",
+      "sourceUrl": "https://ui.shadcn.com/docs/components/radix/badge",
+      "sourceCodeUrl": "https://ui.shadcn.com/r/styles/new-york-v4/badge.json",
+      "implementationFile": "ui/concept/components/ui/badge.tsx",
+      "screen": "Simulated research progression, Workflows.tsx",
+      "behavior": "Displays actual Pending, Running, Interrupted, Done and overall completion state from existing run transitions. A completion is not an investment validation.",
+      "customization": "Single used outline treatment, square-soft corners, small Inter text, readable semantic labels; no unused variants.",
+      "adoption": "New subset adaptation",
+      "license": "MIT; shadcn"
+    },
+    {
+      "component": "shadcn Tabs",
+      "sourceUrl": "https://ui.shadcn.com/docs/components/radix/tabs",
+      "implementationFile": "ui/concept/components/ui/tabs.tsx",
+      "screen": "Study overview/evidence/methodology and growth/drawdown, Research.tsx; route focus handling in App.tsx",
+      "behavior": "Controlled Radix tabs synchronize hash route, selected content and arrow/Home/End focus. Study identity, assumptions and selected window survive view switches. Growth/drawdown share the same Chart instance so inspected month is retained between modes.",
+      "customization": "Existing primitive reused beyond chart tabs; flat editorial study-tab rule, compact chart segmentation, tokenized focus. Motion moves active panels without delaying tab selection or stealing tab focus.",
+      "adoption": "Existing equivalent extended",
+      "license": "MIT; shadcn"
+    },
+    {
+      "component": "shadcn Dialog",
+      "sourceUrl": "https://ui.shadcn.com/docs/components/radix/dialog",
+      "implementationFile": "ui/concept/components/ui/dialog.tsx; ui/concept/UI.tsx",
+      "screen": "Evidence notes and investigation source notes, Research.tsx and Workflows.tsx",
+      "behavior": "Accessible title/description, modal focus trap, Escape dismissal, background scroll prevention and exact source-trigger focus restoration. Notes and limitations agree with exported records.",
+      "customization": "Existing Radix Modal equivalent retained. Themed reading sheet, DM Sans Medium title, tokenized scrim, visible limitation block, bounded viewport scrolling.",
+      "adoption": "Existing equivalent retained",
+      "license": "MIT; shadcn"
+    },
+    {
+      "component": "Motion Primitives Disclosure",
+      "sourceUrl": "https://motion-primitives.com/docs/disclosure",
+      "sourceCodeUrl": "https://github.com/ibelick/motion-primitives/blob/main/components/core/disclosure.tsx",
+      "implementationFile": "ui/concept/components/motion-primitives/disclosure.tsx",
+      "screen": "Inline evidence summaries, validation explanations, library column settings and landing evidence preview, Research.tsx and App.tsx",
+      "behavior": "Native button with linked aria-expanded/controls and region; inline reveal, inert collapsed content. Source inspection actions appear only when expanded. Source limitations remain visible outside disclosure.",
+      "customization": "Existing reduced-motion-aware adaptation reused. One 200ms expansion, no persistent fading of explanatory text, flat rows rather than nested cards.",
+      "adoption": "Existing equivalent expanded across progressive disclosure",
+      "license": "MIT; Copyright (c) 2024 ibelick"
+    },
+    {
+      "component": "Motion",
+      "sourceUrl": "https://motion.dev/docs/react",
+      "implementationFile": "ui/concept/main.tsx; ui/concept/App.tsx; ui/concept/Workflows.tsx; ui/concept/Research.tsx; ui/concept/Chart.tsx",
+      "screen": "Route, analytical tab, chart-series and simulated stage transitions",
+      "behavior": "Existing MotionConfig reducedMotion=user, route entrance, active-view position transition, chart-series transition, meaningful stage-symbol changes and candidate positioning.",
+      "customization": "Short 180–300ms bounded transitions; no background mathematical loops. Actual text remains readable, reduced motion removes nonessential transitions.",
+      "adoption": "Existing dependency retained",
+      "license": "MIT"
+    },
+    {
+      "component": "Tailark Dusk Hero Section Nine (Radix)",
+      "sourceUrl": "https://github.com/tailark/blocks/blob/main/registry/bases/radix/dusk/blocks/hero-section/nine/hero-section.tsx",
+      "implementationFile": "ui/concept/App.tsx (Discover); ui/concept/styles.css",
+      "screen": "Landing (#/), hero and research landscape",
+      "behavior": "Product-led hero structure: editorial proposition and real investigation action above full-width interactive research material. Coordinate selection updates the selected study, metrics, curve and study link together.",
+      "customization": "Composition adaptation, not a pasted template. Asymmetric DM Sans headline/Inter copy, compact laptop spacing, white/Forest instrument surface matched to current appearance. Real RiskMap and Chart replace stock imagery and product screenshots; Next Image/Link, logo cloud, gradients and oversized rounded wrappers omitted.",
+      "adoption": "New starting composition reworked into existing landing",
+      "license": "MIT; Copyright (c) 2025 Irung"
+    },
+    {
+      "component": "Tailark Dusk Features One (Radix)",
+      "sourceUrl": "https://github.com/tailark/blocks/blob/main/registry/bases/radix/dusk/blocks/features/one.tsx",
+      "implementationFile": "ui/concept/App.tsx (Discover); ui/concept/styles.css",
+      "screen": "Landing, A strategy is an argument feature section",
+      "behavior": "Narrow editorial argument beside wide inspectable product record. Selected hypothesis and measured metrics stay linked; expandable fictional risk note and visible limitation lead to that study's evidence.",
+      "customization": "Reuses upstream narrow/wide feature composition, not its CRM copy or decorative panels. Removes generic four-icon feature row, nested cards and gradients. Replaces mock graphics with actual selected-study data and existing Disclosure.",
+      "adoption": "New starting composition adapted",
+      "license": "MIT; Copyright (c) 2025 Irung"
+    },
+    {
+      "component": "Tailark Dusk Call to Action One (Radix)",
+      "sourceUrl": "https://github.com/tailark/blocks/blob/main/registry/bases/radix/dusk/blocks/call-to-action/one.tsx",
+      "implementationFile": "ui/concept/App.tsx (Discover); ui/concept/styles.css",
+      "screen": "Landing, closing action",
+      "behavior": "What would change your mind? closes the research story and links to the real hypothesis composer.",
+      "customization": "One primary action instead of two competing buttons; original editorial wording, DM Sans typography, open space and explicit fictional/no-live-service disclosure. No new marketing claims or fake testimonials.",
+      "adoption": "New starting composition adapted",
+      "license": "MIT; Copyright (c) 2025 Irung"
+    },
+    {
+      "component": "Magic UI BlurFade (inherited)",
+      "sourceUrl": "https://magicui.design/docs/components/blur-fade",
+      "implementationFile": "ui/concept/components/magicui/blur-fade.tsx",
+      "screen": "Landing headline and product landscape, App.tsx",
+      "behavior": "Two bounded entrance reveals, disabled under reduced motion.",
+      "customization": "Existing v2 equivalent retained rather than adding another entrance library. Blur remains deliberately omitted. This is not the optional 21st.dev grid candidate.",
+      "adoption": "Existing equivalent retained",
+      "license": "MIT; Magic UI"
+    }
+  ],
+  "signatureEvaluation": {
+    "component": "Animated Grid Pattern",
+    "author": "Dillion Verma / Magic UI",
+    "sourceUrl": "https://21st.dev/@dillionverma/components/animated-grid-pattern",
+    "sourceCodeUrl": "https://github.com/magicuidesign/magicui/blob/main/apps/www/registry/magicui/animated-grid-pattern.tsx",
+    "decision": "Not adopted",
+    "reason": "Inspected source uses random square positions, ResizeObserver and repeated opacity cycles. Those squares do not encode any model observations and would compete with the real coordinate selection. Custom RiskMap crosshairs already provide a meaningful mathematical signature without another component.",
+    "implementationFile": null
+  },
+  "customAnalyticsRetained": [
+    {
+      "implementationFile": "ui/concept/Chart.tsx",
+      "behavior": "Custom growth/drawdown SVG; common scale across plotted studies; date-preserving window rebasing, benchmark, pointer inspection and labeled keyboard slider. Pointer hover no longer erases keyboard inspection. Exported observations use the same model.",
+      "limitation": "Small library sparklines are independently scaled; use comparison view for a common scale. Monthly fictional values do not represent intramonth risk."
+    },
+    {
+      "implementationFile": "ui/concept/RiskMap.tsx",
+      "behavior": "Custom model-derived return/volatility coordinates, selected guide lines, roving focus, arrows/Home/End selection, text-equivalent metrics and shared landing chart selection."
+    }
+  ],
+  "verification": {
+    "model": "cd ui && node --test test/observatory.test.js",
+    "types": "cd ui && npm run concept:check",
+    "lint": "cd ui && npm run lint",
+    "build": "cd ui && npm run concept:build",
+    "browser": "cd ui && playwright-cli -s=observatory run-code --filename=concept/browser-check.js",
+    "components": "cd ui && playwright-cli -s=observatory run-code --filename=concept/component-check.js",
+    "identity": "cd ui && playwright-cli -s=observatory run-code --filename=concept/identity-check.js",
+    "evidenceDirectory": "/tmp/archimedes-fulcro",
+    "limits": "Bounded Chromium desktop/mobile/text-enlargement checks, not screen-reader certification, cross-engine validation or investment proof. No production source changes or live financial actions."
+  }
+}

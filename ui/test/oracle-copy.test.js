@@ -25,7 +25,10 @@ function repoFile(rel) {
 }
 
 const explore = readFileSync(repoFile("src/components/Explore.jsx"), "utf8");
-const assetModal = readFileSync(repoFile("src/components/AssetModal.jsx"), "utf8");
+const assetModal = readFileSync(
+	repoFile("src/components/AssetModal.jsx"),
+	"utf8",
+);
 
 //: `(name, regex, canonical_example)` — the example is the exact pre-#1371
 //: literal from Explore.jsx; test_every_pattern_rejects_its_canonical_example
@@ -68,7 +71,7 @@ test("Explore.jsx no longer implies oracle-primary pricing (#1371)", () => {
 test("Explore.jsx derives its oracle-coverage count from price_source, not a literal", () => {
 	assert.match(
 		explore,
-		/assets\.filter\(a => a\.price_source === 'oracle'\)\.length/,
+		/assets\.filter\(\s*\(?a\)?\s*=>\s*a\.price_source === ['"]oracle['"]\s*,?\s*\)\.length/,
 		"expected an oracleBackedCount derived from the served assets' price_source " +
 			"(never a hard-coded '2 of 281' literal, so the copy tracks reality if the push set changes)",
 	);
@@ -92,5 +95,8 @@ test("AssetModal.jsx only renders the oracle address when the card is actually o
 test("AssetModal.jsx no longer renders the oracle address off presence alone", () => {
 	// The exact pre-#1371 defect site, literally: rendering solely on
 	// oracle_address truthiness with no price_source check.
-	assert.doesNotMatch(assetModal, /\{asset\.oracle_address && \(\s*\n\s*<div>\s*\n\s*<div className="caption"/);
+	assert.doesNotMatch(
+		assetModal,
+		/\{asset\.oracle_address && \(\s*\n\s*<div>\s*\n\s*<div className="caption"/,
+	);
 });
