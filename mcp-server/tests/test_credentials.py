@@ -86,8 +86,20 @@ def test_api_url_falls_back_to_the_cached_session_host(monkeypatch, cached_sessi
 
 
 def test_api_url_default_when_nothing_is_configured(monkeypatch):
+    """No env var and no cached session: the local docker compose stack, the same default
+    the CLI uses. Until 2026-11-01 this was the hosted site."""
     monkeypatch.delenv("ARCHIMEDES_API_URL", raising=False)
-    assert resolve_api_url() == "https://archimedes-arc.com"
+    assert resolve_api_url() == "http://localhost:8080"
+
+
+def test_default_api_url_is_the_clis_default():
+    """One default for both clients. A session ``archimedes login`` caches against the CLI's
+    default and an MCP call made with no session must reach the same server."""
+    from archimedes_cli.cli import DEFAULT_API_URL as CLI_DEFAULT_API_URL
+    from archimedes_mcp.credentials import DEFAULT_API_URL
+
+    assert DEFAULT_API_URL == CLI_DEFAULT_API_URL
+    assert "archimedes-arc.com" not in DEFAULT_API_URL
 
 
 # ── the wire ────────────────────────────────────────────────────────
@@ -120,7 +132,7 @@ def test_session_call_sends_a_cookie_and_no_authorization_header(mock_api, cache
 def test_session_call_against_a_production_style_cache_sends_the_secure_cookie(mock_api, cached_secure_session):
     """Wire-level version of the credential-resolution test above: a call made with a
     production-cached credential must put ``__Secure-better-auth.session_token`` on the
-    request, not the bare name — this is what actually reaches ``archimedes-arc.com``."""
+    request, not the bare name — this is what an HTTPS deployment actually receives."""
     request = _capture(mock_api, resolve_credential())
     assert f"{SECURE_SESSION_COOKIE_NAME}=" in request.headers["Cookie"]
     assert "authorization" not in {k.lower() for k in request.headers}

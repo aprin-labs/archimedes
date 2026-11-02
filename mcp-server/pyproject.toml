@@ -49,7 +49,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://archimedes-arc.com"
+Homepage = "https://github.com/aprin-labs/archimedes"
 Repository = "https://github.com/aprin-labs/archimedes"
 Issues = "https://github.com/aprin-labs/archimedes/issues"
 

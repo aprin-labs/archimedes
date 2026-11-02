@@ -32,14 +32,15 @@ SERVER_NAME = "archimedes"
 SERVER_INSTRUCTIONS = """\
 Archimedes turns quantitative-finance research literature into rigor-gated strategies.
 
-This server is a THIN CLIENT over the public HTTP API at https://archimedes-arc.com. It
-holds no business logic and has no database, no Redis, and no private key. It can do
-exactly what an unprivileged HTTP caller can do and nothing more.
+This server is a THIN CLIENT over the Archimedes HTTP API at ARCHIMEDES_API_URL, which
+defaults to http://localhost:8080 (the local docker compose stack). It holds no business
+logic and has no database, no Redis, and no private key. It can do exactly what an
+unprivileged HTTP caller can do and nothing more.
 
-Read `archimedes_quote` before `archimedes_generate_start`. Generation is metered: on
-production it charges real testnet USDC per run, and the quote is the ONLY authority on
-whether the host you are calling charges and how much — the source defaults disagree with
-production on purpose.
+Read `archimedes_quote` before `archimedes_generate_start`. Generation can be metered: a
+host whose operator turned the paywall on charges testnet USDC per run, and the quote is
+the ONLY authority on whether the host you are calling charges and how much. The source
+defaults leave the paywall off; a deployment can set it either way.
 
 Every tool returns a JSON object whose first field is `ok`. Read `ok` before reading
 anything else. On `ok: false` the object carries `error` (a stable machine-readable code),
@@ -80,9 +81,9 @@ TOOLS: tuple[dict, ...] = (
             "Price a strategy generation on THIS host, before holding any credential. "
             "Free, public, and the only authority on whether generation costs money: it "
             "returns payment_required, price, asset, chain, recipient and dry_run as the "
-            "deployment actually has them. The code defaults are the opposite of what "
-            "production serves (defaults: paywall off, dry-run on; production today: "
-            "paywall on, dry_run false, $2.00 USDC per run), so reading the source or "
+            "deployment actually has them. A deployment can differ from the code defaults "
+            "(paywall off, dry-run on; an operator who turns the paywall on charges $2.00 "
+            "testnet USDC per run unless they set another price), so reading the source or "
             "carrying an answer over from another host gets the wrong answer. Call this "
             "first, every time, on every host."
         ),
@@ -142,7 +143,7 @@ TOOLS: tuple[dict, ...] = (
         "description": (
             "THIS TOOL CAN SPEND MONEY. Submit a research brief and start a strategy "
             "generation. On a host whose archimedes_quote says payment_required: true "
-            "(production today, $2.00 USDC, dry_run false, settles for real) this call is "
+            "(and, when dry_run is false, settles for real) this call is "
             "refused until a wallet is linked and an x402 payment is signed — you get "
             "409 wallet_link_required, then 402 with the machine-readable requirements. "
             "This server does NOT sign payments and holds no wallet key: a 402 is returned "

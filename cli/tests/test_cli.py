@@ -116,7 +116,7 @@ def _forbid_network(monkeypatch):
 
 def _seed_session(cookie_value: str = "opaque-token", email: str = "dan@example.com") -> Path:
     return save_session(
-        api_url="https://archimedes-arc.com",
+        api_url="http://localhost:8080",
         cookies={SESSION_COOKIE_NAME: cookie_value},
         email=email,
     )
@@ -345,7 +345,7 @@ class TestLogin:
         """The P0 this fix closes: production sets `__Secure-better-auth.session_token`
         (Better Auth's `useSecureCookies: production`, `auth/auth.js`), never the bare
         name. A client that only recognized the bare name would report
-        `no_session_cookie` on every real login against archimedes-arc.com."""
+        `no_session_cookie` on every real login against an HTTPS deployment."""
         monkeypatch.setenv("ARCHIMEDES_EMAIL", "dan@example.com")
         monkeypatch.setenv("ARCHIMEDES_PASSWORD", "correct horse battery staple")
         _install_transport(
@@ -571,7 +571,7 @@ class TestMeter:
         or rewrite the bare name, because rewriting it is exactly what would make prod
         reject the request."""
         save_session(
-            api_url="https://archimedes-arc.com",
+            api_url="https://archimedes.invalid",
             cookies={SECURE_SESSION_COOKIE_NAME: "tok-secure-xyz"},
             email="dan@example.com",
         )

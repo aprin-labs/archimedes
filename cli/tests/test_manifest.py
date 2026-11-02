@@ -13,7 +13,7 @@ import click
 from click.testing import CliRunner
 
 from archimedes_cli import exits
-from archimedes_cli.cli import main
+from archimedes_cli.cli import DEFAULT_API_URL, main
 from archimedes_cli.manifest import MANIFEST
 
 
@@ -81,3 +81,21 @@ def test_manifest_version_matches_package():
     from archimedes_cli import __version__
 
     assert MANIFEST["version"] == __version__
+
+
+def test_manifest_api_url_defaults_name_the_real_default():
+    """The manifest writes the default URL out by hand on every command that takes
+    --api-url. An agent reads it instead of --help, so it must name the value the CLI
+    actually falls back to — the local stack since 2026-11-01, not the hosted site it named
+    before."""
+    checked = 0
+    for name, spec in MANIFEST["commands"].items():
+        api_url = (spec.get("inputs") or {}).get("--api-url")
+        if api_url is None:
+            continue
+        assert api_url["env"] == "ARCHIMEDES_API_URL", name
+        assert api_url["default"].endswith(DEFAULT_API_URL), (name, api_url["default"])
+        assert "archimedes-arc.com" not in api_url["default"], name
+        checked += 1
+    # login, meter, verify and generate take --api-url; a vacuous loop would pass.
+    assert checked == 4

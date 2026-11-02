@@ -123,6 +123,16 @@ _SYMBOL_PINS: tuple[tuple[str, str], ...] = (
     # retraction is guarded by a word-level ban over four named files; PAPER_SURFACES is
     # that list. Renaming or deleting it leaves the row asserting a guard that is gone.
     ("ui/test/no-mainnet-track-record.test.js", "const PAPER_SURFACES"),
+    # Local-first copy pass (2026-11-01). The rewritten payment rows state the template's
+    # default, and the Security "Charges" row explains why the page claims no dry-run
+    # default: the template's empty GENERATION_PAYMENTS_DRY_RUN reads as not-dry-run. The
+    # client-default rows name the localhost default and the port it comes from.
+    (".env.example", "\nGENERATION_PAYMENT_REQUIRED=false\n"),
+    (".env.example", "\nGENERATION_PAYMENTS_DRY_RUN=\n"),
+    (".env.example", "\nARCHIMEDES_HTTP_PORT=8080\n"),
+    ("docker-compose.yml", '"${ARCHIMEDES_HTTP_PORT:-80}:8080"'),
+    ("cli/src/archimedes_cli/cli.py", 'DEFAULT_API_URL = "http://localhost:8080"'),
+    ("mcp-server/src/archimedes_mcp/credentials.py", 'DEFAULT_API_URL = "http://localhost:8080"'),
 )
 
 # The ledger records that board-level FDR MOVED to the leaderboard (#1564/#1580), so the

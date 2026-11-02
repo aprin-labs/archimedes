@@ -40,9 +40,16 @@
 // Scope note: `Security.jsx` is one of the three surfaces
 // `roadmap-copy.test.js` scans for the retracted execution-claim vocabulary,
 // comments included and with no carve-outs. That is why the page's payment
-// wording describes the recipient mechanically ("a platform-operated wallet
-// Archimedes signs for through its payment provider") rather than reaching for
-// the shorter word. This test file is not in that scan.
+// wording names the recipient mechanically ("the recipient address they set")
+// rather than reaching for the shorter word. This test file is not in that
+// scan.
+//
+// Local-first (2026-11-01): the hosted site is being shut down, and the page's payment
+// sentences described its deployment (infra/ecs.tf: paywall on, settling for
+// real). They now describe what the software does by default, which is the
+// opposite: .env.example sets GENERATION_PAYMENT_REQUIRED=false, and
+// generation_payment.payment_required() is on only for the literal "true".
+// The hosted-deployment wording moved to RETRACTED_CLAIMS below.
 //
 // Hermetic: reads committed files off disk. No network, no DOM, no `.env`.
 
@@ -78,8 +85,16 @@ const LIVE_CLAIMS = [
 		"nginx.conf carve-outs + ANON_APP_PAGES in ui/src/routes.js",
 	],
 	[
-		"Generation is a paid call, bound to the wallet you proved.",
+		"When the paywall is on, generation is a paid call, bound to the wallet you proved.",
 		"services/generation_payment.py enforce_generation_payment",
+	],
+	[
+		"The paywall is off by default.",
+		".env.example GENERATION_PAYMENT_REQUIRED=false; generation_payment.py payment_required",
+	],
+	[
+		"Generation (paywall off by default)",
+		"hero status list; replaces 'Generation (quoted live)'",
 	],
 	[
 		"published anonymously at GET /api/generate/quote",
@@ -118,12 +133,16 @@ const LIVE_CLAIMS = [
 		"README.md 'Not every reasoning trace is anchored on-chain'",
 	],
 	[
-		"the generation paywall is on and not in dry-run",
-		"infra/ecs.tf GENERATION_PAYMENT_REQUIRED / GENERATION_PAYMENTS_DRY_RUN",
+		"the generation paywall is off by default, so by default generation moves no USDC.",
+		".env.example GENERATION_PAYMENT_REQUIRED=false; generation_payment.py payment_required",
+	],
+	[
+		"to the recipient address they set",
+		".env.example GENERATION_PAYMENT_RECIPIENT; generation_payment.py _recipient",
 	],
 	[
 		"It is a fee, not a balance held for you, and there is nothing there to withdraw.",
-		"infra/ecs.tf GENERATION_PAYMENT_RECIPIENT + REVENUE_WALLET_ID",
+		"the recipient is the operator's GENERATION_PAYMENT_RECIPIENT, not an account of yours",
 	],
 	["Testnet USDC only", "hero status list — replaces 'No real funds'"],
 ];
@@ -162,6 +181,39 @@ const RETRACTED_CLAIMS = [
 		"what_runs_omits_payment",
 		/Generation,\s+the\s+rigor\s+gate,\s+paper\s+trading,\s+and\s+trace\s+anchoring/,
 		"capital today. Generation, the rigor gate, paper trading, and trace anchoring are what run",
+	],
+	// The hosted deployment's payment wording, retracted 2026-11-01 with the
+	// move to local-first: a local install's paywall is off by default, so each
+	// of these is false for the software as shipped.
+	[
+		"hosted_paid_call_on_this_testnet",
+		phrase("Generation is a paid call on this testnet"),
+		"service credentials its own agents run under. Generation is a paid call on this testnet, and that boundary is described here too.",
+	],
+	[
+		"hosted_unconditional_paid_call_heading",
+		/<h3>\s*Generation\s+is\s+a\s+paid\s+call/,
+		"<h3>\n\t\t\t\t\t\t\t\t\tGeneration is a paid call, bound to the wallet you proved.\n\t\t\t\t\t\t\t\t</h3>",
+	],
+	[
+		"hosted_quoted_live_paid_surface",
+		phrase("<strong>Generation (quoted live)</strong>"),
+		"<strong>Generation (quoted live)</strong>",
+	],
+	[
+		"hosted_paid_generation_runs",
+		/Paid\s+generation,\s+the\s+rigor\s+gate/,
+		"capital today. Paid generation, the rigor gate, paper trading, and the agent&apos;s trace anchoring are what run",
+	],
+	[
+		"hosted_live_charge",
+		phrase("the generation paywall is on and not in dry-run"),
+		"<strong>Live charge:</strong> the generation paywall is on and not in dry-run, so a signed payment settles testnet USDC for real.",
+	],
+	[
+		"hosted_platform_operated_recipient",
+		phrase("a platform-operated wallet Archimedes signs for"),
+		"A settled fee lands in a platform-operated wallet Archimedes signs for through its payment provider.",
 	],
 ];
 
@@ -228,15 +280,23 @@ const CLAIM_BINDINGS = [
 		"backend/archimedes/api/generate_routes.py",
 		"return generation_payment.quote()",
 	],
+	//: Local-first (2026-11-01): the page now states the software's default,
+	//: so the pins are on the template a local install copies and on the
+	//: parse that reads it, not on the hosted deployment's infra/ecs.tf.
 	[
-		"the generation paywall is on and not in dry-run",
-		"infra/ecs.tf",
-		'{ name = "GENERATION_PAYMENT_REQUIRED", value = "true" }',
+		"the generation paywall is off by default",
+		".env.example",
+		"\nGENERATION_PAYMENT_REQUIRED=false\n",
 	],
 	[
-		"the generation paywall is on and not in dry-run",
-		"infra/ecs.tf",
-		'{ name = "GENERATION_PAYMENTS_DRY_RUN", value = "false" }',
+		"The paywall is off by default.",
+		"backend/archimedes/services/generation_payment.py",
+		'return os.getenv("GENERATION_PAYMENT_REQUIRED") == "true"',
+	],
+	[
+		"to the recipient address they set",
+		"backend/archimedes/services/generation_payment.py",
+		'os.getenv("GENERATION_PAYMENT_RECIPIENT", "")',
 	],
 
 	// Edge

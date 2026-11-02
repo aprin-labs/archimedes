@@ -51,10 +51,13 @@
 //   - arXiv: only the ingest scripts call it (scripts/bulk_ingest_arxiv.py,
 //     archimedes.scripts.hydrate_corpus); nothing in the running app calls
 //     corpus_service.intake_from_arxiv or StrategyProvider.extract_from_paper.
-//   - The CLI and the MCP server default to https://archimedes-arc.com
-//     (cli/src/archimedes_cli/cli.py DEFAULT_API_URL,
-//     mcp-server/src/archimedes_mcp/credentials.py DEFAULT_API_URL). When
-//     those defaults change, delete the sentence that says so.
+//   - The CLI and the MCP server default to the local stack,
+//     http://localhost:8080 (cli/src/archimedes_cli/cli.py DEFAULT_API_URL,
+//     mcp-server/src/archimedes_mcp/credentials.py DEFAULT_API_URL), so they
+//     contact no outside service and the page names no exception for them.
+//     The sentence that said they defaulted to the hosted address went with
+//     that default (2026-11-01); ui/test/policy-pages.test.js pins both
+//     localhost defaults and the sentence's absence.
 //   - No sentence here says what became of the former hosted service at
 //     archimedes-arc.com or its data. The owner chose (2026-11-01) not to
 //     wait on the teardown: add one only once the teardown has actually
@@ -187,10 +190,7 @@ export default function Privacy() {
 				</p>
 				<p>
 					The web app serves its own fonts and loads no third-party scripts,
-					fonts or analytics. One exception to these lists: the command-line
-					client and the MCP server still default to archimedes-arc.com. Point
-					them at your own instance with --api-url or the ARCHIMEDES_API_URL
-					environment variable.
+					fonts or analytics.
 				</p>
 			</section>
 

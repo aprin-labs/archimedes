@@ -466,11 +466,12 @@ export default function Layout({
 				    public shell carries; a policy reachable only from the logged-out
 				    site is not reachable by the people it actually governs. Plain
 				    <a> hrefs, not client-side nav: /privacy and /terms are public
-				    routes outside the app shell. */}
+				    routes outside the app shell. The /terms label matches the public
+				    footer's and the page's own title. */}
 				<footer className="app-footer">
 					<nav className="policy-links" aria-label="Policies">
 						<a href="/privacy">Privacy</a>
-						<a href="/terms">Terms</a>
+						<a href="/terms">License and terms</a>
 					</nav>
 				</footer>
 			</div>

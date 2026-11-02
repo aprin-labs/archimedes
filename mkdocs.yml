@@ -6,8 +6,9 @@
 # .github/workflows/docs-site.yml for the jobs: the build runs on every
 # docs-path push and PR, the publish runs on pushes to main.
 #
-# site_url is the canonical host and is not free to drift: ui/test/docs-link.test.js
-# asserts the product's Docs links point at the same host.
+# The UI no longer links here: the site is being shut down with the hosted
+# service (2026-11-01), and the product's Docs links point at the repo's docs/ folder on
+# GitHub. ui/test/docs-link.test.js asserts they do NOT point at site_url's host.
 #
 # ═══════════════════════════════════════════════════════════════════════════
 # THE NAV IS THE ALLOW-LIST. PUBLICATION IS DEFAULT-DENY (#1751).

@@ -44,7 +44,10 @@ from archimedes_cli.session import SESSION_COOKIE_NAME, load_session, pick_sessi
 
 API_KEY_ENV = "ARCHIMEDES_API_KEY"
 API_URL_ENV = "ARCHIMEDES_API_URL"
-DEFAULT_API_URL = "https://archimedes-arc.com"
+# The local docker compose stack, same default as the CLI (archimedes_cli.cli.DEFAULT_API_URL;
+# mcp-server/tests/test_credentials.py pins the two equal). Until 2026-11-01 this named the
+# hosted site, which the owner is shutting down as the project goes local-first.
+DEFAULT_API_URL = "http://localhost:8080"
 
 KIND_API_KEY = "api_key"
 KIND_SESSION_COOKIE = "session_cookie"

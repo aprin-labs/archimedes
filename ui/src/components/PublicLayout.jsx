@@ -33,13 +33,13 @@ export default function PublicLayout({ user, children }) {
 						<a href="/architecture" className="public-nav__link">
 							Architecture
 						</a>
-						{/* The documentation site, served from our own infra
-						    (docs-site/infra/main.tf, #1634). External host, so it
-						    opens in a new tab and carries rel="noreferrer" like the
-						    footer's off-site links. Guarded by
-						    ui/test/docs-link.test.js. */}
+						{/* The docs/ folder of the repository on GitHub. The docs
+						    site that used to serve it is being shut down with the
+						    hosted site (2026-11-01). External host, so it opens in a new tab and
+						    carries rel="noreferrer" like the footer's off-site
+						    links. Guarded by ui/test/docs-link.test.js. */}
 						<a
-							href="https://docs.archimedes-arc.com/"
+							href="https://github.com/aprin-labs/archimedes/tree/main/docs"
 							className="public-nav__link"
 							target="_blank"
 							rel="noreferrer"
@@ -103,13 +103,11 @@ function PublicFooter() {
 				</nav>
 				<nav aria-label="Resource links">
 					<strong>Resources</strong>
-					{/* docs.archimedes-arc.com — our own S3 + CloudFront, not GitHub
-					    Pages (#1634). The trailing slash is load-bearing: the docs
-					    site uses mkdocs directory URLs, and the CloudFront function
-					    in docs-site/infra/main.tf 301s the slashless form. Guarded by
-					    ui/test/docs-link.test.js. */}
+					{/* The repository's docs/ folder on GitHub, same target as the
+					    header's Docs link: the docs site is being shut down with the
+					    hosted site (2026-11-01). Guarded by ui/test/docs-link.test.js. */}
 					<a
-						href="https://docs.archimedes-arc.com/"
+						href="https://github.com/aprin-labs/archimedes/tree/main/docs"
 						target="_blank"
 						rel="noreferrer"
 					>
@@ -150,8 +148,8 @@ function PublicFooter() {
 			</div>
 			<div className="public-shell public-footer__base">
 				<span>
-					Research prototype. No mainnet money. Generation fee is real testnet
-					USDC.
+					Research prototype. No mainnet money. Generation is free unless the
+					operator turns on the testnet USDC paywall.
 				</span>
 				<span>Past performance does not guarantee future results.</span>
 			</div>
