@@ -96,9 +96,9 @@ for real); they now state the software's default (off). The Docs links point at 
 repository's `docs/` folder. The app-shell footer labels `/terms` "License and terms". The
 top of `README.md` is local-first. Every row whose sentence changed was rewritten, the new
 README rows were added, and every line citation into an edited file was re-pointed by
-content. The README says the hosted site "is being shut down", which is true today (deploys are
-off; the teardown is in progress). It does not say the site has closed or what became of
-its data. No other row was re-measured.
+content. The README said the hosted site "is being shut down" until the teardown finished;
+on 2026-11-02 it moved to "has closed" (row below). It does not say what became of the
+site's data. No other row was re-measured.
 
 ## How to read a row
 
@@ -202,7 +202,7 @@ unset, so the boundary holds under both answers.
 
 | Claim | Status | What backs it |
 |---|---|---|
-| "Archimedes is open-source software you run yourself, against Arc testnet. The hosted site at archimedes-arc.com is being shut down, so the way to use it is to run your own instance." | `TRUE` | `README.md:18`, added in the 2026-11-01 local-first copy pass. The repo is released under the Unlicense, and `docker-compose.yml` runs the whole stack. The shutdown is the owner's 2026-11-01 decision and is under way: the four AWS deploy workflows are disabled and the deploy variables are off (checked 2026-11-01), while an anonymous probe the same day found the site still serving. When the teardown has taken it down, this sentence can say "has closed", after a re-probe. The README does not say what became of the site's data (see "Not a row" under the policy pages). |
+| "Archimedes is open-source software you run yourself, against Arc testnet. The hosted site at archimedes-arc.com has closed, so the way to use it is to run your own instance." | `TRUE` | `README.md:18`. The repo is released under the Unlicense, and `docker-compose.yml` runs the whole stack. The closure: the teardown destroyed both Terraform stacks (the app and the docs site) and deleted the GitHub OIDC deploy role, and a probe on 2026-11-02 05:01Z found no DNS records for `archimedes-arc.com`, `www.archimedes-arc.com` or `docs.archimedes-arc.com`, with HTTPS to each failing. Until then (2026-11-01) the sentence read "is being shut down", because a same-day probe found the site still serving. The README does not say what became of the site's data (see "Not a row" under the policy pages). |
 | "Run it locally": `cp .env.example .env`, generate a `BETTER_AUTH_SECRET`, `docker compose up -d --build`, then open http://localhost:8080 | `TRUE` | Moved unchanged from the Quickstart to the top of the file in the 2026-11-01 local-first copy pass (`README.md:21`). The template carries `BETTER_AUTH_SECRET` and `ARCHIMEDES_HTTP_PORT=8080`, and `docker-compose.yml:170` publishes nginx on `${ARCHIMEDES_HTTP_PORT:-80}:8080`. |
 | Vault execution — "**Vault execution** and **monitor** are roadmap … When it ships, a strategy that survives the gate *will be* deployable into a non-custodial vault on Arc … Today it will not." | `CHANGED` | `README.md:51`, rewritten to the future tense in the 2026-08-31 README refresh, which is what #1469's scrub had done for Landing, `/security`, and `ui/index.html` without reaching the README. The facts behind the retraction are unchanged: the route exists (`backend/archimedes/api/vaults_routes.py:351`) and since #1927 answers 404 unless `FEATURE_ROADMAP_SURFACES` is `"true"` (`:362`), the journey is gated off every shipped surface (`ui/src/featureFlags.js:57`), and zero user vaults have ever been deployed. `README.md:220` repeats the limitation in the limitations list. The pin that held this row honest was removed from `backend/tests/test_claims_ledger.py` in the same commit, per that test's own instruction. |
 | "How many strategies in the curated library currently pass is **unestablished** — this file will never quote a count" | `TRUE` | `README.md:63`. Matches `CLAUDE.md` § corollaries. No count appears anywhere in the file. |
