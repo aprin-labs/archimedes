@@ -186,7 +186,7 @@ const FAQS = [
 	{
 		question: "Is this running with real money?",
 		answer:
-			"No mainnet money. Archimedes runs on Arc public testnet. Generation settles real testnet USDC. Read GET /api/generate/quote (prod answers dry_run: false). Faucet USDC is not mainnet cash. It is a research prototype, not a production investment product.",
+			"No mainnet money. Archimedes runs on Arc public testnet. Generation fee is real testnet USDC. Read GET /api/generate/quote (prod answers dry_run: false). Faucet USDC is not mainnet cash. It is a research prototype, not a production investment product.",
 	},
 ];
 
@@ -443,6 +443,9 @@ export default function Landing() {
 			</section>
 
 			<PublicCallToAction />
+			{/* Footer renders at the shell level (PublicLayout.jsx) so every
+			    public page (Landing, Architecture, Security, Privacy, Terms,
+			    not-found) carries it and its policy links. */}
 		</main>
 	);
 }

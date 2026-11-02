@@ -1,8 +1,19 @@
 import { ROADMAP_PAGES, ROADMAP_SURFACES_ENABLED } from './featureFlags.js'
 
+// Public (anonymous-accessible) pages. These need no nginx carve-out: only
+// `^~ /app` is auth_request-gated in nginx/nginx.conf — everything else falls
+// through to `location /`, which serves index.html to anyone. Adding a path
+// here is therefore the whole job, exactly as it was for /architecture.
+//
+// /privacy and /terms MUST stay in this map and MUST stay reachable without a
+// session: the privacy URL is submitted to Google's OAuth consent screen, and
+// Google fetches it unauthenticated. A policy page behind a login is the same
+// as no policy page.
 const PUBLIC_PATHS = {
   '/': 'landing',
   '/architecture': 'architecture',
+  '/privacy': 'privacy',
+  '/terms': 'terms',
   '/security': 'security',
 }
 
@@ -186,6 +197,8 @@ export function resolveRoute(pathname = '/', search = '', features = { quant: tr
 export function pageToPath(page, options = {}) {
   if (page === 'landing') return '/'
   if (page === 'architecture') return '/architecture'
+  if (page === 'privacy') return '/privacy'
+  if (page === 'terms') return '/terms'
   if (page === 'security') return '/security'
   if (page === 'vault-detail' && options.vaultAddress) return `/app/portfolio/vaults/${options.vaultAddress}`
   if (page === 'strategy' && options.strategyId) return `/app/strategy/${encodeURIComponent(options.strategyId)}`

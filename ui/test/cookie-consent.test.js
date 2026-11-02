@@ -172,7 +172,10 @@ test("direction B: every key in the map really is in the code it names", () => {
 // issue's own table needed correcting against a fresh grep.
 const SPEC_KEYS = [
 	["better-auth.session_token", "cookie", "necessary"],
-	["archimedes_session", "cookie", "necessary"],
+	// Was "necessary". The SIWE router that sets it is mounted only under
+	// TESTING (backend/archimedes/main.py), so the live site never sets it;
+	// the 2026-10-01 policy audit (#1432) moved it to legacy.
+	["archimedes_session", "cookie", "legacy"],
 	["archimedes_vid", "cookie", "analytics"],
 	["archimedes_wallet", "localStorage", "necessary"],
 	["archimedes_wallet_names", "localStorage", "functional"],
@@ -204,6 +207,47 @@ test("every key the issue enumerated is in the map, with its category", () => {
 		assert.ok(entry.reveals?.length > 20, `${name} needs a real 'reveals'`);
 		assert.ok(entry.onReject?.length > 10, `${name} needs a stated fallback`);
 	}
+});
+
+// The Privacy page (#1432) sends readers to this inventory "with what each one
+// reveals", so three entries that contradicted it were corrected against main
+// 3591cd79 plus the live stack:
+//   - archimedes_vid said SIWE verify links it to the wallet in identity_events.
+//     That route is test-only and /api/auth/ goes to Better Auth, so no live
+//     path links the id to an account or wallet. The final pass (#1926 ran in
+//     prod and nulled the 20 SIWE-window rows) also dropped the "one past
+//     exception, from summer 2026" pointer, which the Privacy page no longer
+//     carries, and the funnel steps that cannot fire live: "connecting a
+//     wallet" is recorded only by the test-only SIWE router, and "deploying"
+//     only past the #1927 roadmap gate (FEATURE_ROADMAP_SURFACES, off).
+//   - archimedes_session was listed as a live necessary cookie. Nothing live
+//     sets it; the guard below also pins the TESTING-only mount, so mounting
+//     the SIWE router again fails here and forces the entry to be revisited.
+//   - better-auth.state said 600s; better-auth@1.6.25 (auth/package.json) sets
+//     the database-strategy state cookie with maxAge 300 (dist/state.mjs).
+test("the inventory agrees with the privacy page on the cookies the audit caught", () => {
+	const vid = lookupEntry("archimedes_vid");
+	assert.doesNotMatch(vid.reveals, /identity_events|SIWE verify/, "the live site does not link the vid to a wallet");
+	assert.match(vid.reveals, /Nothing on the live site stores it with your account or your wallet/);
+	assert.doesNotMatch(vid.reveals, /past exception|summer 2026/, "the Privacy page describes no past exception now");
+	assert.match(vid.reveals, /marker that expires 180 days after it is written/, "the #1908 first-seen marker");
+	assert.doesNotMatch(vid.purpose, /deploying|connecting a wallet/, "neither step can be recorded on the live site");
+	assert.match(vid.purpose, /are asked to connect a wallet/, "wallet_gate_shown is the live wallet step");
+	assert.match(vid.onReject, /first API response/, "the HTML response sets no cookie");
+
+	const siwe = lookupEntry("archimedes_session");
+	assert.equal(siwe.category, "legacy", "no live path sets archimedes_session");
+	assert.match(siwe.purpose, /mounted only in test builds/);
+	const main = readFileSync(join(REPO, "backend/archimedes/main.py"), "utf8");
+	assert.match(
+		main,
+		/if os\.getenv\("TESTING"\):\s+from archimedes\.api\.auth_siwe import auth_router\s+app\.include_router\(auth_router\)/,
+		"the SIWE router must stay test-only while archimedes_session is listed as legacy",
+	);
+
+	const state = lookupEntry("better-auth.state");
+	assert.match(state.purpose, /\(300s\)/, "the library's state cookie lives 300 seconds");
+	assert.doesNotMatch(state.purpose, /600s/);
 });
 
 test("the consent record itself is disclosed and exempt, not hidden", () => {

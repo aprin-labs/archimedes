@@ -4,8 +4,9 @@
 // The docs site is built by mkdocs and served from our own S3 + CloudFront
 // (docs-site/infra/main.tf). A site nobody can navigate to is the same as an
 // unpublished one, so the two public surfaces that carry navigation — the
-// shared footer's "Resources" nav and the public header nav — must each link
-// to it.
+// shared footer's "Resources" nav and the public header nav, both in
+// PublicLayout.jsx now that the landing page carries no footer of its own
+// (see policy-pages.test.js and public-visuals.test.js) — must each link to it.
 //
 // Three things are asserted, and each one has failed somewhere in this repo
 // before:

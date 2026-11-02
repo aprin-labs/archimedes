@@ -537,6 +537,25 @@ export default function AuthPage({ mode, oauthError }) {
               </a>
             </p>
 
+            {/* The account and its data are created on this screen, and it
+                renders outside both shells, so neither footer's policy links
+                reach it. Above the OAuth buttons, which create accounts too,
+                and on /sign-in as well as /sign-up: "Continue with Google" or
+                "Continue with GitHub" from /sign-in creates an account for an
+                address that has none (auth/auth.js socialProviders sets no
+                disableSignUp / disableImplicitSignUp).
+                Reworded 2026-11-01 (#1432): there is no hosted service left to
+                agree to, and the 18-or-older rule went with it. The account is
+                written to the instance's own Postgres (auth/auth.js reads
+                DATABASE_URL). */}
+            <p className="caption mt-4">
+              Your account is stored in this instance&rsquo;s own database. The{' '}
+              <a className="text-[var(--accent)] underline" href="/privacy">Privacy notice</a> says
+              what the software keeps, and{' '}
+              <a className="text-[var(--accent)] underline" href="/terms">License and terms</a> covers
+              using it.
+            </p>
+
             {/* Hairline only, no "or continue with" label: each button already
                 says "Continue with …", and a label there would read as an
                 alternative to the create-account row directly above it. */}

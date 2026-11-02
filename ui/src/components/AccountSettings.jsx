@@ -886,7 +886,7 @@ export default function AccountSettings({ walletAddr, onDisconnect, linkError })
         <ul className="body mb-3 list-disc pl-5">
           {DELETION_ERASED.map((row) => <li key={row.table}>{row.label}</li>)}
         </ul>
-        <p className="caption">Kept, with your name taken off them — other accounts can reference these by id, so removing them would break someone else&rsquo;s data:</p>
+        <p className="caption">Kept, with your account id taken off them — they still hold your brief text, any strategy name you typed and, if a wallet was linked, its address. Other accounts can reference these by id, so removing them would break someone else&rsquo;s data:</p>
         <ul className="body mb-3 list-disc pl-5">
           {DELETION_DETACHED.map((row) => <li key={row.table}>{row.label}</li>)}
         </ul>
@@ -897,7 +897,14 @@ export default function AccountSettings({ walletAddr, onDisconnect, linkError })
         <p className="caption mb-3">
           Anything already published to a blockchain stays there — no deletion here
           can reach it. Server and load-balancer logs age out on their own schedule rather than being
-          pulled out per account.
+          pulled out per account. The reasoning record of each paper-trading decision, kept in this
+          instance&rsquo;s cache with your account id, is not removed either.
+        </p>
+        <p className="caption mb-3">
+          What this leaves stays in this instance&rsquo;s database and cache. Whoever runs the
+          instance can erase it there. The{' '}
+          <a className="text-[var(--accent)] underline" href="/privacy">Privacy page</a> lists what an
+          instance stores.
         </p>
 
         <form className="flex flex-col gap-2 max-w-[420px]" onSubmit={submitDeleteAccount}>

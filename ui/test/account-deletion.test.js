@@ -167,3 +167,23 @@ test("every deletion row carries a plain-language sentence, not a bare table nam
 		assert.doesNotMatch(row.label, /_/, `${row.table}'s description leaks a database identifier: ${row.label}`);
 	}
 });
+
+// ── The dialog's own sentences (#1432 local-first rewrite) ──────────────
+//
+// There is no hosted service and no privacy@ mailbox any more: what account
+// deletion leaves sits in the instance's own database and cache, and whoever
+// runs the instance erases it there. The dialog is the only text a
+// self-deleting user sees at the irreversible moment, so it must say that,
+// must name the cached reasoning records, and must not call the detached
+// rows anonymised: SET NULL clears owner_user_id only.
+const accountSettings = readFileSync(new URL("../src/components/AccountSettings.jsx", import.meta.url), "utf8");
+
+test("the deletion dialog points at the instance, names the cached records, and does not imply anonymised rows", () => {
+	assert.doesNotMatch(accountSettings, /privacy@archimedes-arc\.com/, "the hosted service's mailbox is gone");
+	assert.doesNotMatch(accountSettings, /\bour\s+cache\b/, "a local instance has no 'our'");
+	assert.match(accountSettings, /What\s+this\s+leaves\s+stays\s+in\s+this\s+instance&rsquo;s\s+database\s+and\s+cache\.\s+Whoever\s+runs\s+the\s+instance\s+can\s+erase\s+it\s+there\./);
+	assert.match(accountSettings, /<a[^>]*href="\/privacy"[^>]*>Privacy page<\/a>/);
+	assert.match(accountSettings, /The\s+reasoning\s+record\s+of\s+each\s+paper-trading\s+decision,\s+kept\s+in\s+this\s+instance&rsquo;s\s+cache/);
+	assert.doesNotMatch(accountSettings, /with\s+your\s+name\s+taken\s+off\s+them/, "detached rows still hold the brief, name and wallet");
+	assert.match(accountSettings, /they\s+still\s+hold\s+your\s+brief\s+text,\s+any\s+strategy\s+name\s+you\s+typed/);
+});

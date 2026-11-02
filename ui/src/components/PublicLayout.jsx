@@ -137,7 +137,15 @@ function PublicFooter() {
 					<a href="https://faucet.circle.com/" target="_blank" rel="noreferrer">
 						Arc faucet
 					</a>
-					<span>No privacy or terms page published</span>
+					{/* The policy pages (#1432) replace the line that said none was
+					    published. They get a named nav of their own, so this footer
+					    and the app footer both expose a "Policies" landmark
+					    (ui/test/policy-pages.test.js), while the links stay in this
+					    column of the three-column grid. */}
+					<nav aria-label="Policies">
+						<a href="/privacy">Privacy</a>
+						<a href="/terms">License and terms</a>
+					</nav>
 				</nav>
 			</div>
 			<div className="public-shell public-footer__base">
