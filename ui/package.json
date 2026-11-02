@@ -21,7 +21,7 @@
     "@circle-fin/modular-wallets-core": "^1.0.16",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
-    "motion": "13.2.0",
+    "motion": "14.8.0",
     "radix-ui": "1.6.7",
     "tailwind-merge": "3.6.0",
     "react": "^19.3.1",
