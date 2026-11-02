@@ -13,14 +13,13 @@ abort is not running the code, which is what made this switch load-bearing.
 (cloned last-good, name absent, tick started, /health 502 at 240s). Unset is
 still OFF and the code default is still ``"false"``.
 
-The DEPLOYED value is now ``"true"`` (#1778, 2026-09-01). #1632's found cause
-turned out to be elsewhere — concurrent ``/health`` corpus loads racing in
-session teardown, fixed by #1740 and caught with this flag off — so the tick's
-own frame is unproven rather than cleared, and what carries the risk is the
-#1728 child-interpreter boundary, not a fix. The deployed-config tests at the
-bottom of this file therefore assert the ARMED state and the written pull-back
-procedure, in the same spirit as before: the value cannot move without moving
-the prose that explains it.
+The hosted deployment ran it ``"true"`` from #1778 (2026-09-01) until the
+stack was torn down on 2026-11-01. #1632's found cause turned out to be
+elsewhere — concurrent ``/health`` corpus loads racing in session teardown,
+fixed by #1740 and caught with this flag off — so the tick's own frame is
+unproven rather than cleared, and what carries the risk is the #1728
+child-interpreter boundary, not a fix. A local install gets the code default
+(OFF) unless its operator sets the variable.
 
 The fleet-lock tests cover the other half of arming: more than one task ticks,
 so exactly one of them may do the work in any cycle.
@@ -489,87 +488,4 @@ class TestTheCycleNeverRunsDdl:
         main_py = Path(paper_trading.__file__).resolve().parents[1] / "main.py"
         assert "init_db()" in main_py.read_text(encoding="utf-8"), (
             "the web process no longer runs the boot schema patches at all"
-        )
-
-
-class TestSwitchIsArmedInTheDeployedConfig:
-    """Arming is only real if the deploy path actually sets it — and says why.
-
-    ``infra/ecs.tf`` is the terraform pin; ``deploy.yml`` (via
-    ``ecs_rewrite_task_def.py``) is the path that actually ships, because it
-    clones the live task-def and never applies terraform. Both must agree.
-
-    These tests are written to fail on a value change in EITHER direction with
-    the prose left behind, which is the property that mattered when the switch
-    was pulled and matters equally now that it is armed: an unexplained
-    ``"true"`` is how an experiment becomes permanent by forgetting, exactly as
-    an unexplained ``"false"`` was.
-    """
-
-    @staticmethod
-    def _paper_advance_comment_block() -> str:
-        """The contiguous comment block directly above the pinned line.
-
-        Read as a block, not as a whole-file substring search: ``ecs.tf`` is
-        ~900 lines of other people's comments, and asserting a word appears
-        *somewhere* in it would let this guard be satisfied by an unrelated
-        line — which is how a comment test quietly stops testing anything.
-        """
-        from pathlib import Path
-
-        ecs_tf = Path(__file__).resolve().parents[3] / "infra" / "ecs.tf"
-        lines = ecs_tf.read_text(encoding="utf-8").splitlines()
-        pin = next(i for i, line in enumerate(lines) if "PAPER_ADVANCE_ENABLED" in line and "value" in line)
-        start = pin
-        while start > 0 and lines[start - 1].strip().startswith("#"):
-            start -= 1
-        assert start < pin, "the PAPER_ADVANCE_ENABLED pin has no comment block above it at all"
-        return "\n".join(lines[start:pin])
-
-    def test_ecs_task_definition_arms_the_tick(self):
-        from pathlib import Path
-
-        ecs_tf = Path(__file__).resolve().parents[3] / "infra" / "ecs.tf"
-        assert '{ name = "PAPER_ADVANCE_ENABLED", value = "true" }' in ecs_tf.read_text(encoding="utf-8"), (
-            "the terraform twin no longer arms the tick — it must match the CI rewrite pin"
-        )
-
-    def test_the_comment_describes_the_armed_state_and_names_the_boundary(self):
-        block = self._paper_advance_comment_block()
-
-        assert "ARMED" in block, "the comment above the pin no longer says what state the pin is in"
-        assert "#1632" in block, "the incident this flag came from is no longer named"
-        assert "#1728" in block, (
-            "the comment no longer names the child-interpreter boundary — that boundary, not a fix, "
-            "is the entire argument for arming this"
-        )
-        assert "deploy.yml" in block, (
-            "ecs.tf no longer names deploy.yml as the path that actually ships — a terraform-only pin "
-            "is how last-good 011b6bfc kept flapping"
-        )
-
-    def test_the_comment_carries_a_pull_back_procedure(self):
-        """A break-glass switch with no written way back is not break-glass.
-
-        The word that used to hold this line was TEMPORARY, which described a
-        mitigation. The armed state needs the opposite: not a promise to
-        revisit, but the two files an operator edits at 3am and the fact that a
-        terraform apply alone will not do it.
-        """
-        block = self._paper_advance_comment_block()
-
-        assert "PULL IT BACK" in block
-        assert "PAPER_ADVANCE_VALUE" in block, "the pull-back procedure does not name the pin that ships"
-        assert "ecs_rewrite_task_def.py" in block
-        assert "TEMPORARY" not in block, (
-            "the comment still calls this a temporary mitigation while the pin reads true — "
-            "the two halves must not describe different states"
-        )
-
-    def test_deploy_yml_rewrite_is_the_shipping_pin(self):
-        from pathlib import Path
-
-        deploy = Path(__file__).resolve().parents[3] / ".github" / "workflows" / "deploy.yml"
-        assert "ecs_rewrite_task_def.py" in deploy.read_text(encoding="utf-8"), (
-            "deploy.yml no longer invokes the rewrite that pins PAPER_ADVANCE_ENABLED"
         )

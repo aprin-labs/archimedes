@@ -5,6 +5,11 @@
 > **updated:** 2026-09-03
 > **superseded-by:** —
 
+> **The hosted procedure here is retired (2026-11-01).** The ECS task definitions, SSM and
+> the deploy workflow it relies on were torn down with the hosted stack. On a local install
+> the token goes in `.env` (`TIINGO_API_TOKEN`), and the Step 2 proof pull
+> (`scripts/verify_market_data.py`) still applies.
+
 **Scope:** getting `TIINGO_API_TOKEN` onto the running backend container, and producing the
 verified-pull record that [`../claims-ledger.md`](../claims-ledger.md)'s "paid analysis runs
 on licensed data" row is waiting on. Written for
@@ -78,7 +83,7 @@ No IAM change is needed and none was made. The execution role's SSM statement is
 wildcard over `parameter/archimedes/prod/*`, which already authorises the read, and its
 `kms:Decrypt` statement already covers SecureStrings fetched via SSM. That property is pinned
 by `test_execution_role_policy_is_a_prefix_wildcard` in
-[`../../backend/tests/test_ecs_backend_secrets.py`](../../backend/tests/test_ecs_backend_secrets.py).
+[`../../backend/tests/test_ecs_backend_secrets.py`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/backend/tests/test_ecs_backend_secrets.py).
 
 Then confirm the running *container's environment* carries it, not just the definition — without
 ever printing the value. Note what this proves: the exec shell is a sibling process reading the

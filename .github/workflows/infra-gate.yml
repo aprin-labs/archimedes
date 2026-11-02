@@ -1,17 +1,10 @@
-# Infra gate — the first thing in CI that actually parses a `.tf` file (issue #1483).
+# Infra gate — the CI step that parses this repo's `.tf` files (issue #1483).
 #
-# Before this workflow, `grep -rn "terraform" .github/workflows/*.yml` returned
-# exactly one hit and it was a warning *string* inside deploy.yml, not a step.
-# The one infra-named job — quality-gate.yml's "Infra — user-data size guard" —
-# is a byte-count on `infra/user-data.sh`; it never opens a `.tf` file, yet it is
-# the row a reviewer watches go green on an `infra/**` PR. That is the
-# "a signal was trusted for something it does not actually measure" shape from
-# CLAUDE.md § the green check may not mean what you think.
-#
-# `infra/ecs.tf` is where the money switches live (PAYMENTS_DRY_RUN,
-# GENERATION_PAYMENTS_DRY_RUN, GENERATION_PAYMENT_REQUIRED, GENERATION_PRICE_USD,
-# the daily generation caps). Until now a typo there surfaced for the first time
-# at `terraform apply`, which is also the prod deploy path.
+# The repo's one remaining Terraform root is company-site/infra (the aprin.ai
+# static site). The product's own AWS stack under infra/ and the docs-site
+# root under docs-site/infra/ were removed when the hosted deployment was torn
+# down on 2026-11-01. Without this gate a typo in company-site/infra/main.tf
+# would surface for the first time at the owner's `terraform apply`.
 #
 # ┌─────────────────────────────────────────────────────────────────────────┐
 # │ DO NOT MARK THIS A REQUIRED STATUS CHECK.                               │
@@ -31,37 +24,34 @@
 #
 # WHY fmt + validate AND NOT plan (issue #1483 anti-goals)
 #   `plan` needs AWS credentials and reads remote state. Per CLAUDE.md § git
-#   safety the state backend is a secrets store — the `tls_private_key` resource
-#   puts a private key into state. Granting CI read access to that in order to
+#   safety the state backend is a secrets store — a `tls_private_key` resource,
+#   for example, puts a private key into state. Granting CI read access to that in order to
 #   catch syntax errors is a bad trade. `validate` is the right depth:
 #     - `fmt -check` needs no init and no network beyond the toolchain.
 #     - `init -backend=false` + `validate` need no AWS credentials and never
-#       contact the S3 backend at infra/main.tf:7-13. They resolve the provider
-#       schemas and type-check the configuration, nothing more.
+#       contact the S3 backend at company-site/infra/main.tf:13-19. They
+#       resolve the provider schemas and type-check the configuration, nothing
+#       more.
 #   Verified locally with a scrubbed environment (`env -i`, no AWS_* at all):
-#   both roots return "Success! The configuration is valid." — see PR #1483.
+#   the root returns "Success! The configuration is valid." — see PR #1483.
 #
-# THREE TERRAFORM ROOTS, not one. `git ls-files '*.tf'` finds 20 files under
-# `infra/`, one under `company-site/infra/`, and one under `docs-site/infra/`.
-# The latter two are deliberately standalone stacks: their own state keys, aws
-# provider ~> 6.0 vs the product root's ~> 5.0. They cannot share a
-# `.terraform/` directory, so they are a matrix rather than one job. Covering
-# only `infra/` would leave the workflow's own name a half-truth.
+# ONE TERRAFORM ROOT today: company-site/infra. It stays a matrix so the job
+# name ("Infra — terraform fmt + validate (company-site/infra)") is stable and
+# a future root is a one-line addition.
 #
 # A new root must be added in BOTH places below — the `paths:` filter and the
 # `matrix.dir` list. Adding it to the matrix alone gives a job that never
-# fires on the PR that breaks it; adding it to `paths:` alone runs the two
-# existing roots and reports green on a root nobody parsed. That pairing is
-# asserted by backend/tests/test_docs_site.py::test_infra_gate_covers_the_docs_site_root.
+# fires on the PR that breaks it; adding it to `paths:` alone runs the
+# existing roots and reports green on a root nobody parsed.
+# backend/tests/test_infra_gate_workflow.py walks every tracked `.tf` file and
+# fails if one sits outside the `paths:` filter.
 
 name: infra-gate
 
 on:
   pull_request:
     paths:
-      - "infra/**"
       - "company-site/infra/**"
-      - "docs-site/infra/**"
       - ".github/workflows/infra-gate.yml"
 
 # Mirrors docs-gate.yml: two runs racing on successive pushes to one branch are
@@ -91,9 +81,7 @@ jobs:
       fail-fast: false
       matrix:
         dir:
-          - infra
           - company-site/infra
-          - docs-site/infra
     steps:
       # No `submodules:` — deliberate. No .tf file references a submodule path,
       # so cloning them would cost minutes for zero signal.
@@ -123,7 +111,7 @@ jobs:
 
       # `-backend=false` skips backend initialisation entirely: no S3 call, no
       # state read, no credentials. `-upgrade` keeps this from ever becoming a
-      # lockfile argument — .terraform.lock.hcl is gitignored (.gitignore:56,119),
+      # lockfile argument — .terraform.lock.hcl is gitignored (the `**/.terraform.lock.hcl` pattern),
       # so CI resolves providers fresh every run, and if a lockfile is ever
       # committed this still will not fail on a stale one (issue #1483 anti-goal).
       - name: terraform init -backend=false (no credentials, no state)

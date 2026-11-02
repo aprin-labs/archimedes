@@ -8,7 +8,7 @@
 // see policy-pages.test.js and public-visuals.test.js), now link to the
 // repository's docs/ folder on GitHub.
 //
-// Four things are asserted:
+// Three things are asserted:
 //
 //   1. The link EXISTS on both surfaces and points at the repo's docs/ folder,
 //      which must exist in this checkout (a link to a folder we deleted would
@@ -17,10 +17,6 @@
 //   3. NO surface names a docs host that is gone or going: docs.archimedes-arc.com
 //      (being shut down with the hosted service), `.app` (decommissioned; it caused the Circle passkey rpId
 //      bug) or GitHub Pages' `a-apin.github.io` (what #1634 moved off).
-//   4. The UI does not link to mkdocs.yml's `site_url`. Until 2026-11-01 this
-//      test bound the UI's docs host TO that site_url; the binding is inverted
-//      rather than deleted, because the config still names that host and a
-//      link copied from it will be dead once the shutdown completes.
 //
 // Hermetic: raw source-text reads (readFileSync), no JSX parsing, no network,
 // no DB, no `.env`. Run with `node --test test/docs-link.test.js` from `ui/`
@@ -146,23 +142,4 @@ test("the docs link points at a docs/ folder this repo actually has", () => {
 		"docs/doc-index.md (the register README.md points at) is missing",
 	);
 	assert.match(DOCS_URL, /^https:\/\/github\.com\/aprin-labs\/archimedes\/tree\/main\/docs$/);
-});
-
-test("the UI does not link to mkdocs.yml's site_url (that site is being shut down)", () => {
-	const mkdocs = readFileSync(
-		new URL("../../mkdocs.yml", import.meta.url),
-		"utf8",
-	);
-	const match = mkdocs.match(/^site_url:\s*(\S+)\s*$/m);
-	assert.ok(
-		match,
-		"mkdocs.yml has no site_url; re-point this guard at whatever names the docs host now.",
-	);
-	const siteHost = new URL(match[1]).host;
-	assert.notEqual(new URL(DOCS_URL).host, siteHost);
-	const source = read("src/components/PublicLayout.jsx");
-	assert.ok(
-		!source.includes(siteHost),
-		`PublicLayout.jsx links to ${siteHost}, mkdocs.yml's site_url. That site is being shut down with the hosted service (2026-11-01); link ${DOCS_URL}.`,
-	);
 });

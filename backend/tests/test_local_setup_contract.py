@@ -25,26 +25,6 @@ def _template_env() -> dict[str, str]:
     return values
 
 
-def _brace_block(text: str, search_from: int) -> str:
-    """Return the first brace-balanced `{...}` block at/after `search_from`.
-
-    Used to pin a *block* rather than a substring: `assertIn("healthCheck", ...)`
-    over a whole Terraform file matches the word in a comment just as happily as
-    a real declaration, so a guard built on it can pass while the block it
-    claims to check has been deleted.
-    """
-    open_idx = text.index("{", search_from)
-    depth = 0
-    for i in range(open_idx, len(text)):
-        if text[i] == "{":
-            depth += 1
-        elif text[i] == "}":
-            depth -= 1
-            if depth == 0:
-                return text[open_idx : i + 1]
-    raise AssertionError(f"unbalanced braces starting at offset {open_idx}")
-
-
 def _compose_config(*, local: bool, env_overrides: dict[str, str] | None = None) -> dict:
     template = (ROOT / ".env.example").read_text()
     # Full-line substitution, not a prefix replace: .env.example now ships a
@@ -173,7 +153,7 @@ class TestLocalSetupContract(unittest.TestCase):
         self.assertEqual(
             self.env.get("AWS_SSM_PATH_PREFIX"),
             "",
-            ".env.example must ship AWS_SSM_PATH_PREFIX blank — production sets it in infra/ecs.tf, not from this file",
+            ".env.example must ship AWS_SSM_PATH_PREFIX blank — an operator who wants SSM sets it deliberately, not from this file",
         )
         for label, config in (("local", self.config), ("production-model", self.production_config)):
             for service_name, service in config["services"].items():
@@ -200,24 +180,16 @@ class TestLocalSetupContract(unittest.TestCase):
             "/archimedes/prod/",
         )
 
-    def test_prod_task_definition_sets_the_env_var_the_ssm_gate_keys_on(self) -> None:
-        """The other side of #1044's gate, which no test covered.
+    def test_main_gates_the_ssm_load_on_public_domain(self) -> None:
+        """The other side of #1044's gate.
 
         `main.py` loads SSM secrets only when PUBLIC_DOMAIN is set. That makes
         PUBLIC_DOMAIN — not AWS_SSM_PATH_PREFIX, not credential presence — the
-        single variable separating local from production. The failure mode this
-        guards is silent and asymmetric: dropping PUBLIC_DOMAIN from the ECS
-        task definition breaks nothing at plan/apply time and nothing at
-        container start, it just means the backend never loads its SSM secrets
-        and boots degraded (EMAIL_ENCRYPTION_KEY fail-close, DATABASE_URL
-        fallbacks) — a production outage caused by an edit to a file the
-        backend tests otherwise never read.
-
-        Pinned as a pair, in the idiom of the nginx healthCheck test above:
-        the gate's shape in main.py, and the variable's presence in the
-        `backend` container block of infra/ecs.tf specifically (a file-wide
-        grep would stay green with the backend block deleted, since `auth` and
-        `nginx` also mention the domain)."""
+        single variable separating a local run from one that pulls SSM secrets.
+        An ungated or duplicated call would let ambient AWS credentials on a
+        developer machine pull real secrets into a local run. (Until 2026-11-01
+        this test also pinned PUBLIC_DOMAIN in the hosted task definition; that
+        stack is gone.)"""
         main_py = (ROOT / "backend/archimedes/main.py").read_text()
         self.assertEqual(
             main_py.count("load_ssm_secrets()"),
@@ -233,135 +205,12 @@ class TestLocalSetupContract(unittest.TestCase):
             "developer machine pull real production secrets into a local run (#1044)",
         )
 
-        ecs_tf = (ROOT / "infra/ecs.tf").read_text()
-        container_name_starts = [m.start() for m in re.finditer(r'^\s*name\s*=\s*"', ecs_tf, re.MULTILINE)]
-        backend_decl = re.search(r'^\s*name\s*=\s*"backend"\s*$', ecs_tf, re.MULTILINE)
-        self.assertIsNotNone(backend_decl, 'infra/ecs.tf defines no container named "backend"')
-        assert backend_decl is not None  # narrow for the type checker
-        backend_start = backend_decl.start()
-        backend_end = next((s for s in container_name_starts if s > backend_start), len(ecs_tf))
-        backend_container = ecs_tf[backend_start:backend_end]
-
-        public_domain = re.search(
-            r'\{\s*name\s*=\s*"PUBLIC_DOMAIN"\s*,\s*value\s*=\s*"([^"]+)"',
-            backend_container,
-        )
-        self.assertIsNotNone(
-            public_domain,
-            'the "backend" container in infra/ecs.tf declares no PUBLIC_DOMAIN environment '
-            "entry — main.py gates the SSM secret load on it, so without it the production "
-            "task boots with none of its SSM-backed secrets (#1044)",
-        )
-        assert public_domain is not None  # narrow for the type checker
-        self.assertTrue(
-            public_domain.group(1).startswith("https://"),
-            f"PUBLIC_DOMAIN in infra/ecs.tf is {public_domain.group(1)!r}; it must be "
-            "scheme-qualified (CORS and wallet-link bindings compare full origins)",
-        )
-
-        ssm_prefix = re.search(
-            r'\{\s*name\s*=\s*"AWS_SSM_PATH_PREFIX"\s*,\s*value\s*=\s*"([^"]+)"',
-            backend_container,
-        )
-        self.assertIsNotNone(
-            ssm_prefix,
-            'the "backend" container in infra/ecs.tf declares no AWS_SSM_PATH_PREFIX — '
-            "production names its own prefix here precisely because the compose default and "
-            "the code default are both blank (#1044)",
-        )
-
     def test_nginx_proxies_backend_docs_through_sole_ingress(self) -> None:
         nginx = (ROOT / "nginx/nginx.conf").read_text()
         self.assertIn("location ^~ /docs", nginx)
         self.assertIn("proxy_pass http://backend_api;", nginx)
         self.assertIn("location = /openapi.json", nginx)
         self.assertIn("proxy_pass http://backend_api/openapi.json;", nginx)
-
-    def test_ecs_nginx_healthcheck_matches_a_real_nginx_conf_location(self) -> None:
-        # #1309 review: infra/ecs.tf's nginx container healthCheck hard-depends
-        # on a path defined in a DIFFERENT file (nginx/nginx.conf) with no
-        # guard tying them together — an unrelated nginx.conf edit that drops
-        # or renames /nginx-health would silently turn every nginx container
-        # UNHEALTHY (ECS would keep killing/replacing it), a self-inflicted
-        # deploy outage on the exact service issue #1309 is about. Mirrors
-        # test_nginx_proxies_backend_docs_through_sole_ingress above, which
-        # pins the /docs pairing the same way.
-        nginx = (ROOT / "nginx/nginx.conf").read_text()
-        ecs_tf = (ROOT / "infra/ecs.tf").read_text()
-
-        # 1. nginx.conf actually defines the container-local health location,
-        # answering 200 directly (never proxied — see the location's own
-        # comment on why: /health does real backend work and must not be
-        # hit by a frequent container-level poller).
-        self.assertIn("location = /nginx-health {", nginx)
-        loc_start = nginx.index("location = /nginx-health {")
-        loc_end = nginx.index("}", loc_start)
-        nginx_health_block = nginx[loc_start:loc_end]
-        self.assertIn("return 200", nginx_health_block)
-        self.assertNotIn("proxy_pass", nginx_health_block)
-
-        # 2. Slice out the nginx CONTAINER definition specifically, rather
-        # than searching ecs.tf as a whole. The file also defines `backend`
-        # and `auth` containers that already have their own healthChecks, so
-        # a file-wide match would stay green with the nginx block deleted
-        # outright — which is the exact regression this guard exists to
-        # catch. `^\s*name\s*=\s*"` only matches a container/resource `name`
-        # attribute at the start of its line; the inline `{ name = "NGINX_
-        # ENVSUBST_FILTER", ... }` environment entries have `{ ` in front and
-        # so cannot bound the slice early.
-        container_name_starts = [m.start() for m in re.finditer(r'^\s*name\s*=\s*"', ecs_tf, re.MULTILINE)]
-        nginx_decl = re.search(r'^\s*name\s*=\s*"nginx"\s*$', ecs_tf, re.MULTILINE)
-        self.assertIsNotNone(nginx_decl, 'infra/ecs.tf defines no container named "nginx"')
-        assert nginx_decl is not None  # narrow for the type checker
-        nginx_start = nginx_decl.start()
-        nginx_end = next((s for s in container_name_starts if s > nginx_start), len(ecs_tf))
-        nginx_container = ecs_tf[nginx_start:nginx_end]
-
-        # 3. That container declares an actual `healthCheck = { ... }` BLOCK.
-        # Anchored to the start of a line so the many prose mentions of
-        # "healthCheck" in the surrounding comment cannot satisfy it, and the
-        # block is then brace-matched so every assertion below is scoped to
-        # the declaration itself rather than to anything else in the file.
-        hc_decl = re.search(r"^\s*healthCheck\s*=\s*\{", nginx_container, re.MULTILINE)
-        self.assertIsNotNone(
-            hc_decl,
-            'the "nginx" container in infra/ecs.tf declares no healthCheck block — it is the ALB '
-            "target, so without one it does not participate in the task's deployment healthStatus (#1309)",
-        )
-        assert hc_decl is not None  # narrow for the type checker
-        health_check = _brace_block(nginx_container, hc_decl.start())
-
-        # 4. The command inside THAT block hits the nginx-local path, with a
-        # boundary so a typo'd extension ("/nginx-health" -> "/nginx-healthz")
-        # is caught rather than silently satisfying an unanchored "contains".
-        probe = re.search(r'http://127\.0\.0\.1:(\d+)/nginx-health(?=[\s"])', health_check)
-        self.assertIsNotNone(
-            probe,
-            "the nginx healthCheck command does not probe http://127.0.0.1:<port>/nginx-health; "
-            f"block was: {health_check}",
-        )
-        assert probe is not None  # narrow for the type checker
-        probe_port = probe.group(1)
-
-        # 5. Tie that port back to the port nginx actually listens on. The
-        # healthCheck is container-local, so if nginx.conf's `listen` moves
-        # off this port the check polls a closed socket, every nginx container
-        # goes UNHEALTHY, and with `deployment_circuit_breaker { rollback =
-        # true }` every deploy rolls back — a self-inflicted outage on the
-        # service #1309 is about. Also pinned against the container's own
-        # portMappings, which is what the ALB target group forwards to.
-        self.assertRegex(
-            nginx,
-            rf"(?m)^\s*listen\s+{re.escape(probe_port)};",
-            f"infra/ecs.tf's nginx healthCheck probes port {probe_port}, but nginx/nginx.conf has no "
-            f"`listen {probe_port};` — the check would poll a closed socket",
-        )
-        self.assertRegex(
-            nginx_container,
-            rf"containerPort\s*=\s*{re.escape(probe_port)}\b",
-            f"infra/ecs.tf's nginx healthCheck probes port {probe_port}, which is not the container's "
-            "published containerPort",
-        )
 
     def test_nginx_gates_insights_exactly_like_every_other_app_path(self) -> None:
         """PR #1437 review (2026-08-30), reversing this test's round-2 form.

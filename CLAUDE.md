@@ -169,11 +169,12 @@ default. Ask the suite for the case count rather than trusting a doc: `pytest --
 --cov=archimedes --cov-report=term-missing`. The analytics-engine runs its own suite:
 `cd analytics-engine && uv run pytest`.
 
-**AWS:** prod is Dan's account (`037613907429` / `us-east-1`); ask **Dan** for a scoped IAM
-user (`SecurityAudit` + `ViewOnlyAccess`, MFA). **Credentials go over a secure channel —
-1Password / Bitwarden / Signal — never Discord, never email.** The web tier is Fargate:
-no host to SSH into (`aws ecs execute-command` for a task shell); SSM reaches only the
-residual EC2 box running the oracle / agent / kb runners.
+**AWS:** the hosted Archimedes stack on Dan's account (`037613907429` / `us-east-1`) was
+torn down on 2026-11-01, and its Terraform (`infra/`) was removed from the tree. The only
+AWS resources this repo still manages are the aprin.ai site in
+[`company-site/infra/`](company-site/README.md) (owner-applied, never CI). For access, ask
+**Dan** for a scoped IAM user (`SecurityAudit` + `ViewOnlyAccess`, MFA). **Credentials go
+over a secure channel — 1Password / Bitwarden / Signal — never Discord, never email.**
 
 **Submodules** ([`docs/submodules.md`](docs/submodules.md) — also the canonical pointer for
 any Arc/Circle integration question, via `submodules/context-arc/`). Do this once per
@@ -198,9 +199,10 @@ Live picture: [`docs/architecture.md`](docs/architecture.md). Deployed contract 
 
 ### Branch model (build-on-deploy, main-only)
 
-- **`main` is the only long-lived branch, and it is the deploy branch.** Every merge to
-  `main` builds and deploys to the live Fargate stack. No `develop`/integration branch — it
-  drifted unused and was retired ([ADR](docs/adr/build-on-deploy-main-only.md)).
+- **`main` is the only long-lived branch.** Until the hosted stack was torn down
+  (2026-11-01) every merge to `main` also deployed it; nothing deploys from `main` now. No
+  `develop`/integration branch — it drifted unused and was retired
+  ([ADR](docs/adr/build-on-deploy-main-only.md)).
 - **`main` moves continuously.** Dan and teammates drive the build through parallel Claude
   Code sessions and merge on their own authority, so `main` can take dozens of commits in a
   day. Branch late, rebase right before merging, merge in a tight window. Don't wait for
@@ -241,9 +243,8 @@ blocks and what does not**:
 | `import-guard.yml` | **YES** | Runs on every PR. Catches imports that resolve locally but not in a clean environment. |
 | `contracts-test.yml` | no | `forge build` + `forge test`. **Path-filtered to `contracts/**`, so it must not be made a required check** until an always-runs fallback job reports the same check name — see the boxed comment in `scripts/setup-branch-protection.sh`. |
 | `docs-gate.yml` | no | Link resolution and index completeness across `docs/` and root markdown; staleness reported but never blocking. **Path-filtered — same constraint as `contracts-test.yml`, and the same warning is boxed at the top of the workflow.** Run it locally with `make docs-check`. |
-| `infra-gate.yml` | no | `terraform fmt -check -recursive` + `init -backend=false` + `validate`, as a matrix over the three Terraform roots (`infra/`, `company-site/infra/`, `docs-site/infra/`). No credentials, no `plan`, never reads S3 state. **Path-filtered — same constraint as `contracts-test.yml`/`docs-gate.yml`, same boxed warning at the top of the workflow.** Note that quality-gate's "Infra — user-data size guard" row is a byte-count on `infra/user-data.sh` and parses no `.tf` file; this is the row that does. |
-| `deploy.yml` · `release-tag.yml` | n/a | Build → ECR → roll Fargate (superseded runs auto-cancel); semver tag per merged PR. |
-| `deploy-runners.yml` | n/a | `workflow_dispatch` only — the `push` trigger is deliberately commented out. Oracle + agent EC2 and the KB scheduled Fargate task. |
+| `infra-gate.yml` | no | `terraform fmt -check -recursive` + `init -backend=false` + `validate` on the one remaining Terraform root, `company-site/infra/` (the aprin.ai site; kept as a one-entry matrix). No credentials, no `plan`, never reads S3 state. **Path-filtered — same constraint as `contracts-test.yml`/`docs-gate.yml`, same boxed warning at the top of the workflow.** |
+| `release-tag.yml` | n/a | Semver tag per merged PR. There is no deploy workflow: the hosted stack and its `deploy.yml` / `deploy-runners.yml` were removed on 2026-11-01. |
 
 **Release tags — two surprises.** (1) Bump markers are read from the PR title with an
 **end-of-title anchor**: `!version-release` → major, `!minor` → minor, anything else →
@@ -445,8 +446,8 @@ Non-negotiable, and load-bearing because the judges read this repo like operator
 - **Terraform state belongs in S3, never local-committed.** S3 backend: bucket
   versioned + encrypted (SSE-S3) + bucket-policied to deny non-TLS access +
   restrict to the account principal; S3-native locking (`use_lockfile = true`)
-  obviates the DynamoDB lock table. See [`infra/README.md`](infra/README.md) for
-  bootstrap commands. State can contain real secrets (e.g., the `tls_private_key`
+  obviates the DynamoDB lock table. See [`company-site/README.md`](company-site/README.md)
+  § Terraform state backend for the bootstrap commands. State can contain real secrets (e.g., the `tls_private_key`
   resource puts a private key into state) — treat the backend as a secrets store
   and scope IAM read access accordingly.
 - If an AI agent is uncertain, it **stops and asks** — it does not invent APIs,

@@ -5,6 +5,11 @@
 > **updated:** 2026-08-31
 > **superseded-by:** —
 
+> **The hosted production deployment was torn down on 2026-11-01.** Its deploy workflows
+> and Terraform were removed; the production column below records what it ran. The
+> selectors still decide behaviour: they are how a self-hosted operator moves a local
+> install toward the production posture.
+
 Archimedes runs in two modes off **one codebase and one compose file**. The difference is
 configuration, never a code fork. Nothing in the generate → backtest → rigor-gate → explore
 path branches on which mode it is in, and adding such a branch is the thing this document
@@ -47,7 +52,7 @@ explain it, that is a design smell, not a documentation problem.
 | Payments | dry-run / paywall off | live x402 settlement | `GENERATION_PAYMENT_REQUIRED` + `PAYMENTS_DRY_RUN` | [`generation_payment.py`](../backend/archimedes/services/generation_payment.py) `payment_required()` |
 | Chain | absent (features inert) | Arc testnet, agent signer | chain keys present / absent | [`chain/`](../backend/archimedes/chain/) |
 | Auth / identity | **unconditional** | **unconditional** | **no selector — see § 4** | `main.py` registers the generation, portfolio, and user routers with `dependencies=[Depends(require_current_user)]` |
-| Deploy mechanism | `docker compose up -d --build` | ECS task-definition registration ([`deploy.yml`](../.github/workflows/deploy.yml)) + `docker pull` over SSM into systemd units for the runners ([`deploy-runners.yml`](../.github/workflows/deploy-runners.yml)) | — | **compose is local-only** |
+| Deploy mechanism | `docker compose up -d --build` | ECS task-definition registration ([`deploy.yml`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/.github/workflows/deploy.yml)) + `docker pull` over SSM into systemd units for the runners ([`deploy-runners.yml`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/.github/workflows/deploy-runners.yml)) | — | **compose is local-only** |
 
 ### The row that keeps getting missed
 

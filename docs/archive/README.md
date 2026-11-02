@@ -28,7 +28,7 @@
 | [`ui-simplification-proposal-2026-05-20.md`](ui-simplification-proposal-2026-05-20.md) | Day-9 12-page → 5-page spine consolidation proposal | Spine Phases 0–3 + 6 + 7 shipped via [`docs/specs/spine-plus-v2-plan.md`](../plans/spine-plus-v2-plan.md); current page roles live in [`docs/specs/page-roles-spec.md`](../specs/page-roles-spec.md). |
 | [`evening-execution-plan-2026-05-24.md`](evening-execution-plan-2026-05-24.md) | Sunday-evening session plan + red-team report after PR-3 #213 merged | All 21+ red-team items either shipped (PR #220–#240) or escalated to issues. State after this session is captured in `sunday-night-handoff-2026-05-24.md` (also archived) and the audit lineage head `AUDIT_2026-06-14.md`. |
 | [`sunday-night-handoff-2026-05-24.md`](sunday-night-handoff-2026-05-24.md) | Post-HTTPS-landing Sunday-night handoff between Claude sessions | HTTPS live; wallet flow shipped; the remaining priorities (verify_arc_e2e --execute, v_check production validation, judge-trust polish) folded into [`AUDIT_2026-06-14.md`](../audits/2026-06-14-full-tree-audit.md). |
-| [`deployment-runbook.md`](deployment-runbook.md) | Manual / break-glass AWS deploy runbook for the EC2 era (account 037613907429) | **Nothing yet for break-glass.** Rollback: [`infra/runbooks/ecs-fargate-cutover.md`](../../infra/runbooks/ecs-fargate-cutover.md) § rollback + [`infra/runbooks/disaster-recovery.md`](../../infra/runbooks/disaster-recovery.md). The Fargate-era break-glass runbook is an open gap tracked in [`docs/runbooks/README.md`](../runbooks/README.md). |
+| [`deployment-runbook.md`](deployment-runbook.md) | Manual / break-glass AWS deploy runbook for the EC2 era (account 037613907429) | **Nothing yet for break-glass.** Rollback: [`infra/runbooks/ecs-fargate-cutover.md`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/runbooks/ecs-fargate-cutover.md) § rollback + [`infra/runbooks/disaster-recovery.md`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/runbooks/disaster-recovery.md). No Fargate-era break-glass runbook was ever written, and none is needed: the hosted stack was torn down on 2026-11-01 (see below). |
 
 ### Launch-window execution plans and runbooks (2026-05-19 → 2026-05-25)
 
@@ -66,6 +66,27 @@ current architecture — [`docs/architecture.md`](../architecture.md) is.
 | [`agora-2026-05/portfolio-advisor-demo-cues.md`](agora-2026-05/portfolio-advisor-demo-cues.md) | 60-second Portfolio Advisor demo cue card. |
 | ``agora-2026-05/claude-design-prompts.md`` (routed to the private docs repo, 2026-08-19) | Design prompts used to generate the submission UI; routed because its slide prompts embed competitive comparisons, market-sizing figures, and judging strategy. |
 | [`agora-2026-05/traction-logging.md`](agora-2026-05/traction-logging.md) | `arc-canteen` traction-logging cheat sheet. |
+
+### Hosted-era infrastructure (removed 2026-11-01)
+
+The hosted deployment (ECS Fargate, ALB, CloudFront, WAF, Aurora, ElastiCache, the runner
+EC2, the Lambdas) was torn down on 2026-11-01, when the project went local-first. Its
+infrastructure code and AWS-only procedures were **deleted from the tree, not archived
+here**; they are preserved at commit [`84c0fac4`](https://github.com/aprin-labs/archimedes/tree/84c0fac4758e9572f34e4f70fe48e9d68c5acab0), the last commit that had them:
+
+- `infra/` — the product's Terraform root, its scripts, Lambdas, IAM policies and
+  `infra/runbooks/` (Fargate cutover + rollback, disaster recovery, Aurora backup/restore,
+  WAF rules reference). The state-bucket bootstrap record moved to
+  [`company-site/README.md`](../../company-site/README.md), whose stack still uses that bucket.
+- The mkdocs docs site: `mkdocs.yml`, `docs-site/`, `.github/scripts/mkdocs_hooks.py`,
+  `docs/requirements.txt`.
+- Workflows `deploy.yml`, `deploy-runners.yml`, `docs-site.yml`, `terraform-drift.yml`,
+  `openwiki-update.yml`, and their scripts `ecs_rewrite_task_def.py`,
+  `post_rollout_probe.sh`, `tf_drift_gate.py`, `spa_render_check.mjs`.
+- `scripts/dmarc_report_summary.py` and `scripts/alb_latency_report.py`.
+- Runbooks `docs/runbooks/docs-site-setup.md`, `cost-kill-switch.md`,
+  `cloudfront-cache-behaviour-apply.md`, `terraform-apply-and-task-definition-ownership.md`,
+  `runner-ec2-wedge.md` and `dmarc-reports.md`.
 
 ## Why these specifically
 

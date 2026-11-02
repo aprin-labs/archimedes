@@ -32,7 +32,7 @@ context, not required startup reading.
 **Know its boundary before you trust it, and know that the boundary and the pages are
 currently out of step.** `.openwikiignore` is an **allow-list**. It is now **codebase-wide**
 — `backend/archimedes/`, `analytics-engine/src` + `strategies`, `ui/src/`, `contracts/`,
-`infra/`, `.github/`, `scripts/`, all of `docs/`, and the root contracts; ~825 files and
+`.github/`, `scripts/`, all of `docs/`, and the root contracts; ~825 files and
 ~199k lines as measured on 2026-08-31. **The committed pages predate that widening.** They came from the 2026-08-31
 bootstrap run against `docs/quant/` alone, so every page you can read today is grounded in
 *documentation*, not implementation: a claim there records what a doc asserts, never what
@@ -51,16 +51,15 @@ file OpenWiki reads and never rewrites — read it before running or reviewing a
 generation. It sets what the wiki is *for*: code↔docs alignment, and making bloat, dead
 code, long import chains, and deep inheritance enumerable rather than adjectival.
 
-The GitHub Actions workflow is `workflow_dispatch`-only and **cannot run today** — Bedrock's
-Anthropic models are not enabled on the AWS account. The committed wiki was generated
-through OpenWiki's coding-agent integration, which needs no provider credentials. Both the
-blocker and the cost of the run are recorded in
+There is no GitHub Actions workflow for it: the `workflow_dispatch`-only one (blocked on
+Bedrock model access) was removed with the hosted stack on 2026-11-01. The committed wiki
+was generated through OpenWiki's coding-agent integration, which needs no provider
+credentials. The old blocker and the cost of the run are recorded in
 [`docs/decisions/tooling-adoptions-2026-08.md`](docs/decisions/tooling-adoptions-2026-08.md);
 add a row there for each generation wave. Any edit to `.openwikiignore` must be re-verified
 with `node scripts/check_openwiki_ignore.mjs`.
 
-Pages publish to **`docs.archimedes-arc.com`**, served from our own infrastructure rather
-than GitHub Pages ([#1634](https://github.com/aprin-labs/archimedes/issues/1634)); the
-`mkdocs build --strict` wiring from #1624 is the build step and stays.
+The pages are not published anywhere but the repository: the mkdocs site at
+`docs.archimedes-arc.com` and its build were removed on 2026-11-01.
 
 <!-- OPENWIKI:END -->

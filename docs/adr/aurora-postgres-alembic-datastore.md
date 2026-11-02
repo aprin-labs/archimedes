@@ -7,7 +7,7 @@
 > **Supersedes:** —
 > **Superseded-by:** —
 > **Question being decided:** What is the system of record, how does its schema change, and what holds ephemeral state?
-> **Related:** [`infra/aurora.tf`](../../infra/aurora.tf), [`infra/elasticache.tf`](../../infra/elasticache.tf), [`infra/ecs_migrate.tf`](../../infra/ecs_migrate.tf), [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml), [`docs/database-architecture.md`](../database-architecture.md), [`ec2-to-ecs-fargate-cutover.md`](ec2-to-ecs-fargate-cutover.md).
+> **Related:** [`infra/aurora.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/aurora.tf), [`infra/elasticache.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/elasticache.tf), [`infra/ecs_migrate.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/ecs_migrate.tf), [`.github/workflows/deploy.yml`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/.github/workflows/deploy.yml), [`docs/database-architecture.md`](../database-architecture.md), [`ec2-to-ecs-fargate-cutover.md`](ec2-to-ecs-fargate-cutover.md).
 
 ## TL;DR
 
@@ -40,7 +40,7 @@ schema.
 ## Decision
 
 1. **Aurora PostgreSQL Serverless v2, engine version `18.3`, `engine_mode = "provisioned"`**
-   ([`infra/aurora.tf:57-60`](../../infra/aurora.tf)) — Serverless v2 runs in provisioned
+   ([`infra/aurora.tf:57-60`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/aurora.tf)) — Serverless v2 runs in provisioned
    mode with a `serverless_v2_scaling_configuration`, so the cluster scales with load
    without a fixed instance class. `allow_major_version_upgrade = true` and
    `apply_immediately = true` are both set deliberately: 16.4 → 18.3 is a direct upgrade
@@ -49,15 +49,15 @@ schema.
    silently at some unplanned maintenance window — which is the only acceptable behaviour
    for a cluster backing live funds.
 2. **Alembic is the sole schema-change mechanism, run as a one-off Fargate task before
-   rollout.** [`infra/ecs_migrate.tf`](../../infra/ecs_migrate.tf) defines a dedicated
+   rollout.** [`infra/ecs_migrate.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/ecs_migrate.tf) defines a dedicated
    single-container task definition (`python -m alembic upgrade head`); the `migrate` job in
-   [`deploy.yml`](../../.github/workflows/deploy.yml) `aws ecs run-task`s it and waits for
+   [`deploy.yml`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/.github/workflows/deploy.yml) `aws ecs run-task`s it and waits for
    exit 0 before `deploy-ecs` force-redeploys the service. It reuses the same image, the
    same execution/task roles and the same SSM-backed secrets as the service — so the
    migration always runs with exactly the code and credentials that are about to serve.
    No application-startup migrations.
 3. **ElastiCache Redis 7.1 is for ephemeral state only** —
-   [`infra/elasticache.tf:55-57`](../../infra/elasticache.tf), described in the resource
+   [`infra/elasticache.tf:55-57`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/elasticache.tf), described in the resource
    itself as "regime state, traces, job queue". Single node (`cache.t3.micro`,
    `num_cache_clusters = 1`); multi-AZ is treated as a cost upgrade, not a correctness
    requirement, precisely because nothing durable is stored there.

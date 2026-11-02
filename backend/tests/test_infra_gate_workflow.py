@@ -1,24 +1,25 @@
 """Guard for ``.github/workflows/infra-gate.yml`` (issue #1483).
 
-Issue #1483: nothing in CI parsed a ``.tf`` file, so a syntax error in
-``infra/ecs.tf`` — the file holding ``PAYMENTS_DRY_RUN`` and the generation
-price/caps — first surfaced at ``terraform apply``, which is also the prod
-deploy path. ``infra-gate.yml`` closes that. The gate itself is only worth
-anything while its ``on.pull_request.paths`` filter still selects the ``.tf``
-files it claims to cover: delete ``infra/**`` from that list and the workflow
-stays present, stays green-by-never-running, and the tree goes unchecked again.
+Issue #1483: nothing in CI parsed a ``.tf`` file, so a syntax error first
+surfaced at ``terraform apply``. ``infra-gate.yml`` closes that. Since the
+hosted stack was torn down (2026-11-01) the only Terraform root left is
+``company-site/infra`` (the aprin.ai static site). The gate itself is only
+worth anything while its ``on.pull_request.paths`` filter still selects the
+``.tf`` files it claims to cover: delete ``company-site/infra/**`` from that
+list and the workflow stays present, stays green-by-never-running, and the
+tree goes unchecked again.
 That silent-downgrade is exactly the CLAUDE.md § "the green check may not mean
 what you think" failure mode, so it gets a test rather than a convention.
 
 **Stdlib only, on purpose.** PyYAML is not in ``backend/requirements.txt`` and
 is not imported anywhere in ``backend/``; the CI unit job installs only from
-that file (``quality-gate.yml`` line 135), so ``import yaml`` here would pass
+that file (``quality-gate.yml``'s unit-test job), so ``import yaml`` here would pass
 locally and ``ImportError`` in CI — the exact "works on my machine" split the
 testing conventions exist to prevent. ``_pull_request_paths`` is a small
 indentation scanner instead, and it is fail-loud: if it stops understanding the
 file it returns nothing and every assertion below fails. Its output was
-cross-checked against ``yaml.safe_load`` when written (both return the same
-three patterns; note ``safe_load`` parses the ``on:`` key as the boolean
+cross-checked against ``yaml.safe_load`` when written (both return the
+same patterns; note ``safe_load`` parses the ``on:`` key as the boolean
 ``True`` under YAML 1.1, which is why a naive ``doc["on"]`` would have been
 wrong anyway).
 
@@ -151,10 +152,10 @@ def paths(workflow_text: str) -> list[str]:
     return parsed
 
 
-def test_path_filter_lists_the_infra_tree(paths: list[str]) -> None:
-    """The literal the issue asks for. ``infra/**`` is what makes an edit to
-    ``infra/ecs.tf`` trigger the gate at all."""
-    assert "infra/**" in paths, f"on.pull_request.paths lost 'infra/**': {paths}"
+def test_path_filter_lists_the_company_site_tree(paths: list[str]) -> None:
+    """``company-site/infra/**`` is what makes an edit to
+    ``company-site/infra/main.tf`` trigger the gate at all."""
+    assert "company-site/infra/**" in paths, f"on.pull_request.paths lost 'company-site/infra/**': {paths}"
 
 
 def test_path_filter_selects_every_tf_file_in_the_tree(paths: list[str]) -> None:

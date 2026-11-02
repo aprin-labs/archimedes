@@ -5,6 +5,12 @@
 > **updated:** 2026-10-02
 > **superseded-by:** —
 
+> **Hosted deployment torn down 2026-11-01.** The production columns, §1.9 and §7 describe
+> the retired AWS stack (ECS Fargate, ALB, CloudFront, WAF, Aurora, ElastiCache, runner
+> EC2). Its Terraform and deploy workflows were removed from the tree; links into them are
+> pinned to [the last commit that had them](https://github.com/aprin-labs/archimedes/tree/84c0fac4758e9572f34e4f70fe48e9d68c5acab0). The local stack (docker compose) is
+> the only deployment path.
+
 > Identity and deploy topology amended for Better Auth account ownership (2026-08). (2026-07-14)
 
 > **Amended 2026-08-31** for the 2026-08-30/31 merge train — the deltas are marked
@@ -84,7 +90,7 @@ canvas `#09090B`).
 | Rigor gate | [`api/selection_bias_routes.py`](../backend/archimedes/api/selection_bias_routes.py) | The external gate endpoint (`/api/selection-bias/gate/...`); strictness ladder |
 | Marketplace | [`api/marketplace_routes.py`](../backend/archimedes/api/marketplace_routes.py) | `/api/marketplace/publish`, `/subscribe`, `/unsubscribe`, `/published`, `/my-published`, `/publish/{id}/withdraw`, `/my-subscriptions`. `POST /publish` and `POST /subscribe` deploy a vault for the caller, so they answer 404 while `FEATURE_ROADMAP_SURFACES` is off (#1432) |
 | Corpus | [`api/corpus_routes.py`](../backend/archimedes/api/corpus_routes.py) | Honest 503 ("pipeline not yet run") until real KB artifacts exist — no metadata-synthesized graphs |
-| Config | [`api/config_routes.py`](../backend/archimedes/api/config_routes.py) | `GET /api/config/contracts` — serves the contract addresses from the ECS task env ([`infra/ecs.tf`](../infra/ecs.tf)) |
+| Config | [`api/config_routes.py`](../backend/archimedes/api/config_routes.py) | `GET /api/config/contracts` — serves the contract addresses from the ECS task env ([`infra/ecs.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/ecs.tf)) |
 | Agent manifest | [`api/agent_manifest_routes.py`](../backend/archimedes/api/agent_manifest_routes.py) | Agent-discoverability surface (`/api/agent/manifest`) per [`docs/agent-api.md`](agent-api.md) |
 | Leaderboard | [`api/leaderboard_routes.py`](../backend/archimedes/api/leaderboard_routes.py) | **(2026-08-31, #1563)** Two boards, never mixed: `GET /api/leaderboard` is 100% backtest-era and stamps every row `performance_basis="backtest_research"`; `GET /api/leaderboard/live-paper` returns rows only for real deployments, and the "is this ledger real" test lives in exactly one place, `build_live_paper_leaderboard` |
 | Others | `explore_routes.py` (281-synth universe), `portfolio_routes.py`, `traces_routes.py`, `regime_routes.py`, `proposals_routes.py` (owner-scoped), `user_routes.py`, `metrics_routes.py`, `risk_routes.py`, `swap_routes.py`, `papers_routes.py` | Product surfaces for the spine |
@@ -160,7 +166,7 @@ instances** (the tradable universe: crypto, equities, ETFs, FX) + **281 AMMPool 
 minted on demand** via VaultFactory (0 on the fresh redeploy; grows with every deploy click).
 USDC itself is Arc-native (`0x3600...0000`, Circle's, not ours). The earlier "289" headline
 was core + synth tokens only; pools are factory-created children and belong in the count.
-Addresses: [`infra/ecs.tf`](../infra/ecs.tf) env + [`ui/src/config.js`](../ui/src/config.js); SSOT endpoint above.
+Addresses: [`infra/ecs.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/ecs.tf) env + [`ui/src/config.js`](../ui/src/config.js); SSOT endpoint above.
 
 | Contract | Path | Role / trust property |
 |---|---|---|
@@ -182,13 +188,13 @@ Addresses: [`infra/ecs.tf`](../infra/ecs.tf) env + [`ui/src/config.js`](../ui/sr
 
 | Store | Prod | Local | What lives there |
 |---|---|---|---|
-| Postgres | **Aurora PostgreSQL 18.3** ([`infra/aurora.tf`](../infra/aurora.tf)) | `postgres:18-alpine` ([`docker-compose.yml`](../docker-compose.yml), `localdb` profile) | Strategies + proposals ([`models/strategy_store.py`](../backend/archimedes/models/strategy_store.py), [`models/strategy_proposal.py`](../backend/archimedes/models/strategy_proposal.py)), backtests + daily returns ([`models/backtest_store.py`](../backend/archimedes/models/backtest_store.py), [`models/daily_returns_store.py`](../backend/archimedes/models/daily_returns_store.py)), traces ([`models/trace.py`](../backend/archimedes/models/trace.py)), corpus ([`models/corpus_store.py`](../backend/archimedes/models/corpus_store.py), [`models/kg.py`](../backend/archimedes/models/kg.py)), vaults, users/identity, marketplace |
-| Redis | **ElastiCache** (TLS-required, [`infra/elasticache.tf`](../infra/elasticache.tf)) | `redis` service | SSE job event logs ([`services/redis_state.py`](../backend/archimedes/services/redis_state.py)), regime state, **runner leases** ([`services/runner_lease.py`](../backend/archimedes/services/runner_lease.py)), marketplace event log ([`marketplace/state.py`](../backend/archimedes/marketplace/state.py)) |
+| Postgres | **Aurora PostgreSQL 18.3** ([`infra/aurora.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/aurora.tf)) | `postgres:18-alpine` ([`docker-compose.yml`](../docker-compose.yml), `localdb` profile) | Strategies + proposals ([`models/strategy_store.py`](../backend/archimedes/models/strategy_store.py), [`models/strategy_proposal.py`](../backend/archimedes/models/strategy_proposal.py)), backtests + daily returns ([`models/backtest_store.py`](../backend/archimedes/models/backtest_store.py), [`models/daily_returns_store.py`](../backend/archimedes/models/daily_returns_store.py)), traces ([`models/trace.py`](../backend/archimedes/models/trace.py)), corpus ([`models/corpus_store.py`](../backend/archimedes/models/corpus_store.py), [`models/kg.py`](../backend/archimedes/models/kg.py)), vaults, users/identity, marketplace |
+| Redis | **ElastiCache** (TLS-required, [`infra/elasticache.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/elasticache.tf)) | `redis` service | SSE job event logs ([`services/redis_state.py`](../backend/archimedes/services/redis_state.py)), regime state, **runner leases** ([`services/runner_lease.py`](../backend/archimedes/services/runner_lease.py)), marketplace event log ([`marketplace/state.py`](../backend/archimedes/marketplace/state.py)) |
 | S3 | KB artifacts ([`services/kb_artifacts.py`](../backend/archimedes/services/kb_artifacts.py)); backtest-results archive ([`scripts/archive_backtest_results.py`](../backend/archimedes/scripts/archive_backtest_results.py)) | — | Backtest/KB artifacts |
 | KB artifact volume | named volume `archimedes-corpus-artifact`; **EFS (IaC merged, PR #1071; terraform apply pending — #1065)** | same volume | SPECTER2/HDBSCAN/REBEL artifacts |
-| SSM Parameter Store | `/archimedes/prod/*` SecureStrings ([`infra/scripts/setup-ssm-secrets.sh`](../infra/scripts/setup-ssm-secrets.sh)) | `.env` | LLM keys, Circle creds, DB/Redis URLs — pull-model, nothing injected by CI |
+| SSM Parameter Store | `/archimedes/prod/*` SecureStrings ([`infra/scripts/setup-ssm-secrets.sh`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/scripts/setup-ssm-secrets.sh)) | `.env` | LLM keys, Circle creds, DB/Redis URLs — pull-model, nothing injected by CI |
 
-### 1.9 Infra + CI/CD — [`infra/`](../infra), `.github/workflows/`
+### 1.9 Infra + CI/CD — [`infra/`](https://github.com/aprin-labs/archimedes/tree/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra), `.github/workflows/`
 
 > Decision records: [`adr/ec2-to-ecs-fargate-cutover.md`](adr/ec2-to-ecs-fargate-cutover.md)
 > (why Fargate, and what the cutover cost) and
@@ -205,7 +211,7 @@ probes live `/api/health` through CloudFront to assert the app *answers*, and ke
 CloudFront invalidation to that verdict), `deploy-runners.yml` (SSM → the runner EC2 +
 kb-runner task-def), `docs-gate.yml`, `quality-gate.yml`, `contracts-test.yml` (forge),
 `complexity-gate.yml`, `import-guard.yml`, `main-format-guard.yml`, `release-tag.yml`.
-Runbook: [`infra/runbooks/ecs-fargate-cutover.md`](../infra/runbooks/ecs-fargate-cutover.md).
+Runbook: [`infra/runbooks/ecs-fargate-cutover.md`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/runbooks/ecs-fargate-cutover.md).
 
 ---
 
@@ -282,7 +288,7 @@ RunCommand pulls the fresh image + restarts the EC2 pair's systemd units; regist
 ```
 
 - Web tier cut over to Fargate 2026-07-09 (#1056–#1059) — decision and consequences in [`adr/ec2-to-ecs-fargate-cutover.md`](adr/ec2-to-ecs-fargate-cutover.md); the old web-tier EC2 box was stopped and snapshotted 2026-08-19 (`snap-02edf9e4a9ac7f201`) and its terraform removed (PR #1265, merged 2026-08-19) — Phase-8 decommission complete.
-- Contract-address SSOT: Foundry broadcast → [`infra/ecs.tf`](../infra/ecs.tf) env (merged PR #1079) → `GET /api/config/contracts`; [`ui/src/config.js`](../ui/src/config.js) carries the matching hand-synced set (runtime fetch is the durable fix, not yet landed).
+- Contract-address SSOT: Foundry broadcast → [`infra/ecs.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/ecs.tf) env (merged PR #1079) → `GET /api/config/contracts`; [`ui/src/config.js`](../ui/src/config.js) carries the matching hand-synced set (runtime fetch is the durable fix, not yet landed).
 - Local dev parity: one [`docker-compose.yml`](../docker-compose.yml) with `localdb` + `runners` profiles mirrors prod.
 - LLM: Bedrock in-region; BYOK and Ollama keep the single-user/local path AWS-optional.
 
@@ -314,7 +320,7 @@ RunCommand pulls the fresh image + restarts the EC2 pair's systemd units; regist
 9. **[`docs/corpus-architecture.md`](corpus-architecture.md)** — Day-9 fusion-path framing, and it describes embeddings/clusters/KG as if built; retrieval reality is keyword → query-time rerank ([`services/paper_rag.py`](../backend/archimedes/services/paper_rag.py), lexical in prod) with the KB pipeline as an artifact layer that has not yet run (#778).
 10. **[`ui/src/components/Architecture.jsx`](../ui/src/components/Architecture.jsx)** — the page being replaced; full staleness list in §10 and [`docs/handovers/2026-07-14-architecture-review.md`](handovers/2026-07-14-architecture-review.md).
 11. **[`CLAUDE.md`](../CLAUDE.md) § Project** — ~~"executes and monitors them in non-custodial vaults on Arc with USDC settlement", present tense~~ **fixed 2026-08-31** (same branch): the contracts are deployed, but the deploy-a-vault journey is gated off every public surface by `ROADMAP_SURFACES_ENABLED` (off by default, #1266/#1354) and the blurb now says roadmap. The remaining public-copy scrub is #1469; the ADR carries a dated amendment saying the same thing ([`adr/non-custodial-vault-owner-agent.md`](adr/non-custodial-vault-owner-agent.md)).
-12. **`.github/workflows/deploy.yml`** — ~~a top-level `EC2_INSTANCE_ID: i-01803d3abc271d39b` naming the single-box host decommissioned 2026-08-19~~ **fixed 2026-08-31** (same branch): no job had read it since the #1039 fast-follow retired the SSM `deploy` job, so it was dead env pointing at a dead box. The runners that *do* live on EC2 resolve their instance by name tag at runtime (`deploy-runners.yml`, [`infra/runner_ec2.tf`](../infra/runner_ec2.tf)) and never hardcode an id.
+12. **`.github/workflows/deploy.yml`** — ~~a top-level `EC2_INSTANCE_ID: i-01803d3abc271d39b` naming the single-box host decommissioned 2026-08-19~~ **fixed 2026-08-31** (same branch): no job had read it since the #1039 fast-follow retired the SSM `deploy` job, so it was dead env pointing at a dead box. The runners that *do* live on EC2 resolve their instance by name tag at runtime (`deploy-runners.yml`, [`infra/runner_ec2.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/runner_ec2.tf)) and never hardcode an id.
 
 ## 10. What the pre-#1192 Architecture page got wrong (headline items)
 

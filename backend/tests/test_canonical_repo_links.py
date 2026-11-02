@@ -90,7 +90,6 @@ PRE_RENAME_NAMES = ("archimedes-" + "arcadia",)
 LIVE_ROOTS = (
     "ui/src",
     "ui/public",
-    "infra",
     "backend",
     "contracts",
     "docs/runbooks",
@@ -140,7 +139,7 @@ def test_the_scan_reaches_the_files_it_is_policing() -> None:
     assert len(scanned) > 200, f"only {len(scanned)} files scanned — the walk is broken"
     for expected in (
         "ui/src/components/WalletConnect.jsx",
-        "infra/README.md",
+        "scripts/setup-branch-protection.sh",
         "docs/runbooks/github-security-toggles.md",
         "CLAUDE.md",
         # The published wiki tree, brought under the scan by #1756.
@@ -256,14 +255,10 @@ _DATED_RECORD = re.compile(r"(?<!\d)\d{4}-\d{2}(?:-\d{2})?(?!\d)")
 #: Deliberate mentions of the pre-rename org that must stay green. These are the
 #: reason ``PRE_RENAME_NAMES`` could not simply grow a bare org entry (#1758).
 DELIBERATE_ORG_MENTIONS = (
-    # The Pages host #1634 moved off, quoted by the two docs-site guards.
-    "backend/tests/test_docs_site.py",
+    # The Pages host #1634 moved off, quoted by the docs-link guard. (The
+    # docs-site and deploy files that also carried it were removed with the
+    # hosted stack on 2026-11-01.)
     "ui/test/docs-link.test.js",
-    "docs-site/infra/main.tf",
-    # Incident narrative: the rename itself, and what it broke.
-    "docs/runbooks/docs-site-setup.md",
-    "infra/scripts/setup-github-oidc.sh",
-    ".github/workflows/deploy.yml",
 )
 
 
@@ -329,8 +324,6 @@ def test_the_org_scan_reaches_the_live_surfaces() -> None:
         # The surface that actually rotted in #1434.
         "ui/src/components/WalletConnect.jsx",
         "backend/archimedes/main.py",
-        # A live doc that quotes the rename narrative and must stay green.
-        "docs/runbooks/docs-site-setup.md",
         # The published wiki: outside every root until #1756, and it was
         # carrying four live pre-rename links when that was noticed.
         "openwiki/INSTRUCTIONS.md",

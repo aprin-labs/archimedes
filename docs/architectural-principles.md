@@ -203,12 +203,12 @@ fallback is a defect regardless of how defensively it reads.
 `secrets_service.load_ssm_secrets()` itself is deliberately fail-soft (see its docstring) —
 it is a *fallback* path for local/dev, never the thing production trusts to boot correctly.
 Production's actual load-bearing guarantee for the web/auth ECS services is the task
-definition's `secrets` block in [`infra/ecs.tf`](../infra/ecs.tf): ECS refuses to launch the
+definition's `secrets` block in [`infra/ecs.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/ecs.tf): ECS refuses to launch the
 task at all if any of `DATABASE_URL`, `REDIS_URL`, `AURORA_MASTER_PASSWORD`,
 `EMAIL_ENCRYPTION_KEY`, `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`, `WALLET_ID`, or
 `TIINGO_API_TOKEN` fails to resolve — a startup abort, not a silent degrade. For the
 standalone oracle/agent EC2 runner, the equivalent gate is
-[`infra/runner-user-data.sh`](../infra/runner-user-data.sh)'s `fetch-secrets.sh`, which
+[`infra/runner-user-data.sh`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/runner-user-data.sh)'s `fetch-secrets.sh`, which
 `exit 4`s before writing the `--env-file` (so `systemctl start` never launches the
 container) if `DATABASE_URL`, `REDIS_URL`, `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`,
 `WALLET_ID`, or `AGENT_DRY_RUN` is absent.

@@ -2,7 +2,7 @@
 
 > **status:** current
 > **owner:** Dan Browne
-> **updated:** 2026-09-02
+> **updated:** 2026-11-01
 > **superseded-by:** —
 
 Every document in `docs/`, with its status, its owner and the date someone last
@@ -17,12 +17,10 @@ Everything under [`archive/`](archive/) is historical by definition and is index
 
 | Archived doc | Status | Owner | Archived | What it is |
 |---|---|---|---|---|
-| [`archive/deployment-runbook.md`](archive/deployment-runbook.md) | archived | Dan Browne | 2026-07-28 | EC2-era manual / break-glass AWS deploy runbook. **Do not execute** — it routes to an instance detached from the ALB target group. Kept for its incident history and diagrams. The Fargate-era replacement is unwritten; the gap is named in [`runbooks/README.md`](runbooks/README.md). |
+| [`archive/deployment-runbook.md`](archive/deployment-runbook.md) | archived | Dan Browne | 2026-07-28 | EC2-era manual / break-glass AWS deploy runbook. **Do not execute** — it routes to an instance detached from the ALB target group. Kept for its incident history and diagrams. No replacement: the hosted stack was torn down on 2026-11-01 (see [`runbooks/README.md`](runbooks/README.md)). |
 
-`archive/` is **not published to the docs site** (`exclude_docs` in `mkdocs.yml`); the
-link above resolves on GitHub, and on the site it is rewritten to the GitHub tree by
-`.github/scripts/mkdocs_hooks.py`. The rest of this register links pages that are on
-the site unless their row says otherwise.
+There is no published docs site: the mkdocs site at `docs.archimedes-arc.com` was shut
+down with the hosted service on 2026-11-01, and these docs are read in the repository.
 
 Repo root: [`../README.md`](../README.md) · [`../SETUP.md`](../SETUP.md) · [`../CLAUDE.md`](../CLAUDE.md) · [`../AGENTS.md`](../AGENTS.md)
 
@@ -32,14 +30,14 @@ Repo root: [`../README.md`](../README.md) · [`../SETUP.md`](../SETUP.md) · [`.
 
 | Doc | Status | Owner | Last verified | What it is |
 | --- | --- | --- | --- | --- |
-| [`index.md`](index.md) | current | Dan Browne | 2026-09-02 | The public front door of `docs.archimedes-arc.com`: the identity line, the three reader doors, what ships today with the endpoint printed beside each number, what the product does **not** do, and the two honesty artifacts. Every number on it is a live read, printed with the date it was read — the docs build stays hermetic. |
+| [`index.md`](index.md) | current | Dan Browne | 2026-09-02 | The front door of the docs (formerly published at `docs.archimedes-arc.com`, shut down 2026-11-01): the identity line, the three reader doors, what ships today with the endpoint printed beside each number, what the product does **not** do, and the two honesty artifacts. Every number on it is a live read, printed with the date it was read — the docs build stays hermetic. |
 | [`doc-index.md`](doc-index.md) | current | Dan Browne | 2026-09-02 | This register. Enforced by `.github/scripts/docs_index.py`, which fails the docs gate when a `docs/**/*.md` file is listed neither here nor in a sub-index this file links to. |
 
 ## Architecture — start here
 
 | Doc | Status | Owner | Last verified | What it is |
 | --- | --- | --- | --- | --- |
-| [`architecture.md`](architecture.md) | current | Dan Browne | 2026-09-01 | System architecture map. ECS Fargate + ALB + CloudFront + WAF, Aurora PostgreSQL 18.3, ElastiCache Redis 7.1. Every claim is a link to a file. Amended 2026-09-01: reveal is hash-only, no IPFS pin (#1526). |
+| [`architecture.md`](architecture.md) | current | Dan Browne | 2026-09-01 | System architecture map. Its production columns describe the hosted stack torn down on 2026-11-01: ECS Fargate + ALB + CloudFront + WAF, Aurora PostgreSQL 18.3, ElastiCache Redis 7.1. Every claim is a link to a file. Amended 2026-09-01: reveal is hash-only, no IPFS pin (#1526). |
 | [`reference/file-tree.md`](reference/file-tree.md) | reference | Dan Browne | 2026-07-14 | Repository map generated alongside the architecture map. |
 | [`reference/flow-diagram.mmd`](reference/flow-diagram.mmd) | reference | Dan Browne | 2026-07-14 | Request/generation flow, Mermaid source (`flow-diagram.svg`, `file-tree.svg` render it). |
 | [`database-architecture.md`](database-architecture.md) | current | Dan Browne | 2026-08-31 | Data stores, schemas, migration posture. The § 2.3 table list is a 2026-06-28 cutover inventory and has drifted ~15 tables — `backend/archimedes/db.py` is the live source; see `database-relations.md` for FKs and deletion policy. |
@@ -153,15 +151,11 @@ Repo root: [`../README.md`](../README.md) · [`../SETUP.md`](../SETUP.md) · [`.
 | [`runbooks/arc-testnet-e2e-evidence.md`](runbooks/arc-testnet-e2e-evidence.md) | evidence | Önder Akkaya | 2026-05-26 | Replayable on-chain evidence for SPEC-1. |
 | [`runbooks/spec-1-walkthrough.md`](runbooks/spec-1-walkthrough.md) | runbook | Dan Browne | — | SPEC-1 user-journey walkthrough. |
 | [`runbooks/t3.2-contract-redeploy.md`](runbooks/t3.2-contract-redeploy.md) | runbook | Dan Browne | — | Contract redeploy procedure and secret handling. |
-| [`runbooks/docs-site-setup.md`](runbooks/docs-site-setup.md) | runbook | Dan Browne | 2026-08-31 | Docs site at `docs.archimedes-arc.com` on our own S3 + CloudFront (#1634): apply `docs-site/infra`, publish, invalidate, roll back, local preview, and what `mkdocs build --strict` guards. |
 | [`operations/feature-flag-fliplist.md`](operations/feature-flag-fliplist.md) | current | Dan Browne | 2026-08-31 | The go-live checklist (#834): every feature flag in the tree, classified LIVE / FLIP-AT-LAUNCH / DEAD, with its deployed value, its reader, and the precondition for flipping it. Enforced in both directions — `backend/tests/test_feature_flag_fliplist_drift.py` re-derives the inventory and fails CI on any flag with no row, and on any actionable row whose flag no longer has a reader. |
 | [`runbooks/backtest-results-retention.md`](runbooks/backtest-results-retention.md) | runbook | Dan Browne | 2026-08-30 | `backtest_results` archive-then-prune procedure (v8 Lane 3.1): keep policy, `archive_backtest_results.py`'s `--plan`/`--archive`/`--prune` flags, the manifest-verification guard, and the post-prune VACUUM step. |
 | [`runbooks/erc8004-identity-registration.md`](runbooks/erc8004-identity-registration.md) | runbook | Dan Browne | 2026-08-31 | Minting the ERC-8004 agent identity on Arc (#1527): the live-verified registry facts, `--plan`/`--verify`/`--execute`, the Circle-signed owner step, and why `ERC8004_AGENT_ID` points at a token rather than making a claim. |
-| [`runbooks/runner-ec2-wedge.md`](runbooks/runner-ec2-wedge.md) | runbook | Dan Browne | 2026-08-31 | `archimedes-runner` wedge (#1402): the impaired-instance-check + dead-SSM-agent signature, read-only diagnosis commands, the recovery ladder, what the new `ec2:reboot` alarm automates, and the operator-only steps (`terraform apply`, the one-time live reboot test). |
-| [`runbooks/cloudfront-cache-behaviour-apply.md`](runbooks/cloudfront-cache-behaviour-apply.md) | runbook | Dan Browne | 2026-09-03 | Applying a CloudFront cache-behaviour change: why merging `infra/cloudfront.tf` changes nothing on its own, the exact plan to expect for #1768 (applied) and #1776 (+7 static-asset behaviours on `aws_cloudfront_distribution.main`, nothing else), the mid-list-insert rendering caveat with a real rendered plan, when an invalidation is and is not needed, the `age`/`x-cache` verification, and the rollbacks. |
 | [`runbooks/email-verification-validation.md`](runbooks/email-verification-validation.md) | runbook | Dan Browne | 2026-08-31 | Live validation of signup verification + password reset before `EMAIL_VERIFICATION_ENFORCED` flips: pre-flight AWS/DNS/log checks, the local console-mailer rehearsal, the sandbox-safe production test, the reset rehearsal (including session revocation and link replay), the flip's exact blast radius and rollback, six audit findings that gate it, and the SES sandbox-vs-production gotchas. |
 | [`runbooks/ses-suppression.md`](runbooks/ses-suppression.md) | runbook | Dan Browne | 2026-09-01 | The AWS **account-level** SES suppression list (#1748 item 4): why a suppressed address makes `SendEmail` succeed and silently drop the message, how to inspect the list read-only, the three conditions that must all hold before an address comes off, and why there is deliberately no bulk clear. Driven by `backend/archimedes/scripts/ses_suppression.py` — dry-run by default, `--apply` to act. |
-| [`runbooks/dmarc-reports.md`](runbooks/dmarc-reports.md) | runbook | Dan Browne | 2026-09-03 | The DMARC aggregate-report inbox (#1504): the receipt-rule → private-S3 wiring that makes reports arrive at all, how to read a per-source-IP pass/fail table, why `policy_evaluated` and not `auth_results` is DMARC, the four conditions that gate moving off `p=none`, the `quarantine`→`reject` ramp and how to roll it back, and the diagnosis ladder for silence. Driven by `scripts/dmarc_report_summary.py` — exits non-zero rather than printing an empty all-clear table. |
 | [`runbooks/curated-backtests.md`](runbooks/curated-backtests.md) | runbook | Dan Browne | 2026-09-01 | Producing curated backtest rows with `run_backtests.py` (#1760): the three triggers that justify a run (a strategy file changed, a data-quality fix, an owner decision — never a calendar), the one-off Fargate `run-task` invocation and its waiter caveat, how to read the summary line, and the four constraints this must never break (no clock, no boot hook, never in the serving process, never for generated strategies). |
 | [`runbooks/market-data-provider-proof.md`](runbooks/market-data-provider-proof.md) | runbook | Dan Browne | 2026-09-01 | Getting `TIINGO_API_TOKEN` onto the running backend container (#1798): why the SSM parameter existed for a day and a half with nothing reading it, the two registrars for the task definition (#1799) and which one actually ships, the `verify_market_data.py` proof pull and what to paste on the issue, and why flipping the daily seam (`MARKET_DATA_DAILY_PROVIDER`, #1798) is a separate owner call — and why setting the wider `MARKET_DATA_PROVIDER` instead moves daily bars by the back door. |
 | [`incidents/2026-09-03-paper-advance-ddl-wedge.md`](incidents/2026-09-03-paper-advance-ddl-wedge.md) | current | Dan Browne | 2026-09-03 | The 2026-09-03 P0 (#1818): the paper-advance child ran `init_db()` DDL every cycle in both ECS tasks, wedging Postgres on a lock chain PostgreSQL could not see. Full timeline, the six-part mechanism, what the P1 PR fixes, and what it deliberately leaves to P2–P6 (including P6: `init_db()` still runs on the serving path). |

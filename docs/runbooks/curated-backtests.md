@@ -69,12 +69,16 @@ understand: a permanently-missing row made its staleness check true forever, on 
 
 ## 2. How to run it — production
 
+> **Retired 2026-11-01.** The hosted stack this section targets (ECS cluster, Aurora, the
+> one-off Fargate task) was torn down. Kept as the record of how the hosted rows were
+> produced; to produce rows today, use § 3.
+
 `run_backtests` needs three things: the prod `DATABASE_URL`, the curated strategy files, and
 network egress for market data. The **one-off Fargate task** gives it all three and — critically
 — runs it **off the serving tasks**, which is the whole lesson of #1760.
 
 Use the dedicated single-container `archimedes-migrate` task-definition family
-([`../../infra/ecs_migrate.tf`](../../infra/ecs_migrate.tf)) with a command override. It exists
+([`../../infra/ecs_migrate.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/ecs_migrate.tf)) with a command override. It exists
 for exactly this shape of work: same image, same task/execution roles, same SSM-backed
 `DATABASE_URL`, no nginx sidecar, no health check, runs to completion and stops. This is the
 same mechanism `.github/workflows/deploy.yml`'s `migrate` job uses for
@@ -113,7 +117,7 @@ aws logs tail /archimedes/app --since 1h --filter-pattern '"backtest run summary
 
 **Expect this to take a while, and expect the waiter to give up before the task does.** The
 migrate family is sized at `ecs_backend_cpu` / `ecs_backend_memory` — **1 vCPU / 3072 MiB**
-([`../../infra/variables.tf`](../../infra/variables.tf)) — and a full curated-library run was
+([`../../infra/variables.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/variables.tf)) — and a full curated-library run was
 observed at ~15 minutes on a 2-vCPU box. `aws ecs wait tasks-stopped` polls every 6 s for 100
 attempts (**10 minutes**) and then fails; that is the *waiter* timing out, **not** the task.
 Do not re-run on a waiter timeout — re-issue the wait, or poll `describe-tasks` yourself:
@@ -150,7 +154,7 @@ exactly the CPU contention #1760 was about. Run one at a time.
    **not writable** by the nonroot task user. Unset, the script falls back to a temp dir and
    logs a WARNING; before that fallback existed this was a silent `PermissionError` that froze
    the leaderboard at its 2026-07-01 rows for six weeks. The override above pins it to
-   task-local scratch, matching what [`../../infra/ecs.tf`](../../infra/ecs.tf) sets for the
+   task-local scratch, matching what [`../../infra/ecs.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/ecs.tf) sets for the
    service container. The durable record is the DB row's `artifact_json`, not the file — the
    ephemeral path is deliberate.
 4. **The data window.** Defaults are `BACKTEST_START=2004-01-02` and `BACKTEST_END` = today,
@@ -159,8 +163,8 @@ exactly the CPU contention #1760 was about. Run one at a time.
    window from the rest of the library — say so wherever the numbers get used.
 5. **Which image actually ran.** `--task-definition archimedes-migrate` resolves to that
    family's last **Terraform-applied** revision, whose image tag is `var.backend_image_tag` =
-   `latest` ([`../../infra/ecs_migrate.tf`](../../infra/ecs_migrate.tf),
-   [`../../infra/variables.tf`](../../infra/variables.tf)). CI re-registers only the
+   `latest` ([`../../infra/ecs_migrate.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/ecs_migrate.tf),
+   [`../../infra/variables.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/variables.tf)). CI re-registers only the
    `archimedes-backend` family, but it does push `:latest` alongside `:<commit-sha>` on every
    deploy — so the run executes current `main`, which is **not necessarily the digest the
    service is serving**. This ADR's whole thesis is that a backtest is dated evidence, so
@@ -174,7 +178,7 @@ exactly the CPU contention #1760 was about. Run one at a time.
 ### Alternative: `aws ecs execute-command` into a running task
 
 The backend service has `enable_execute_command = true`
-([`../../infra/ecs.tf`](../../infra/ecs.tf)), so shelling into a serving task and running the
+([`../../infra/ecs.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/ecs.tf)), so shelling into a serving task and running the
 module there is *possible*.
 
 **Do not do it for a full library run.** That is #1760 reproduced by hand: the library run

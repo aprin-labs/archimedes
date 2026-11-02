@@ -197,7 +197,7 @@ the ADR should be readable without the runbook and because it is the form that w
 inside a task (the repo-root `scripts/` tree is not in the backend image).
 
 The backend service runs with
-`enable_execute_command = true` ([`../../infra/ecs.tf`](../../infra/ecs.tf)), and a
+`enable_execute_command = true` ([`../../infra/ecs.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/ecs.tf)), and a
 single-symbol read is exactly the "exec is for reading state" case
 ([`../runbooks/curated-backtests.md`](../runbooks/curated-backtests.md) § Alternative).
 

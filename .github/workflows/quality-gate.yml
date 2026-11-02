@@ -20,7 +20,7 @@ on:
     branches: [main]
   # Also runs on direct pushes to main so test results are visible in CI history
   # (the agentic CI system pushes directly to main; this surfaces test status
-  # without blocking deployment — deploy.yml is a separate workflow).
+  # on main itself — there is no deploy workflow).
   push:
     branches: [main]
 
@@ -29,21 +29,6 @@ permissions:
   pull-requests: write
 
 jobs:
-  # Deliberately NOT path-filtered, and deliberately in this always-on
-  # workflow. A path-filtered job that is later marked a required status check
-  # never reports on a PR that misses its paths, so the check sits in
-  # "Expected" forever and that PR can never merge. This job runs on every PR,
-  # costs a couple of seconds, and is therefore safe to require.
-  infra-guards:
-    name: Infra — user-data size guard
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # `bash <script>` rather than `./<script>` so the job does not depend on
-      # the executable bit surviving every checkout/copy path.
-      - name: EC2 user-data stays under the 16 KB limit
-        run: bash ./infra/scripts/check-user-data-size.sh
-
   # The analytics engine had NO CI coverage at all until now. pytest.ini sets
   # `testpaths = backend/tests` and lists analytics-engine under
   # `norecursedirs`, and no workflow ran its suite — so its 227 tests never
@@ -53,10 +38,9 @@ jobs:
   # verification of the code it changed. The engine sits on the MVP critical
   # path; it gets its own gate.
   #
-  # Deliberately NOT path-filtered, for the same reason as infra-guards above:
-  # a path-filtered job marked as a required check never reports on PRs that
-  # miss its paths, so the check sits in "Expected" forever and the PR can
-  # never merge.
+  # Deliberately NOT path-filtered: a path-filtered job that is marked a
+  # required status check never reports on a PR that misses its paths, so the
+  # check sits in "Expected" forever and that PR can never merge.
   # Guards the alembic chain against the recurring fork bug: two PRs each add
   # a migration whose down_revision points at the SAME parent (the head each
   # saw when it branched). Whichever merges first becomes the new head; the
@@ -64,10 +48,9 @@ jobs:
   # head` can't resolve that on its own. Bit three times already (the Aug 3
   # deploy, and twice on #1194).
   #
-  # Deliberately NOT path-filtered at the trigger level, for the same reason
-  # as infra-guards above: a path-filtered required check never reports on a
-  # PR that misses its paths, so it sits in "Expected" forever and blocks
-  # merge permanently. The script itself early-exits the moment it finds no
+  # Deliberately NOT path-filtered at the trigger level: a path-filtered
+  # required check never reports on a PR that misses its paths, so it sits in
+  # "Expected" forever and blocks merge permanently. The script itself early-exits the moment it finds no
   # changed migration files vs the merge-base — checkout + one git diff, no
   # pip install — so a non-migration PR pays only a few seconds for this job.
   migration-chain-guard:
@@ -143,7 +126,7 @@ jobs:
         # the index URL and the two torch packages (issue #1522), so CI installs
         # it directly instead of grepping the exclusions back out at runtime.
         run: |
-          pip install --quiet -r backend/requirements-base.txt "pytest>=8.3" "pytest-asyncio>=0.24" "pytest-cov>=5.0" "fakeredis[lua]>=2.26.0" "pathspec>=0.12"
+          pip install --quiet -r backend/requirements-base.txt "pytest>=8.3" "pytest-asyncio>=0.24" "pytest-cov>=5.0" "fakeredis[lua]>=2.26.0"
       - name: Test
         run: pytest -m "not integration" --tb=short -q
       - name: CLI tests
@@ -334,7 +317,7 @@ jobs:
       # Same torch/sentence-transformers skip as the unit-test job above
       # (CDN-independent) — requirements-base.txt is exactly that set (#1522).
       - run: |
-          pip install --quiet -r backend/requirements-base.txt "pytest>=8.3" "pytest-asyncio>=0.24" "pytest-cov>=5.0" "pathspec>=0.12"
+          pip install --quiet -r backend/requirements-base.txt "pytest>=8.3" "pytest-asyncio>=0.24" "pytest-cov>=5.0"
       - run: pytest -m "not integration" --cov=archimedes --cov-fail-under=60 --tb=short -q
 
   supply-chain:

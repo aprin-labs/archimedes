@@ -31,13 +31,12 @@ dependencies:
 
   # Infra / cloud CLI tooling — conda-forge binaries, pinned so the whole team
   # (and a from-scratch setup) gets one consistent version for IaC + AWS work.
-  - terraform>=1.10   # IaC for the AWS stack (infra/*.tf). >=1.10 required for S3-native
-                      #   state locking (use_lockfile=true; see infra/README.md). Verified 1.15.3.
+  - terraform>=1.10   # IaC for company-site/infra (aprin.ai). >=1.10 required for S3-native
+                      #   state locking (use_lockfile=true; see company-site/README.md). Verified 1.15.3.
   - awscli>=2.15      # AWS CLI v2 (conda-forge ships v2). v2 is REQUIRED for `aws configure sso`
                       #   / IAM Identity Center — v1's SSO support is insufficient. Verified 2.34.48.
-  # NOTE: aws-sam-cli is intentionally NOT here — it is not packaged on conda-forge.
-  #   Install via Homebrew (`brew install aws-sam-cli`). See infra/README.md
-  #   "Local CLI tooling" for when SAM actually applies (Lambda/serverless only).
+  # NOTE: aws-sam-cli is intentionally NOT here — it is not packaged on conda-forge,
+  #   and nothing in the repo uses it (Lambda/serverless only).
 
   # Python deps installed via pip — pinned loosely; tighten in pyproject.toml as the project firms up.
   - pip:
@@ -74,7 +73,6 @@ dependencies:
       - pytest-asyncio>=0.24
       - pytest-cov>=5.0
       - "fakeredis[lua]>=2.26.0"         # Test double for Redis in marketplace unit tests (test_state.py); dev-only, not in prod requirements.txt
-      - pathspec>=0.12                # gitignore-style matching, the library mkdocs compiles `exclude_docs`/`not_in_nav` with. Required by the docs publication guards (test_docs_default_deny.py, test_mkdocs_exclude_docs_matches.py) so they assert what the site build actually does; dev/test-only, not in prod requirements.txt. Mirrored in .github/workflows/quality-gate.yml's two pip install lines.
       - mypy>=1.11
       - "pip-audit>=2.7"              # Supply-chain CVE scanner — run `pip-audit` to check installed deps against the PyPI vulnerability DB. Not yet a CI gate; advisory only.
 

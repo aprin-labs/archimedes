@@ -37,33 +37,21 @@
 #     ECR_REGISTRY=… IMAGE_TAG=<sha> \
 #       docker compose -f docker-compose.yml -f docker-compose.ecr.yml pull
 #
-# Note that nothing in CI or production consumes these keys today: since the
-# Fargate cutover, `.github/workflows/deploy.yml` registers ECS task
-# definitions with explicit image URIs and `deploy-runners.yml` uses raw
-# `docker pull`/`docker tag` over SSM. Compose is a local-development tool.
+# Note that nothing in CI consumes these keys, and there is no hosted
+# production any more: the deploy workflows and the ECS stack were removed
+# when the hosted deployment was torn down on 2026-11-01. Compose is the only
+# deployment path.
 # Guarded by backend/tests/test_compose_no_prod_image_default.py.
 #
 # ── Compose profiles in this file (two independent gates) ──────────────────
 #   `localdb` — postgres + redis, LOCAL DEV ONLY (see the "Data stores" note
-#     just below). PRODUCTION's box .env has historically omitted
-#     COMPOSE_PROFILES entirely, so these never start there — the app talks
-#     to managed Aurora + ElastiCache via DATABASE_URL / REDIS_URL instead.
+#     just below). Leave it out of COMPOSE_PROFILES to point the app at an
+#     external Postgres / Redis via DATABASE_URL / REDIS_URL instead.
 #   `runners` — oracle / agent / kb-runner (#1043). These are funds-adjacent
 #     exactly-once singletons (see services/runner_lease.py) — a bare local
 #     `docker compose up` (demo/UI work) should NOT spin up a second live
 #     copy racing whatever the operator already has running elsewhere. They
 #     start ONLY when `runners` is in COMPOSE_PROFILES.
-#     *** OPERATOR NOTE ***
-#     This file doubles as the box's actual production compose file
-#     (deploy.yml runs `docker compose up -d` against it). The production
-#     box's own .env is SELF-HEALED automatically by
-#     .github/workflows/deploy.yml on every deploy — it idempotently ensures
-#     `runners` is present in COMPOSE_PROFILES there, so oracle/agent/
-#     kb-runner keep starting with no manual step required. `runners` is off
-#     by default here (this file / .env.example) only for LOCAL
-#     `docker compose up` (demo/UI work), so it doesn't accidentally spin up
-#     a second live copy racing whatever the operator already has running
-#     elsewhere.
 services:
   # ---------- Data stores (LOCAL ONLY — see profiles note) ----------
   # postgres + redis run ONLY when the `localdb` profile is active
@@ -163,10 +151,10 @@ services:
       NGINX_AUTH_UPSTREAM: "auth:3000"
       NGINX_UPSTREAM_RESOLVE: "resolve"
     ports:
-      # TLS terminates upstream at CloudFront + the ALB; nginx serves plain
-      # HTTP on :8080. No :443/8443 mapping and no cert mounts — the
-      # in-container self-signed-cert stopgap is retired (the ALB→nginx hop is
-      # plain HTTP, so large responses no longer 502 through that TLS layer).
+      # nginx serves plain HTTP on :8080, with no :443/8443 mapping and no
+      # cert mounts. A local install needs no TLS; to expose it publicly, put
+      # a TLS-terminating proxy in front (the hosted deployment used
+      # CloudFront + an ALB, both torn down 2026-11-01).
       - "${ARCHIMEDES_HTTP_PORT:-80}:8080"
     depends_on:
       backend:
@@ -334,8 +322,8 @@ services:
       # env (e.g. EMAIL_ENCRYPTION_KEY, which prod mode fail-closes on). Two
       # independent things must both be true for that fetch to happen:
       #   1. PUBLIC_DOMAIN is set — main.py's "am I production" gate (#1044).
-      #      This is the one that actually stops the fetch, and it is why prod
-      #      sets PUBLIC_DOMAIN alongside the prefix in infra/ecs.tf:516-519.
+      #      This is the one that actually stops the fetch (the hosted
+      #      deployment, torn down 2026-11-01, set both).
       #   2. AWS_SSM_PATH_PREFIX is non-empty — secrets_service returns 0 on a
       #      blank prefix.
       # The default below is BLANK, not /archimedes/prod/. It used to be the
@@ -345,11 +333,9 @@ services:
       # container and left the PUBLIC_DOMAIN gate as the only thing between a
       # local `docker compose up` and production secrets. Defence in depth is
       # the point: neither layer may quietly disarm the other.
-      # Production does NOT get this value from compose — post-Fargate, prod is
-      # an ECS task definition (infra/ecs.tf, infra/ecs_migrate.tf) that sets
-      # the prefix explicitly; compose is local-only. Exporting
-      # AWS_SSM_PATH_PREFIX (plus PUBLIC_DOMAIN) still opts a compose run in,
-      # for anyone deliberately mimicking prod.
+      # Exporting AWS_SSM_PATH_PREFIX (plus PUBLIC_DOMAIN) opts a compose run
+      # in to the SSM load, for anyone deliberately mimicking the old hosted
+      # production.
       AWS_SSM_PATH_PREFIX: ${AWS_SSM_PATH_PREFIX:-}
       AWS_REGION: ${AWS_REGION:-us-east-1}
     env_file:

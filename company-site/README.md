@@ -28,6 +28,67 @@ chosen) and deployed on its own.
   so `plan`/`apply` are owner-executed, never CI. Nothing in this repo applies it
   automatically.
 
+## Terraform state backend (S3)
+
+State for `infra/main.tf` lives in the S3 bucket `archimedes-tfstate-037613907429`
+(us-east-1) under the key `company-site/terraform.tfstate`, with S3-native locking
+(Terraform 1.10+, `use_lockfile = true`; no DynamoDB table). The bucket originally held
+the product's own Terraform state as well; that stack was torn down on 2026-11-01, and
+the bucket now serves only this stack.
+
+The bucket was created out-of-band with the AWS CLI (infrastructure-of-infrastructure:
+it never changes and is deliberately not managed by Terraform). This is the record of
+how it was bootstrapped, so it can be audited or rebuilt.
+
+### Bootstrap commands (run once, already done)
+
+```bash
+# S3 bucket — versioned, encrypted, no public access
+aws s3api create-bucket \
+  --bucket archimedes-tfstate-037613907429 \
+  --region us-east-1
+
+aws s3api put-bucket-versioning \
+  --bucket archimedes-tfstate-037613907429 \
+  --versioning-configuration Status=Enabled
+
+aws s3api put-bucket-encryption \
+  --bucket archimedes-tfstate-037613907429 \
+  --server-side-encryption-configuration \
+  '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+
+aws s3api put-public-access-block \
+  --bucket archimedes-tfstate-037613907429 \
+  --public-access-block-configuration \
+  BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+
+# Bucket policy: deny non-TLS + restrict to account only
+aws s3api put-bucket-policy \
+  --bucket archimedes-tfstate-037613907429 \
+  --policy '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {"Sid":"DenyNonTLS","Effect":"Deny","Principal":"*","Action":"s3:*",
+       "Resource":["arn:aws:s3:::archimedes-tfstate-037613907429","arn:aws:s3:::archimedes-tfstate-037613907429/*"],
+       "Condition":{"Bool":{"aws:SecureTransport":"false"}}},
+      {"Sid":"RestrictToAccount","Effect":"Deny","Principal":"*","Action":"s3:*",
+       "Resource":["arn:aws:s3:::archimedes-tfstate-037613907429","arn:aws:s3:::archimedes-tfstate-037613907429/*"],
+       "Condition":{"StringNotEquals":{"aws:PrincipalAccount":"037613907429"}}}
+    ]}'
+```
+
+### Credentials (every session)
+
+The S3 backend and the AWS provider use your SSO credentials, so Terraform needs
+`AWS_PROFILE` exported. Without it, Terraform falls through to EC2 instance metadata
+and dies with *"No valid credential sources found / no EC2 IMDS role found."*
+
+```bash
+aws sso login --profile ArchimedesDanAdmin           # refresh the SSO session
+export AWS_PROFILE=ArchimedesDanAdmin AWS_REGION=us-east-1
+aws sts get-caller-identity                          # smoke-test (account 037613907429)
+```
+
 ## Drop-in / extraction steps
 
 When the domain and hosting decision land:

@@ -61,9 +61,9 @@ ALLOWED_STATUSES = frozenset({"TRUE", "CHANGED", "RETRACTED", "OVER-CLAIMED", "P
 # citations to files at the repo root that do not exist.
 # `conf` and `tf` joined the list on 2026-08-31 with the Security-page rows. That page's
 # claims are enforced in `nginx/nginx.conf` (the CSP, HSTS, framing and rate-limit zones)
-# and pinned in `infra/ecs.tf` (the money switches), so without those two extensions its
-# most load-bearing evidence would have been backticked prose the guard silently skipped —
-# a row reading as cited while nothing resolved it. Both require a directory component
+# and were pinned in the hosted stack's Terraform (removed 2026-11-01), so without those two
+# extensions its most load-bearing evidence would have been backticked prose the guard
+# silently skipped — a row reading as cited while nothing resolved it. Both require a directory component
 # like every other citation, so a bare `nginx.conf` shorthand is still not a citation.
 _CITATION_RE = re.compile(
     r"`((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.(?:py|jsx|js|md|json|txt|sol|html|xml|yml|yaml|toml|sh|css|conf|tf)"
@@ -116,8 +116,6 @@ _SYMBOL_PINS: tuple[tuple[str, str], ...] = (
     ("backend/archimedes/services/generation_payment.py", "def settles_real_value"),
     ("backend/archimedes/services/generation_payment.py", "async def enforce_generation_payment"),
     ("backend/archimedes/services/generation_payment.py", "payer_mismatch"),
-    ("infra/ecs.tf", '{ name = "GENERATION_PAYMENT_REQUIRED", value = "true" }'),
-    ("infra/ecs.tf", '{ name = "GENERATION_PAYMENTS_DRY_RUN", value = "false" }'),
     ("ui/test/roadmap-copy.test.js", "EXECUTION_CLAIM_PATTERN"),
     # Paper-trading row (2026-09-03, #1807). The ledger says the "carries to mainnet"
     # retraction is guarded by a word-level ban over four named files; PAPER_SURFACES is
@@ -326,15 +324,15 @@ class TestPendingExemptionsRetireThemselves:
         )
 
 
-# `{ name = "<var>", value = "<value>" }` — the shape every env entry in the ECS container
-# definitions takes (see infra/ecs.tf). Matched against committed text only, same as every
-# other check in this file: no import of archimedes, no reading of the live task definition.
-_ECS_ENV_VAR_RE = re.compile(r'\{\s*name\s*=\s*"(?P<name>[^"]+)"\s*,\s*value\s*=\s*"(?P<value>[^"]*)"\s*\}')
+# An uncommented `NAME=value` line in a dotenv template. Matched against committed text
+# only, same as every other check in this file: no import of archimedes, no reading of a
+# real `.env`.
+_DOTENV_ASSIGN_RE = re.compile(r"^[ \t]*(?P<name>[A-Z][A-Z0-9_]*)[ \t]*=[ \t]*\"?(?P<value>[^\"\s#]*)", re.M)
 
 
-def _pinned_env_value(hcl_text: str, var_name: str) -> str | None:
-    """The value pinned for `var_name` in an ECS container `environment` block, or None if unpinned."""
-    for m in _ECS_ENV_VAR_RE.finditer(hcl_text):
+def _template_env_value(dotenv_text: str, var_name: str) -> str | None:
+    """The value an uncommented `var_name=` line sets in a dotenv template, or None if unset."""
+    for m in _DOTENV_ASSIGN_RE.finditer(dotenv_text):
         if m.group("name") == var_name:
             return m.group("value")
     return None
@@ -343,39 +341,35 @@ def _pinned_env_value(hcl_text: str, var_name: str) -> str | None:
 class TestVendorCutoverStillPending:
     """Self-retiring pin for the claims-ledger row 'Paid analysis runs on licensed data'.
 
-    That row is `PENDING VENDOR CUTOVER`: the ADR is merged and the Tiingo secret is wired
-    (#1798), but nothing has pointed a seam's default vendor at it. Since #1798 the daily
-    seam reads `MARKET_DATA_DAILY_PROVIDER`, falling back to `MARKET_DATA_PROVIDER`
+    That row is `PENDING VENDOR CUTOVER`: the ADR is merged and the Tiingo provider is
+    built (#1798), but nothing has pointed a seam's default vendor at it. Since #1798 the
+    daily seam reads `MARKET_DATA_DAILY_PROVIDER`, falling back to `MARKET_DATA_PROVIDER`
     (`market_data_provider.py::provider_name`), and defaults to `"yfinance"` when neither is
-    set. `infra/ecs.tf` pins neither today. The moment it pins either to something other
-    than `"yfinance"`, the owner has performed the cutover and this pin goes red — on
-    purpose, so the ledger row cannot rot true by silent drift the way the equivalent
-    file-existence exemption above already did once.
+    set. Until 2026-11-01 this pin read the hosted task definition; that stack is gone, and
+    what a local install gets by default is the template, `.env.example`, which sets
+    neither today. The moment it sets either to something other than `"yfinance"`, the
+    cutover has happened and this pin goes red — on purpose, so the ledger row cannot rot
+    true by silent drift.
     """
 
-    def test_ecs_tf_pins_no_non_yfinance_daily_provider(self):
-        ecs_tf = (REPO_ROOT / "infra" / "ecs.tf").read_text()
+    def test_env_template_sets_no_non_yfinance_daily_provider(self):
+        template = (REPO_ROOT / ".env.example").read_text()
         for var in ("MARKET_DATA_DAILY_PROVIDER", "MARKET_DATA_PROVIDER"):
-            value = _pinned_env_value(ecs_tf, var)
-            assert value in (None, "yfinance"), (
-                f"infra/ecs.tf now pins {var}={value!r} — the Tiingo cutover has happened. "
+            value = _template_env_value(template, var)
+            assert value in (None, "", "yfinance"), (
+                f".env.example now sets {var}={value!r} — the Tiingo cutover has happened. "
                 "Re-point docs/claims-ledger.md's 'Paid analysis runs on licensed data' row "
                 "off PENDING VENDOR CUTOVER and onto the verified-pull record "
                 "(scripts/verify_market_data.py)."
             )
 
     def test_the_env_var_parser_is_not_vacuous(self):
-        """Anti-vacuity for the parser: proven against a fixture that DOES pin a cutover,
+        """Anti-vacuity for the parser: proven against a fixture that DOES set a cutover,
         so the assertion above is known to be capable of going red rather than
-        vacuously matching `None` forever."""
-        fixture = (
-            "environment = [\n"
-            '  { name = "AWS_REGION", value = "us-east-1" },\n'
-            '  { name = "MARKET_DATA_DAILY_PROVIDER", value = "tiingo" },\n'
-            "]"
-        )
-        assert _pinned_env_value(fixture, "MARKET_DATA_DAILY_PROVIDER") == "tiingo"
-        assert _pinned_env_value(fixture, "MARKET_DATA_PROVIDER") is None
+        vacuously matching `None` forever. A commented-out line must not count."""
+        fixture = "AWS_REGION=us-east-1\n# MARKET_DATA_PROVIDER=tiingo\nMARKET_DATA_DAILY_PROVIDER=tiingo\n"
+        assert _template_env_value(fixture, "MARKET_DATA_DAILY_PROVIDER") == "tiingo"
+        assert _template_env_value(fixture, "MARKET_DATA_PROVIDER") is None
 
 
 class TestLedgerRowsSayOnlyWhatTheyMay:

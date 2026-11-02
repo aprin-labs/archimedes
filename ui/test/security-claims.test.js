@@ -305,23 +305,15 @@ const CLAIM_BINDINGS = [
 		"nginx/nginx.conf",
 		"'sha256-ASECgocBcGWh7BG/yec7jR6PLvDGDA9r96mYGyxhh/A='",
 	],
-	//: HSTS and framing have TWO sources, and only probing the live site shows
-	//: it: `infra/cloudfront.tf`'s response-headers policy sets both with
-	//: `override = true`, so the wire value is CloudFront's, not nginx's. (The
-	//: tell is Referrer-Policy — nginx says `same-origin`, the response says
-	//: `strict-origin-when-cross-origin`.) Pinning nginx alone would raise a
-	//: false alarm when the header moves to the edge, and worse, would go quiet
-	//: if the edge policy were the thing that got dropped. Both ends, therefore.
+	//: In a local install nginx is the only source of these headers. (The
+	//: hosted deployment also re-asserted HSTS and framing at a CloudFront
+	//: edge; that edge was removed with the hosted stack on 2026-11-01.)
 	["HSTS", "nginx/nginx.conf", "add_header Strict-Transport-Security"],
-	["HSTS", "infra/cloudfront.tf", "strict_transport_security {"],
 	[
 		"framing denied outright",
 		"nginx/nginx.conf",
 		'add_header X-Frame-Options "DENY" always;',
 	],
-	["framing denied outright", "infra/cloudfront.tf", 'frame_option = "DENY"'],
-	//: CSP and Permissions-Policy are nginx-only — the CloudFront policy sets
-	//: neither — so those two keep a single pin, correctly.
 	[
 		"turns off geolocation, microphone, and camera",
 		"nginx/nginx.conf",
