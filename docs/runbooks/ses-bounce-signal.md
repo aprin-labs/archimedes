@@ -37,10 +37,10 @@ auth container ──SendEmail(ConfigurationSetName = archimedes-mail)──▶ 
                                     signup + the signed-in resend refuse the address
 ```
 
-Terraform: [`infra/ses_events.tf`](../../infra/ses_events.tf) (configuration set, topic,
+Terraform: [`infra/ses_events.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/ses_events.tf) (configuration set, topic,
 queue, DLQ, IAM, **the scheduled drain task and its two alarms**) plus the
 `SES_CONFIGURATION_SET` / `SES_EVENTS_QUEUE_URL` variables in
-[`infra/ecs.tf`](../../infra/ecs.tf). Consumer:
+[`infra/ecs.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/ecs.tf). Consumer:
 [`backend/archimedes/scripts/ses_events.py`](../../backend/archimedes/scripts/ses_events.py).
 Refusal: [`auth/auth.js`](../../auth/auth.js) (`bounceRefusal`).
 

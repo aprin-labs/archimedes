@@ -1,6 +1,6 @@
-# aprin.ai company site — standalone stack, deliberately separate from the
-# product's infra/ root: its own state key, no shared resources, so a mistake
-# here cannot touch the archimedes stack. Apply with AWS_PROFILE=ArchimedesDanAdmin.
+# aprin.ai company site — standalone stack with its own state key in the shared
+# state bucket (the product's infra/ root was removed 2026-11-01; this is now the
+# repo's only Terraform root). Apply with AWS_PROFILE=ArchimedesDanAdmin.
 #
 #   cd company-site/infra && terraform init && terraform apply
 #   aws s3 sync ../ "s3://$(terraform output -raw bucket)" \

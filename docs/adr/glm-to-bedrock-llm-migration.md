@@ -19,7 +19,7 @@ The backend's LLM factory supported direct Anthropic (BYOK), GLM via z.ai's `ant
 
 ## Decision
 
-1. **`LLM_PROVIDER=bedrock_converse` is the live default**; model resolves from config, defaulting to Amazon Nova Micro. Bedrock auth is by AWS role, not static keys — the ECS task role today ([`infra/ecs.tf`](../../infra/ecs.tf)), the EC2 instance role when this ADR was written.
+1. **`LLM_PROVIDER=bedrock_converse` is the live default**; model resolves from config, defaulting to Amazon Nova Micro. Bedrock auth is by AWS role, not static keys — the ECS task role today ([`infra/ecs.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/ecs.tf)), the EC2 instance role when this ADR was written.
 2. **A multi-provider Converse abstraction** wraps the bedrock-runtime client so any Bedrock model is selectable via one API; it degrades gracefully when a model doesn't accept a system prompt in the Converse shape.
 3. **Server-side free-tier model allowlist** governs which models a free user can pick (Nova family, open-source models, and GLM preserved as an option). Premium Anthropic-on-Bedrock models are gated behind the paid-tier entitlement (see [paid-tier gating], #723) and pending T3.8 activation.
 4. **Provenance via `response.model`** — every completion records the model that actually answered, the source of truth across the GLM→Bedrock era.

@@ -47,7 +47,6 @@ Run: env -i HOME=$HOME PATH=$PATH PYTHONPATH=backend python -m pytest \
 from __future__ import annotations
 
 import asyncio
-import re
 import threading
 import time
 from contextlib import contextmanager
@@ -397,37 +396,15 @@ class TestHealthItselfIsUnchanged:
 
 
 class TestTheProbeIsActuallyWiredToTheContainerCheck:
-    """A readiness endpoint nothing polls is a JSON field, not a fix. These pin
-    the wiring in both places it has to exist, and pin that the ALB's did not
-    move with it."""
+    """A readiness endpoint nothing polls is a JSON field, not a fix. This pins
+    the wiring in the image's HEALTHCHECK, which is what docker compose polls.
+    (The hosted task-definition and ALB halves went with the hosted stack on
+    2026-11-01.)"""
 
     def test_dockerfile_healthcheck_targets_the_readiness_endpoint(self):
         dockerfile = (_REPO_ROOT / "backend" / "Dockerfile").read_text()
         assert "urlopen('http://localhost:8000/health/ready')" in dockerfile
         assert "urlopen('http://localhost:8000/health')" not in dockerfile
-
-    def test_ecs_task_definition_mirrors_it(self):
-        """An image-only HEALTHCHECK is invisible to the ECS agent for container
-        dependencies, so the task definition has to carry the same command."""
-        ecs = (_REPO_ROOT / "infra" / "ecs.tf").read_text()
-        assert "urlopen('http://localhost:8000/health/ready')" in ecs
-        assert "urlopen('http://localhost:8000/health')\\\" || exit 1" not in ecs
-
-    def test_the_alb_target_group_still_checks_plain_health_for_200(self):
-        """Readiness belongs to the container check ONLY. The ALB check acts on
-        every target at once; moving it here is how a P3 fix becomes a P0."""
-        alb = (_REPO_ROOT / "infra" / "alb.tf").read_text()
-        block = re.search(
-            r'resource "aws_lb_target_group" "backend".*?\n}\n',
-            alb,
-            re.DOTALL,
-        )
-        assert block, "backend target group not found in infra/alb.tf"
-        health_check = re.search(r"health_check \{.*?\n  \}", block.group(0), re.DOTALL)
-        assert health_check, "backend target group has no health_check block"
-        assert re.search(r'path\s+=\s+"/health"', health_check.group(0))
-        assert "/health/ready" not in health_check.group(0)
-        assert re.search(r'matcher\s+=\s+"200"', health_check.group(0))
 
 
 async def _returns_connected() -> bool:

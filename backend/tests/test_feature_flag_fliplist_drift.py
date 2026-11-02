@@ -71,9 +71,12 @@ Discovery rules, all mechanical, all reproducible with ripgrep:
 
 Knobs that are read numerically but *not* deployed stay out of the scanner and
 are documented by hand anyway (extra rows are always allowed).
-``backend/tests/test_admission_knobs_drift.py`` and
-``backend/tests/test_ecs_generation_timeout.py`` separately pin the ecs.tf
-value against the code default for the admission knobs, in both directions.
+
+Since the hosted deployment was torn down (2026-11-01) there is no ``infra/``
+tree, no deploy workflow and no prod task definition, so rules 4 (terraform
+half), 5, 6 (``infra/scripts`` half) and 7 find nothing on the real tree. The
+scanners stay: the synthetic-tree tests below still prove each one fires, so a
+reintroduced deploy surface is caught the day it lands.
 
 Hermetic: reads committed files off disk and matches regexes in memory. No
 ``.env``, no network, no DB, no Redis, no app import.
@@ -388,19 +391,18 @@ def test_fliplist_exists() -> None:
 def test_discovery_is_not_vacuous() -> None:
     """A scanner that finds nothing would make the drift guard pass forever.
 
-    These five span all six discovery rules (boolean read, name constant, UI
-    module, terraform env, repo variable). If a regex regresses, this fails
-    before the completeness assertion can pass vacuously.
+    These four span the discovery rules that still have subjects on the real
+    tree (boolean read, name constant, UI module, auth/ read). Rules 4-7 have no
+    real-tree subject since the hosted deploy was removed; the synthetic-tree
+    tests cover them. If a regex regresses, this fails before the completeness
+    assertion can pass vacuously.
     """
     discovered = discover_flags(REPO_ROOT)
     for anchor in (
         "PAYMENTS_DRY_RUN",  # rule 1 — boolean read site
         "PAPER_TRACE_PUBLISH",  # rule 2 — env-name constant
         "VITE_ROADMAP_SURFACES",  # rule 3 — ui/src/featureFlags.js
-        "EMAIL_VERIFICATION_ENFORCED",  # rule 4 — infra/ecs.tf + auth/auth.js
-        "DEPLOY_ENABLED",  # rule 5 — GitHub Actions repo variable
-        "COST_KILL_SWITCH_DRY_RUN",  # rule 4, Lambda form — infra/cost_kill_switch.tf
-        "GENERATION_TIMEOUT_SECONDS",  # rule 7 — numeric knob pinned in ecs.tf
+        "EMAIL_VERIFICATION_ENFORCED",  # rule 3 — flag-shaped read in auth/auth.js
     ):
         assert anchor in discovered, f"flag discovery regressed: {anchor} is no longer found"
     assert len(discovered) >= 20, f"flag discovery collapsed to {len(discovered)} names — a regex regressed"

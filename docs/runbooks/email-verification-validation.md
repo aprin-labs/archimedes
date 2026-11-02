@@ -33,10 +33,10 @@ spam filter, and that the link inside it works when a human clicks it.
 |---|---|---|
 | Mailer implementation | [`auth/mailer.js`](../../auth/mailer.js) | `ses` in deployed environments, `console` everywhere else (the default, so a missing env var degrades to a visible log line, not a silent failure) |
 | SES send path | AWS SDK v3, `SESv2Client` / `SendEmailCommand` — **not SMTP**, no credentials in the image | credentials come from the ECS task role |
-| From address | `EMAIL_SENDER` in [`infra/ecs.tf`](../../infra/ecs.tf) | `no-reply@archimedes-arc.com` |
+| From address | `EMAIL_SENDER` in [`infra/ecs.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/ecs.tf) | `no-reply@archimedes-arc.com` |
 | SES identity | AWS console (not Terraform-managed) | the **domain** identity `archimedes-arc.com` |
 | IAM | `ecs_task_ses_send` in `infra/ecs.tf` | `ses:SendEmail` + `ses:SendRawEmail`, scoped to that one identity ARN |
-| SPF / DKIM / DMARC | [`infra/dns_email.tf`](../../infra/dns_email.tf) | SPF `v=spf1 include:amazonses.com -all`; three DKIM CNAMEs; DMARC `p=none` with `rua` + `fo=1` |
+| SPF / DKIM / DMARC | [`infra/dns_email.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/dns_email.tf) | SPF `v=spf1 include:amazonses.com -all`; three DKIM CNAMEs; DMARC `p=none` with `rua` + `fo=1` |
 | Verification mail | `emailVerification.sendOnSignUp` in [`auth/auth.js`](../../auth/auth.js) | **sent on every signup**, whatever the enforcement flag says |
 | Verification link lifetime | `emailVerification.expiresIn` | **1 hour** (pinned explicitly since the audit; it used to be an inherited library default) |
 | Reset link lifetime | `emailAndPassword.resetPasswordTokenExpiresIn` | **1 hour** (same) |

@@ -68,7 +68,7 @@ read path needs both.
 The app's own ECS task role is a **separate** identity, and it is narrower in both states:
 
 - **Today**, the only SES statement on it is `ses:SendEmail` / `ses:SendRawEmail`
-  ([`infra/ecs.tf`](../../infra/ecs.tf)). It can send; it can neither read the suppression
+  ([`infra/ecs.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/ecs.tf)). It can send; it can neither read the suppression
   list nor delete from it.
 - **After the `terraform apply`** that adds the `ses:GetSuppressedDestination` grant for
   `GET /api/auth/verification-status` ([#1748](https://github.com/aprin-labs/archimedes/issues/1748)

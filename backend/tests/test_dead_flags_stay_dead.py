@@ -30,7 +30,9 @@ and this module reuses its prose-skipping scanner rather than restating it:
   commented-out ``.env.example`` entry reads as "a secret you still need to
   generate", which is how ``X402_WEBHOOK_SECRET`` outlived its own removal by
   months. An injected name with no reader is the ``BACKTEST_REFRESH_ENABLED``
-  failure: it rides forward on every task-def clone with nothing on the far end.
+  failure: it rode forward on every task-def clone of the (now torn-down)
+  hosted deploy with nothing on the far end. ``infra/`` is no longer in the
+  tree, but stays walked so a reintroduction is caught.
   ``.github/workflows`` earns its place because it is the *only* surface
   ``DOCS_SITE_ENABLED`` ever lived on (#1824's scan table: ``vars.*``, 2 flags);
   ``backend/.env.example`` because it is a live 55-line template the runbooks
@@ -46,11 +48,10 @@ and this module reuses its prose-skipping scanner rather than restating it:
 
 ``ARCHIMEDES_FUSION_ENABLED`` is deliberately NOT on this list. It has its own,
 stricter guard (``test_fusion_flag_retired.py``, which also bans a *renamed*
-fusion switch on the generation path), and as of #1824 its name appears in
-``.github/scripts/ecs_rewrite_task_def.py``'s ``RETIRED_BACKEND_ENV`` on
-purpose — that is the line that strips the stale pin off the live task
-definition, and banning it here would forbid its own removal. The four
-``BACKTEST_REFRESH_*`` names are off this list for the same reason (#1797).
+fusion switch on the generation path). Until the hosted deploy was torn down
+(2026-11-01) its name also appeared, on purpose, in the deploy's task-def
+rewrite script as a strip list; the four ``BACKTEST_REFRESH_*`` names were
+off this list for the same reason (#1797).
 
 Hermetic: reads committed files off disk and matches substrings in memory. No
 env, no network, no DB, no app import.
@@ -255,11 +256,7 @@ def test_the_source_scan_covers_the_runtime_roots() -> None:
 def test_the_config_scan_covers_the_injection_sites() -> None:
     scanned = {rel for _, rel in _iter_config(REPO_ROOT)}
     for anchor in (
-        "infra/ecs.tf",
-        "infra/cost_kill_switch.tf",
-        ".github/scripts/ecs_rewrite_task_def.py",
-        ".github/workflows/deploy.yml",
-        ".github/workflows/docs-site.yml",
+        ".github/workflows/quality-gate.yml",
         "docker-compose.yml",
         ".env.example",
         "ui/.env.example",

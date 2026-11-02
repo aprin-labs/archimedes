@@ -7,8 +7,8 @@
 > (`snap-02edf9e4a9ac7f201`) and its terraform deleted (`infra/main.tf`, PR #1265). Every
 > command below now names an instance that no longer exists; the SSM calls would fail rather
 > than mislead, but the runbook is history, not a fallback.
-> Current rollback procedure: [`infra/runbooks/ecs-fargate-cutover.md`](../../infra/runbooks/ecs-fargate-cutover.md) § rollback and
-> [`infra/runbooks/disaster-recovery.md`](../../infra/runbooks/disaster-recovery.md).
+> Current rollback procedure: [`infra/runbooks/ecs-fargate-cutover.md`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/runbooks/ecs-fargate-cutover.md) § rollback and
+> [`infra/runbooks/disaster-recovery.md`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/runbooks/disaster-recovery.md).
 > **A Fargate-era break-glass runbook has not yet been written — see [`docs/runbooks/README.md`](../runbooks/README.md).**
 
 > **status:** archived

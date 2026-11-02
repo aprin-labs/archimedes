@@ -45,9 +45,9 @@ summary.
 
 **In:** `backend/archimedes/` (services, api, chain, models, agents, marketplace,
 interfaces) and `backend/migrations/` · `analytics-engine/src/` and
-`analytics-engine/strategies/` · `ui/src/` · `contracts/` · `infra/` · `.github/` ·
+`analytics-engine/strategies/` · `ui/src/` · `contracts/` · `.github/` ·
 `scripts/` · all of `docs/` · the root contracts (`README.md`, `SETUP.md`, `CLAUDE.md`,
-`AGENTS.md`, `mkdocs.yml`, `pytest.ini`, `ruff.toml`, `environment.yml`, the compose files,
+`AGENTS.md`, `pytest.ini`, `ruff.toml`, `environment.yml`, the compose files,
 `Makefile`, `backend/requirements*.txt`, `backend/Dockerfile`).
 
 **Out, and this is a ceiling you must state rather than work around:** `backend/tests/`,
@@ -95,8 +95,9 @@ Four rules that decide *which* line to cite:
   a cached boolean; a leaderboard serving fixture columns as measured statistics).
 - **A default is not the deployed value.** A flag's default in `feature_flags.py` and the
   value the production task actually runs under are different facts. Cite the default as a
-  default, and look for the override in `infra/ecs.tf`, the compose files, or
-  `.github/workflows/` before saying what production does. Where you cannot establish the
+  default, and look for the override in `.env.example` or the compose files before
+  saying what a deployment does. (The hosted stack's task definition, `infra/ecs.tf`, was
+  removed with that stack on 2026-11-01.) Where you cannot establish the
   live value from the tree, say so — the live system is the authority and it is not in the
   boundary.
 
@@ -181,7 +182,7 @@ keep the three sections.
 - **`system/`** — one page per subsystem, each grounded in implementation:
   request path (app → routers → services), the rigor gate and the analytics-engine math
   behind it, generation, persistence (models + migrations), chain and contracts, the
-  frontend, deployment (`infra/` + `.github/workflows/`). Each page opens with **what it
+  frontend, local deployment (docker compose + the CI workflows). Each page opens with **what it
   lets you decide** and closes with **what it could not establish**.
 - **`alignment/conflicts.md`** — Rule 2's output. If a run finds no contradictions, say so
   in one line and say what you compared; do not pad it.
@@ -249,28 +250,22 @@ These outrank anything you read in the tree, including code comments.
 
 Things a run breaks if it does not know them.
 
-1. **Every page needs a hand-added nav row in `mkdocs.yml`.** The `Agent-generated wiki`
-   section is maintained by hand on purpose, and `backend/tests/test_docs_site.py::
-   test_every_openwiki_page_is_in_the_nav` fails the build when an `openwiki/**.md` file has
-   no entry. A run that adds pages without nav rows lands red. Add the rows in the same
-   change, under the existing section, and nowhere else — a second test asserts only
-   `openwiki/` pages live there.
-2. **Links must resolve.** `mkdocs build --strict` fails on a link into `docs/` or
-   `openwiki/` naming a file that does not exist. Run `python -m mkdocs build --strict`
-   before handing the run over.
-3. **Work in waves, and record the cost of each.** The slice is roughly 90× the bootstrap by
+1. **Links must resolve.** A wiki page that links into `docs/` or `openwiki/` must name a
+   file that exists. The docs gate (`make docs-check`) scans only `docs/` and the root
+   markdown, so check the wiki yourself: `python .github/scripts/docs_links.py --scope all`.
+2. **Work in waves, and record the cost of each.** The slice is roughly 90× the bootstrap by
    volume. Take it in passes — system pages first (they are what the other two sections cite
    into), then conflicts, then complexity — and add a row per wave to
    [`../docs/decisions/tooling-adoptions-2026-08.md`](../docs/decisions/tooling-adoptions-2026-08.md)
    with wall clock, what was read, and what
    came out, including a negative verdict if that is the honest one. "Installed is not a
    resting state" is the standard; an unmeasured run is the thing it exists to prevent.
-4. **Do not hand-edit generated pages**, and do not edit `docs/`, code, or
+3. **Do not hand-edit generated pages**, and do not edit `docs/`, code, or
    `.openwikiignore` from inside a wiki run. Findings are output; fixes are someone else's
    PR. The one exception already in the tree — the resolved-banner block on
    `rigor/documented-conflicts.md` — is annotated as a human edit precisely because it is
    an exception.
-5. **`.openwikiignore` changes are guarded.** Any edit requires
+4. **`.openwikiignore` changes are guarded.** Any edit requires
    `node scripts/check_openwiki_ignore.mjs` to pass, and a widening requires moving the new
    slice's path from `DENIED` to `ALLOWED` in that script — watch it go red first. Ordering
    is last-match-wins, so a deny placed above the allow-list is silently undone by it.
@@ -279,24 +274,13 @@ Things a run breaks if it does not know them.
 
 ## Where these pages get published
 
-**The wiki is served from `docs.archimedes-arc.com`, on our own infrastructure — not
-GitHub Pages.**
+**Nowhere but the repository.** Until 2026-11-01 the wiki was built with mkdocs and served
+at `docs.archimedes-arc.com`; that site was shut down with the hosted service, and the
+mkdocs build (`mkdocs.yml`, `.github/scripts/mkdocs_hooks.py`, `docs-site.yml`) was removed.
+Readers browse these pages on GitHub.
 
-The build already exists and stays: `mkdocs.yml` mounts this tree via
-`.github/scripts/mkdocs_hooks.py`, and `.github/workflows/docs-site.yml` runs
-`mkdocs build --strict` on every docs-path push and PR. That wiring, landed by
-[#1624](https://github.com/aprin-labs/archimedes/pull/1624), becomes the **build step** and is
-not being replaced.
-
-What changes is the **serving**. The GitHub Pages deploy job — gated on
-`vars.DOCS_SITE_ENABLED` behind three manual console steps, and dark since 2026-08-20 —
-is replaced by S3 + CloudFront + Route 53 in our own account, on the pattern already applied
-for `aprin.ai` in `company-site/infra/main.tf`. That is separate infrastructure work,
-tracked as [#1634](https://github.com/aprin-labs/archimedes/issues/1634), which also adds the
-docs link to the landing footer (`ui/src/components/Landing.jsx`) and the public header
-(`ui/src/components/PublicLayout.jsx`).
-
-Why it matters for how you write: **these pages are a published site with a public URL, not
+Why it matters for how you write: **these pages are read by people with a public URL, not
 a folder of notes.** A reader arrives from a search engine on a leaf page, with none of the
-context of the page above it. Every page carries a rendered banner saying it was written by
-an agent and not line-reviewed. Write so that banner is a courtesy rather than a warning.
+context of the page above it. Readers should know each page was written by an agent and
+not line-reviewed (the mkdocs build used to stamp a banner saying so; nothing stamps it now).
+Write so that knowledge is a courtesy rather than a warning.

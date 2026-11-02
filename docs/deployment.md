@@ -5,6 +5,10 @@
 > **updated:** 2026-08-31
 > **superseded-by:** [`local-vs-prod.md`](local-vs-prod.md) (for the local-vs-production contract only)
 
+> **Hosted stack removed 2026-11-01.** The AWS deployment this page describes (ECS, the
+> runner EC2, `deploy.yml`, `deploy-runners.yml`) no longer exists; it is kept as a record.
+> For running Archimedes today see [`local-vs-prod.md`](local-vs-prod.md).
+
 > Written 2026-06-28, alongside the Aurora/ElastiCache cutover. Resolves the
 > drift between "simple `docker compose up` locally" and "how it runs in prod."
 

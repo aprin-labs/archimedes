@@ -7,7 +7,7 @@
 > **Supersedes:** —
 > **Superseded-by:** —
 > **Question being decided:** Should the generation pipeline stop running inside the serving Fargate task and run per-invocation on Lambda instead — and can a measured per-generation cost back the x402 quote?
-> **Related:** [`backend/archimedes/scripts/run_generation_job.py`](../../backend/archimedes/scripts/run_generation_job.py), [`backend/archimedes/services/generation_cost_model.py`](../../backend/archimedes/services/generation_cost_model.py), [`backend/archimedes/services/cost_meter.py`](../../backend/archimedes/services/cost_meter.py), [`backend/archimedes/services/generation_payment.py`](../../backend/archimedes/services/generation_payment.py), [`infra/spike-1411/`](../../infra/spike-1411/), [`adr/ec2-to-ecs-fargate-cutover.md`](ec2-to-ecs-fargate-cutover.md)
+> **Related:** [`backend/archimedes/scripts/run_generation_job.py`](../../backend/archimedes/scripts/run_generation_job.py), [`backend/archimedes/services/generation_cost_model.py`](../../backend/archimedes/services/generation_cost_model.py), [`backend/archimedes/services/cost_meter.py`](../../backend/archimedes/services/cost_meter.py), [`backend/archimedes/services/generation_payment.py`](../../backend/archimedes/services/generation_payment.py), [`infra/spike-1411/`](https://github.com/aprin-labs/archimedes/tree/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/spike-1411), [`adr/ec2-to-ecs-fargate-cutover.md`](ec2-to-ecs-fargate-cutover.md)
 
 ## TL;DR
 
@@ -84,7 +84,7 @@ Two choices in there are load-bearing for the honesty of the measurement:
   a `RUN pip install` inside the artifact under measurement (and cross-architecture
   emulation to build an x86_64 image on an arm64 workstation). Lambda's runtime contract
   is a documented HTTP protocol, so
-  [`lambda_bootstrap.py`](../../infra/spike-1411/lambda_bootstrap.py) implements it in
+  [`lambda_bootstrap.py`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/spike-1411/lambda_bootstrap.py) implements it in
   ~60 lines of stdlib `urllib`. Because no build step runs code, the cross-architecture
   build needs no emulation at all.
 
@@ -361,7 +361,7 @@ Why:
 3. **It adds a second deploy artifact.** A second image, a second IAM role, a VPC ENI
    pool, and a second place for configuration to drift — for a workload nothing is
    currently queueing behind. `GENERATION_MAX_CONCURRENT` / `GENERATION_MAX_QUEUE` are
-   already absent from [`infra/ecs.tf`](../../infra/ecs.tf) — the admission-control knobs
+   already absent from [`infra/ecs.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/ecs.tf) — the admission-control knobs
    run on their code defaults in production because nothing plumbs them — which is the
    same drift class, one lane earlier.
 4. **The cheaper interim exists and is one variable.** `ecs_backend_cpu` 1024 → 2048.

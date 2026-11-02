@@ -150,8 +150,8 @@ Pre-commit is **opt-in**; without it you get the same feedback from CI on push.
 Full table + exact commands in `CLAUDE.md`'s "CI / quality gates" section.
 Headline: `quality-gate.yml` hard-blocks on `pytest -m "not integration"` +
 the ruff-gate subset above; `complexity-gate.yml` is **informational only,
-never blocks merge**; `deploy.yml` fires on push to `main` (build → ECR →
-Fargate roll); `main-format-guard.yml` self-heals unformatted pushes to `main`;
+never blocks merge**; there is no deploy workflow (the hosted stack was torn
+down 2026-11-01); `main-format-guard.yml` self-heals unformatted pushes to `main`;
 `release-tag.yml` tags merged PRs by title marker (`!minor`/`!version-release`/
 none — default to none when unsure).
 
@@ -217,6 +217,6 @@ grep -n "NOT_IMPLEMENTED" cli/src/archimedes_cli/cli.py
 - API-level detail for the generate/verdict flow — see `skills/verdict-api/SKILL.md`.
 - Passport field semantics — see `skills/strategy-passport/SKILL.md`.
 - The marketplace payment protocol — see `skills/x402-payment/SKILL.md`.
-- AWS/infra operations (SSM, Terraform, deploy) — see the AWS paragraph in
-  `CLAUDE.md`'s "Setup" section and `docs/runbooks/operations.md` (the doc
-  formerly at root-level `OPERATIONS.md`); out of scope for a dev-workflow skill.
+- AWS/infra operations — there is no hosted Archimedes infrastructure since
+  2026-11-01; the only Terraform left is `company-site/infra/` (aprin.ai, see
+  `company-site/README.md`). Out of scope for a dev-workflow skill.

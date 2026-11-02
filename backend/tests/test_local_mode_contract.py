@@ -12,14 +12,11 @@ here:
    input that **should** fail and asserted to reject it, then fed the corrected input and
    asserted to pass. A check exercised in one direction proves nothing: an
    ``assert True``-shaped check passes the happy case forever.
-3. **The doc drops out of the tree.** Front matter, the ``docs/doc-index.md`` row, and the
-   mkdocs nav entry are what make it findable; all three are asserted.
+3. **The doc drops out of the tree.** Front matter and the ``docs/doc-index.md`` row are
+   what make it findable; both are asserted.
 
 Hermetic: reads committed YAML, markdown, and Python off disk, plus in-memory fixtures.
-No DB, Redis, RPC, network, docker daemon, or ``.env``. ``yaml`` is available in the CI
-unit-test image because ``backend/requirements.txt`` pins ``uvicorn[standard]``, whose
-``standard`` extra requires ``pyyaml>=5.1`` — the same reasoning ``test_docs_site.py``
-records.
+No DB, Redis, RPC, network, docker daemon, or ``.env``.
 """
 
 from __future__ import annotations
@@ -29,12 +26,10 @@ import re
 from pathlib import Path
 
 import pytest
-import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DOC = REPO_ROOT / "docs" / "local-vs-prod.md"
 DOCS_INDEX = REPO_ROOT / "docs" / "doc-index.md"
-MKDOCS_YML = REPO_ROOT / "mkdocs.yml"
 MAIN_PY = REPO_ROOT / "backend" / "archimedes" / "main.py"
 CHECKER = REPO_ROOT / "scripts" / "check-local-mode.py"
 
@@ -362,35 +357,7 @@ def test_doc_carries_the_conventions_front_matter() -> None:
         assert field in joined, f"docs/local-vs-prod.md front matter is missing {field} (docs/CONVENTIONS.md § 3)"
 
 
-class _MkdocsLoader(yaml.SafeLoader):
-    """`yaml.SafeLoader` that tolerates mkdocs' `!!python/name:` tags.
-
-    `mkdocs.yml` names the mermaid fence formatter the way mkdocs-material
-    documents it — `format: !!python/name:pymdownx.superfences.fence_code_format`
-    — and `yaml.safe_load` refuses to construct that tag (`ConstructorError`),
-    which would make every test in this module fail on a config mkdocs itself
-    reads fine. Resolving the tag to its *name* is enough here: nothing in this
-    suite calls the formatter, and a SafeLoader that imports arbitrary dotted
-    paths would be the unsafe loader wearing a different hat.
-    """
-
-
-_MkdocsLoader.add_multi_constructor("tag:yaml.org,2002:python/name:", lambda loader, suffix, node: suffix)
-
-
-def test_doc_is_in_the_index_and_the_nav() -> None:
+def test_doc_is_in_the_index() -> None:
     assert "(local-vs-prod.md)" in DOCS_INDEX.read_text(encoding="utf-8"), (
         "docs/local-vs-prod.md has no row in docs/doc-index.md — 'a doc not listed here does not exist'"
     )
-    nav = yaml.load(MKDOCS_YML.read_text(encoding="utf-8"), Loader=_MkdocsLoader)["nav"]
-
-    def targets(node) -> list[str]:
-        if isinstance(node, str):
-            return [node]
-        if isinstance(node, list):
-            return [t for item in node for t in targets(item)]
-        if isinstance(node, dict):
-            return [t for value in node.values() for t in targets(value)]
-        return []
-
-    assert "local-vs-prod.md" in targets(nav), "docs/local-vs-prod.md is not published by the docs site"

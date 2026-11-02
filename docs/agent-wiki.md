@@ -2,16 +2,14 @@
 
 > **Status:** current. **Owner:** Dan Browne. **Last verified:** 2026-08-31.
 
-Every page under **Agent-generated wiki** in this site's navigation — everything
-served from `/openwiki/` — was written by an AI agent, not by a person. This page
-exists so that fact is stated once, in full, in a place a reader passes through;
-the build also stamps a short version of it on each page, because a search engine
-drops readers on leaf pages, not on section indexes.
+Every page under [`../openwiki/`](../openwiki/) was written by an AI agent, not by a
+person. This page exists so that fact is stated once, in full, in a place a reader
+passes through. (Until 2026-11-01 the wiki was also mounted into the mkdocs docs site,
+whose build stamped a short version of this notice on each page; that site and its
+build were removed with the hosted service.)
 
 Nothing on this page is agent-written. The wiki itself lives in
-[`../openwiki/`](../openwiki/) at the repository root, outside `docs/`, and is
-mounted into the site at build time by
-[`../.github/scripts/mkdocs_hooks.py`](../.github/scripts/mkdocs_hooks.py).
+[`../openwiki/`](../openwiki/) at the repository root, outside `docs/`.
 
 ## What produced it
 
@@ -25,10 +23,10 @@ mounted into the site at build time by
 | Landed by | [#1597](https://github.com/aprin-labs/archimedes/pull/1597) |
 
 The scheduled regeneration workflow
-([`../.github/workflows/openwiki-update.yml`](../.github/workflows/openwiki-update.yml))
-**cannot run today** — its Bedrock path is blocked on an Anthropic use-case form
-that has not been submitted for the production AWS account, and its `schedule:`
-trigger is commented out for that reason. The committed wiki was not produced by
+([`../.github/workflows/openwiki-update.yml`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/.github/workflows/openwiki-update.yml),
+removed 2026-11-01) **could not run** — its Bedrock path was blocked on an Anthropic
+use-case form that had not been submitted for the production AWS account, and its
+`schedule:` trigger was commented out for that reason. The committed wiki was not produced by
 that workflow. The tooling decision, the blocker, and what the run cost are
 recorded in
 [`decisions/tooling-adoptions-2026-08.md`](decisions/tooling-adoptions-2026-08.md).
@@ -89,12 +87,8 @@ seven `docs/quant/` defects the run surfaced are in
 
 ## Adding to it
 
-Wiki pages are listed in [`../mkdocs.yml`](../mkdocs.yml)'s navigation **by hand**.
-That is deliberate: a generated tree that auto-publishes would put new
-agent-written pages in front of readers with nobody in the loop.
-[`../backend/tests/test_docs_site.py`](../backend/tests/test_docs_site.py) fails
-when an `openwiki/**.md` file has no nav entry, so admitting a page is an explicit
-act — add the nav row in the same change that adds the page.
+Admitting a page is an explicit act: add it in a reviewed PR. (The mkdocs nav row and
+the test that required one went with the docs site on 2026-11-01.)
 
 Widening the slice means moving a path from `DENIED` to `ALLOWED` in
 [`../scripts/check_openwiki_ignore.mjs`](../scripts/check_openwiki_ignore.mjs) —
@@ -107,10 +101,5 @@ the tooling-adoptions register.
 
 ## Where it is published
 
-The site is served from **`docs.archimedes-arc.com`** on our own infrastructure —
-S3 + CloudFront + Route 53 in the production account, on the pattern already
-applied for `aprin.ai` in `../company-site/infra/main.tf` — rather than GitHub
-Pages. `mkdocs build --strict` remains the build step; only the publish step
-changes. That work is tracked in
-[#1634](https://github.com/aprin-labs/archimedes/issues/1634), which also adds the
-docs link to the landing footer and the public header.
+Only in this repository. The docs site at `docs.archimedes-arc.com` that used to serve
+it was shut down with the hosted service on 2026-11-01.

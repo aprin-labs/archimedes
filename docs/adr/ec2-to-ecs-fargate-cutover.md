@@ -7,7 +7,7 @@
 > **Supersedes:** —
 > **Superseded-by:** —
 > **Question being decided:** Does the backend keep running as docker-compose on one long-lived EC2 instance, or move to a managed container service?
-> **Related:** [`infra/ecs.tf`](../../infra/ecs.tf), [`infra/ecs_migrate.tf`](../../infra/ecs_migrate.tf), [`infra/alb.tf`](../../infra/alb.tf), [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml), [`infra/runbooks/ecs-fargate-cutover.md`](../../infra/runbooks/ecs-fargate-cutover.md), [`docs/architecture.md` § 7](../architecture.md).
+> **Related:** [`infra/ecs.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/ecs.tf), [`infra/ecs_migrate.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/ecs_migrate.tf), [`infra/alb.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/alb.tf), [`.github/workflows/deploy.yml`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/.github/workflows/deploy.yml), [`infra/runbooks/ecs-fargate-cutover.md`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/runbooks/ecs-fargate-cutover.md), [`docs/architecture.md` § 7](../architecture.md).
 
 ## TL;DR
 
@@ -49,21 +49,21 @@ proportionate for a single service at this size.
 
 **Run the web tier as an ECS Fargate service, and make deploy declarative.**
 
-1. **One task, two containers, one ENI** ([`infra/ecs.tf`](../../infra/ecs.tf)). `awsvpc`
+1. **One task, two containers, one ENI** ([`infra/ecs.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/ecs.tf)). `awsvpc`
    mode gives nginx and backend the same network namespace, so nginx's upstream is
    `localhost:8000` — the same shape as two processes on one host, which is what made this
    a low-semantic-change move rather than a re-architecture.
 2. **The ALB, listener and target group are reused unchanged** from
-   [`infra/alb.tf`](../../infra/alb.tf). The target group was already `target_type = ip`
+   [`infra/alb.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/alb.tf). The target group was already `target_type = ip`
    with a `GET /health` check, which is exactly what Fargate registers. No `alb.tf`
    resource was touched by the cutover.
-3. **Deploy is three jobs** ([`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml)):
+3. **Deploy is three jobs** ([`.github/workflows/deploy.yml`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/.github/workflows/deploy.yml)):
    `build-and-push` (CI builds, pushes to ECR) → `migrate` (`aws ecs run-task` on the
    dedicated migrate task definition, line ~470) → `deploy-ecs`
    (`aws ecs update-service ... --force-new-deployment`, line ~596). Auth is OIDC; there
    are no long-lived AWS keys in Actions, and **zero `aws ssm send-command` calls**.
 4. **Migrations run as a separate single-container task definition**
-   ([`infra/ecs_migrate.tf`](../../infra/ecs_migrate.tf)), not as a command override on the
+   ([`infra/ecs_migrate.tf`](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/ecs_migrate.tf)), not as a command override on the
    service task-def. Reason, from the Copilot review on PR #1041: the service family
    defines an nginx sidecar with `dependsOn { backend, HEALTHY }`, and a migrating backend
    never serves `/health`, so ECS would kill the task mid-migration. The migrate task has

@@ -339,4 +339,4 @@ gh workflow run deploy.yml --ref main
 
 ---
 
-_Cross-references: [CLAUDE.md § AWS account access](../../../CLAUDE.md), [infra/README.md](../../../infra/README.md), [issue #439](https://github.com/a-apin/archimedes-arcadia/issues/439)_
+_Cross-references: [CLAUDE.md § AWS account access](../../../CLAUDE.md), [infra/README.md](https://github.com/aprin-labs/archimedes/blob/84c0fac4758e9572f34e4f70fe48e9d68c5acab0/infra/README.md), [issue #439](https://github.com/a-apin/archimedes-arcadia/issues/439)_

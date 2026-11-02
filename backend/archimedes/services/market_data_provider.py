@@ -558,10 +558,8 @@ def _tiingo_api_key() -> str:
         "TIINGO_API_TOKEN is not set (legacy alias TIINGO_API_KEY also empty). Required "
         "whenever a seam resolves to tiingo — MARKET_DATA_DAILY_PROVIDER, or "
         "MARKET_DATA_PROVIDER on the daily seam when that is unset (see .env.example). "
-        "Wired into infra/ecs.tf's backend `secrets` and pinned on the deploy clone path "
-        "by .github/scripts/ecs_rewrite_task_def.py (#1798), so in prod this means the "
-        "value is blank or the process is not the deployed container — see "
-        "docs/runbooks/market-data-provider-proof.md."
+        "Set it in .env (or the process environment) and restart; "
+        "docs/runbooks/market-data-provider-proof.md has the proof-pull procedure."
     )
 
 

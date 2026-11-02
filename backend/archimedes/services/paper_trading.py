@@ -76,10 +76,11 @@ def advance_enabled() -> bool:
     C-level abort cannot be caught by a ``try/except``, so fail-soft does not
     help and the only lever that works is not running the tick.
 
-    DEPLOYED VALUE as of 2026-09-01 (#1778): ``"true"`` — armed. The pin that
-    ships is ``PAPER_ADVANCE_VALUE`` in
-    ``.github/scripts/ecs_rewrite_task_def.py``, with the ``infra/ecs.tf`` line
-    as its documentation twin. What justifies arming it is NOT a proof that
+    The hosted deployment ran it ``"true"`` — armed — from 2026-09-01 (#1778)
+    until that stack was torn down on 2026-11-01. A local install is OFF unless
+    the operator sets ``PAPER_ADVANCE_ENABLED=true``: neither
+    ``docker-compose.yml`` nor ``.env.example`` sets it, so the code default
+    applies. What justified arming it was NOT a proof that
     this tick is clean. #1632's actual mechanism — two ``/health`` corpus-probe
     threads racing in SQLAlchemy session teardown inside ``load_corpus`` — was
     caught by faulthandler on prod rev 214 WITH THIS FLAG OFF and fixed by
@@ -91,11 +92,11 @@ def advance_enabled() -> bool:
     while ``/health``, in the parent, keeps answering. Blast radius, not
     absolution.
 
-    The CODE default stays ``"false"`` and is deliberately NOT flipped with the
-    two deploy pins. Task-def :211 died of the opposite arrangement:
-    ``deploy.yml`` cloned last-good, ``PAPER_ADVANCE_ENABLED`` was absent, the
+    The CODE default stays ``"false"`` and was deliberately NOT flipped with the
+    hosted deploy pins. Hosted task-def :211 died of the opposite arrangement:
+    the deploy cloned last-good, ``PAPER_ADVANCE_ENABLED`` was absent, the
     then-ON code default started the tick, and ``/health`` 502'd at
-    ``PAPER_ADVANCE_STARTUP_DELAY_S``. Unset must mean OFF so a task definition
+    ``PAPER_ADVANCE_STARTUP_DELAY_S``. Unset must mean OFF so an environment
     that never heard of this name cannot tick by accident.
 
     Read once per tick rather than once at boot, so the value that decides is

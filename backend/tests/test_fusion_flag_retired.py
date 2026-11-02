@@ -168,7 +168,6 @@ def test_scan_is_not_vacuous() -> None:
         "backend/archimedes/agents/strategy_fusion.py",
         "backend/archimedes/agents/generation_pipeline.py",
         "backend/archimedes/main.py",
-        "infra/ecs.tf",
         "docker-compose.yml",
     ):
         assert anchor in scanned, f"the retired-flag scan stopped covering {anchor}"
@@ -184,44 +183,6 @@ def test_the_retired_flag_has_no_reader_and_no_injection_site() -> None:
         "how a dead switch gets re-wired.\n"
         + "\n".join(f"  {rel}: lines {lines}" for rel, lines in sorted(residue.items()))
     )
-
-
-def test_the_deploy_strips_the_stale_pin_off_the_live_task_definition() -> None:
-    """The repo is clean; the LIVE task definition is not (#1824).
-
-    #1811 took the reader, the OFF branch, the ``infra/ecs.tf`` pin and both
-    compose defaults in one commit — which the guard above proves. It could not
-    take the entry on the **registered** task definition, because ``deploy.yml``
-    clones the live revision and never applies terraform. So
-    ``ARCHIMEDES_FUSION_ENABLED=true`` has ridden forward on the backend
-    container ever since with nothing on the far end: the exact INERT shape
-    #1824 catalogued, and the exact shape ``BACKTEST_REFRESH_ENABLED`` had.
-
-    The fix is the deploy-path strip, not an operator ritual — #1824's standing
-    rule ("a flag with no reader is deleted the same week its reader dies; when
-    the pin lives in a live task definition the repo cannot edit, in the
-    deploy-path strip that removes it"). Behaviourally this is a no-op by
-    construction: the assertions above prove nothing reads the name, so
-    deleting it from the shipped revision cannot change what the backend does.
-
-    Mutation this catches: dropping the name from ``RETIRED_BACKEND_ENV``, which
-    would leave the pin cloning forward invisibly again.
-    """
-    from tests.test_ecs_paper_advance_deploy_pin import _backend_env, _last_good_task_def, _load_rewrite, _rewrite
-
-    mod = _load_rewrite()
-    assert FLAG in mod.RETIRED_BACKEND_ENV, (
-        f"{FLAG} came off .github/scripts/ecs_rewrite_task_def.py's "
-        "RETIRED_BACKEND_ENV. That tuple is the only thing that takes the stale "
-        "pin off the live task definition — the repo has been clean since "
-        "2026-09-02, but every CI deploy clones the registered revision, so "
-        "without this entry the retired name ships forever."
-    )
-
-    task_def = _last_good_task_def()
-    backend = next(c for c in task_def["containerDefinitions"] if c["name"] == "backend")
-    backend["environment"].append({"name": FLAG, "value": "true"})
-    assert FLAG not in _backend_env(_rewrite(task_def))
 
 
 def test_the_generation_path_has_no_fusion_switch_under_any_name() -> None:
