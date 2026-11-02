@@ -8,10 +8,15 @@ routes have the backend signer deploy a testnet vault owned by the caller's
 wallet: ``POST /api/vaults/create``, ``POST /api/marketplace/publish`` (when no
 ``vault_address`` is given) and ``POST /api/marketplace/subscribe`` (always).
 Each was gated only by an account and a linked wallet (plus the rigor gate on
-create), so a direct API caller could still get a vault deployed.
+create), so a direct API caller could still get a vault deployed. A fourth,
+``POST /api/vaults/metadata``, deploys nothing but answers to the same flag:
+for a vault the caller deployed themselves from outside the site, it stores
+public metadata and has the backend signer anchor the linked strategies
+on-chain, and its only caller in the UI (``CreateVaultModal``) is behind the
+same build flag.
 
 ``FEATURE_ROADMAP_SURFACES`` is the server-side twin of the UI flag. While it is
-off, which it is in every environment unless set to ``true``, each of the three
+off, which it is in every environment unless set to ``true``, each of the four
 answers 404 and nothing downstream of the gate runs: not the route's auth
 dependency, not body-schema validation, not the handler. Two things do run
 first, the app's middleware and FastAPI's read of the body. A body sent with a
@@ -21,14 +26,16 @@ example) get its 400 ``There was an error parsing the body``. A body with any
 other content type, or none, reaches the gate and gets the 404. Nothing
 downstream of the gate runs in any of these cases. All of that is pinned here
 too, because the docs state it. With the flag on, each route
-behaves exactly as it did before. The create route's behaviour is pinned in
-this file; publish and subscribe in ``tests/api/test_marketplace_routes.py``.
+behaves exactly as it did before. The create and metadata routes' behaviour is
+pinned in this file (metadata's fuller flag-on cases in
+``test_vault_metadata_anchor.py``); publish and subscribe in
+``tests/api/test_marketplace_routes.py``.
 
 The discovery surfaces follow the routes. A manifest that advertises a route
 that 404s sends an agent into a retry loop it cannot diagnose, and
 ``test_agent_discovery.py`` cannot catch that here: a feature-gated route stays
 in the OpenAPI document. So the last block finds every roadmap-gated route by
-walking the live app's dependency trees, pins that set to exactly the three
+walking the live app's dependency trees, pins that set to exactly the four
 routes above, and checks both discovery surfaces against it.
 """
 
@@ -36,6 +43,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import time
 from pathlib import Path
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -47,14 +55,20 @@ FLAG = "FEATURE_ROADMAP_SURFACES"
 CREATE = "POST /api/vaults/create"
 PUBLISH = "POST /api/marketplace/publish"
 SUBSCRIBE = "POST /api/marketplace/subscribe"
+METADATA = "POST /api/vaults/metadata"
 #: Every mounted route that has the backend signer deploy a vault owned by the
-#: caller's wallet, and nothing else. A route added to the gate, or dropped
-#: from it, must change this set and say why in the same change.
-GATED = {CREATE, PUBLISH, SUBSCRIBE}
+#: caller's wallet, plus the one that records a vault the caller deployed
+#: themselves and has the backend signer anchor its strategies, and nothing
+#: else. A route added to the gate, or dropped from it, must change this set
+#: and say why in the same change.
+GATED = {CREATE, PUBLISH, SUBSCRIBE, METADATA}
 GATE_404 = {"detail": "Not offered: roadmap, not shipped"}
 WALLET = "0x000000000000000000000000000000000000dEaD"
 BODY = {"name": "V", "symbol": "V", "strategy_ids": ["passing"]}
 DEPLOYED = "0xVaultDeployedAddress"
+#: A vault address no other test writes metadata for, so the flag-on metadata
+#: test's row cannot collide with another account's.
+METADATA_VAULT = "0x" + "1432" * 10
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENT_CARD = REPO_ROOT / "ui" / "public" / ".well-known" / "agent.json"
@@ -87,26 +101,39 @@ def _linked_wallet(app, wallet: str = WALLET):
 
 
 @contextlib.contextmanager
-def _create_side_effects():
-    """Every effect the create route has after its dependencies resolve.
+def _vault_side_effects():
+    """Every effect the create and metadata routes have after their dependencies resolve.
 
     All of them are stubbed, so a test can assert which ones ran: the rigor
     gate, the chain deploy (the backend signer spending gas), the funnel write,
-    the identity-ledger event and the ownership-memo drop.
+    the identity-ledger event, the ownership-memo drop, and for metadata the
+    on-chain owner read and the strategy anchoring (the backend signer again).
     """
     rigor = MagicMock(return_value=None)
     deploy = AsyncMock(return_value=DEPLOYED)
     funnel = AsyncMock()
     identity = MagicMock()
     invalidate = MagicMock()
+    owner = AsyncMock(return_value=WALLET)
+    anchor = AsyncMock()
     with (
         patch(f"{V}._assert_strategies_pass_rigor", rigor),
         patch(f"{V}.chain_executor.create_vault", new=deploy),
         patch("archimedes.api.funnel_middleware.record_funnel", new=funnel),
         patch("archimedes.services.identity_events.emit_identity_event", new=identity),
         patch("archimedes.services.trace_visibility.invalidate_vault_owner", new=invalidate),
+        patch(f"{V}.chain_executor.get_vault_owner", new=owner),
+        patch(f"{V}._anchor_strategies_async", new=anchor),
     ):
-        yield {"rigor": rigor, "deploy": deploy, "funnel": funnel, "identity": identity, "invalidate": invalidate}
+        yield {
+            "rigor": rigor,
+            "deploy": deploy,
+            "funnel": funnel,
+            "identity": identity,
+            "invalidate": invalidate,
+            "owner": owner,
+            "anchor": anchor,
+        }
 
 
 async def _post(app, body: dict | None = None, *, raise_app_exceptions: bool = True):
@@ -135,7 +162,7 @@ async def test_flag_off_refuses_create_before_any_chain_call(monkeypatch, value)
     _set_flag(monkeypatch, value)
     from archimedes.main import app
 
-    with _linked_wallet(app), _create_side_effects() as fx:
+    with _linked_wallet(app), _vault_side_effects() as fx:
         resp = await _post(app)
 
     assert resp.status_code == 404, resp.text
@@ -148,9 +175,15 @@ async def test_flag_off_refuses_create_before_any_chain_call(monkeypatch, value)
 
 
 # A body each route's own schema rejects: create declares VaultCreateRequest
-# (an empty object is missing name/symbol), publish and subscribe declare
-# ``dict`` (a JSON array is not one).
-SCHEMA_INVALID_BODY = {CREATE: {}, PUBLISH: ["not", "an", "object"], SUBSCRIBE: ["not", "an", "object"]}
+# (an empty object is missing name/symbol), metadata declares
+# VaultMetadataRequest (an empty object is missing vault_address), publish and
+# subscribe declare ``dict`` (a JSON array is not one).
+SCHEMA_INVALID_BODY = {
+    CREATE: {},
+    METADATA: {},
+    PUBLISH: ["not", "an", "object"],
+    SUBSCRIBE: ["not", "an", "object"],
+}
 
 
 async def _post_route(app, route: str, **kwargs):
@@ -169,7 +202,7 @@ async def test_flag_off_answers_404_before_auth_and_before_body_schema_validatio
     """
     from archimedes.main import app
 
-    with _create_side_effects() as fx:
+    with _vault_side_effects() as fx:
         _set_flag(monkeypatch, None)
         off = await _post_route(app, route, json=SCHEMA_INVALID_BODY[route])
         _set_flag(monkeypatch, "true")
@@ -179,6 +212,8 @@ async def test_flag_off_answers_404_before_auth_and_before_body_schema_validatio
     assert off.json() == GATE_404
     assert on.status_code == 401, on.text
     fx["deploy"].assert_not_called()
+    fx["owner"].assert_not_called()
+    fx["anchor"].assert_not_called()
 
 
 MALFORMED_JSON = b'{"name": "V", '
@@ -215,7 +250,7 @@ async def test_flag_off_body_read_runs_before_the_gate(monkeypatch, route, conte
     _set_flag(monkeypatch, None)
     from archimedes.main import app
 
-    with _linked_wallet(app) as auth_calls, _create_side_effects() as fx:
+    with _linked_wallet(app) as auth_calls, _vault_side_effects() as fx:
         resp = await _post_route(app, route, content=content, headers={"Content-Type": content_type})
 
     assert resp.status_code == status, resp.text
@@ -227,6 +262,8 @@ async def test_flag_off_body_read_runs_before_the_gate(monkeypatch, route, conte
     fx["deploy"].assert_not_called()
     fx["rigor"].assert_not_called()
     fx["identity"].assert_not_called()
+    fx["owner"].assert_not_called()
+    fx["anchor"].assert_not_called()
 
 
 # ── flag on: existing behaviour, unchanged ───────────────────────────────────
@@ -237,7 +274,7 @@ async def test_flag_on_create_runs_the_existing_path(monkeypatch, value):
     _set_flag(monkeypatch, value)
     from archimedes.main import app
 
-    with _linked_wallet(app), _create_side_effects() as fx:
+    with _linked_wallet(app), _vault_side_effects() as fx:
         resp = await _post(app)
 
     assert resp.status_code == 200, resp.text
@@ -260,10 +297,44 @@ async def test_flag_on_still_requires_an_account(monkeypatch):
     _set_flag(monkeypatch, "true")
     from archimedes.main import app
 
-    with _create_side_effects() as fx:
+    with _vault_side_effects() as fx:
         resp = await _post(app)
 
     assert resp.status_code == 401, resp.text
+    fx["deploy"].assert_not_called()
+
+
+async def test_flag_on_metadata_runs_the_existing_path(monkeypatch):
+    """With the flag on, POST /metadata does what it did before the gate. The
+    account and linked wallet are still required (the parametrized test above
+    pins the 401 without a session); the on-chain owner is read before anything
+    else; a caller who is not the owner is refused with nothing written or
+    anchored; the owner's write is stored and its strategies are queued for
+    anchoring by the backend signer."""
+    _set_flag(monkeypatch, "true")
+    from archimedes.api.auth_siwe import _COOKIE_NAME, _sign_session
+    from archimedes.main import app
+
+    session = {"Cookie": f"{_COOKIE_NAME}={_sign_session(WALLET.lower(), time.time())}"}
+    body = {"vault_address": METADATA_VAULT, "name": "V", "symbol": "V", "strategy_ids": ["passing"]}
+    with _vault_side_effects() as fx:
+        fx["owner"].return_value = "0x" + "be" * 20
+        refused = await _post_route(app, METADATA, json=body, headers=session)
+        fx["rigor"].assert_not_called()
+        fx["anchor"].assert_not_called()
+        fx["invalidate"].assert_not_called()
+
+        fx["owner"].return_value = WALLET
+        stored = await _post_route(app, METADATA, json=body, headers=session)
+
+    assert refused.status_code == 403, refused.text
+    assert stored.status_code == 200, stored.text
+    assert stored.json()["vault_address"] == METADATA_VAULT
+    assert stored.json()["strategy_ids"] == ["passing"]
+    fx["owner"].assert_awaited_with(METADATA_VAULT)
+    fx["rigor"].assert_called_once_with(["passing"], 1, request=ANY)
+    fx["anchor"].assert_called_once_with(["passing"])
+    fx["invalidate"].assert_called_once_with(METADATA_VAULT)
     fx["deploy"].assert_not_called()
 
 
@@ -331,10 +402,12 @@ async def _manifest_routes() -> set[str]:
 
 def test_the_roadmap_gate_covers_exactly_the_vault_deploying_routes():
     """The gated set is exactly the three routes that deploy a vault for the
-    caller: not fewer (one left open makes the Privacy page false for a direct
-    API caller) and not more (a gated exit route, such as unsubscribe, would
-    strand an existing subscriber's refund). Also the guard on the guards
-    below: an empty gated set would pass them vacuously."""
+    caller plus the metadata write that anchors a self-deployed vault's
+    strategies: not fewer (one left open makes the Privacy page false for a
+    direct API caller) and not more (a gated exit route, such as unsubscribe,
+    would strand an existing subscriber's refund; a gated read, such as GET
+    /{address}/metadata, would hide what is already public). Also the guard on
+    the guards below: an empty gated set would pass them vacuously."""
     from archimedes import main
 
     assert main.marketplace_router is not None, (
@@ -359,8 +432,16 @@ async def test_served_manifest_omits_roadmap_gated_routes_while_the_flag_is_off(
     assert not manifest & GATED
 
 
+#: Gated routes the manifest has never advertised, in either state of the flag.
+#: The metadata write is the UI's step after a wallet-signed deploy, not an
+#: agent journey; the manifest did not list it before the gate either.
+NEVER_ADVERTISED = {METADATA}
+
+
 async def test_served_manifest_lists_the_gated_routes_while_the_flag_is_on(monkeypatch):
     """The served manifest follows the server's own flag, so a preview stack that
     turns the routes on still finds them, filed under their roadmap groups."""
     _set_flag(monkeypatch, "true")
-    assert await _manifest_routes() >= GATED
+    manifest = await _manifest_routes()
+    assert manifest >= GATED - NEVER_ADVERTISED
+    assert not manifest & NEVER_ADVERTISED

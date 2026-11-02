@@ -60,6 +60,10 @@ const ENTITIES = {
 	"&ndash;": "–",
 	"&hellip;": "…",
 };
+// Any "<" or ">" left after the tag strip is dropped too, so a tag split
+// across another ("<<b>p>") cannot survive as markup (CodeQL
+// js/incomplete-multi-character-sanitization). The output is only ever
+// matched against, never rendered.
 const visible = (fragment) =>
 	fragment
 		.replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
@@ -69,6 +73,7 @@ const visible = (fragment) =>
 		.replace(/\{'\s*'\}/g, " ")
 		.replace(/<\/?(?:p|li|ul|ol|h[1-6]|section|header|div)\b[^>]*>/g, " ")
 		.replace(/<[^>]*>/g, "")
+		.replace(/[<>]/g, "")
 		.replace(/&[a-z]+;/g, (entity) => ENTITIES[entity] ?? entity)
 		.replace(/\s+/g, " ");
 // The rendered part of a page, as text.

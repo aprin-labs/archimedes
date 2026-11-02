@@ -55,9 +55,11 @@ async function main() {
 
 main().catch((err) => {
   console.error("Failed:", err.message || err);
-  if (err.response) {
-    console.error("HTTP", err.response.status);
-    console.error("Body:", JSON.stringify(err.response.data, null, 2));
-  }
+  // SDK 10.x throws HttpResponseError (status on the error, the axios error on
+  // .error); 7.x threw the axios error itself. Read both shapes.
+  const status = err.status ?? err.response?.status;
+  const body = err.response?.data ?? err.error?.response?.data;
+  if (status !== undefined) console.error("HTTP", status);
+  if (body !== undefined) console.error("Body:", JSON.stringify(body, null, 2));
   process.exit(1);
 });
