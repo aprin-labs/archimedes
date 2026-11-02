@@ -103,7 +103,7 @@ yfinance>=1.7.0
 requests>=2.32,<2.34
 # Bumped from 3.13.5 to close CVE-2026-34993 / CVE-2026-47265 (HTTP parser
 # DoS/smuggling).
-aiohttp>=3.14.4
+aiohttp>=3.14.5
 # httpx is directly imported by services/corpus_service.py (arXiv intake) and
 # services/llm_backend.py (OpenAI-compatible + Ollama backends). Pinned directly
 # so we don't rely on it arriving transitively via anthropic/fastapi.
