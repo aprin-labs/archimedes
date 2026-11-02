@@ -15,9 +15,14 @@ Navigate to **Settings → Code security and analysis** for the repo
 - **What it does:** GitHub monitors dependency manifests (`package.json`,
   `requirements.txt`, etc.) and opens alerts when a known vulnerability is
   found in a transitive dependency.
-- **Our config:** `.github/dependabot.yml` controls the weekly schedule and
-  PR limits for version updates.
-- **Also turn on Dependabot security updates** (same settings page, separate
+- **Version updates are off (2026-11-01).** The hosted site was shut down and
+  the repo continues as a local-first open-source project, so the owner turned
+  Dependabot version updates off by removing `.github/dependabot.yml`. To turn
+  them back on, restore that file from git history (it scheduled weekly
+  updates for npm `/ui` and `/wallet-setup`, pip `/backend`, uv
+  `/analytics-engine`, docker and github-actions). Alerts are a separate
+  repository setting, unaffected.
+- **Dependabot security updates** (same settings page, separate
   toggle). Alerts alone never open a PR. With it on, Dependabot opens one that
   bumps the vulnerable package to the first patched version, transitive
   packages included. `dependabot.yml` does not drive this, and its
@@ -68,6 +73,5 @@ Review the diff carefully — never add a real secret to the baseline.
 
 | File | Purpose |
 |---|---|
-| `.github/dependabot.yml` | Weekly dependency bump schedule |
 | `.pre-commit-config.yaml` | Client-side hooks (detect-secrets, ruff, merge-conflict) |
 | `.secrets.baseline` | Known false positives for detect-secrets |

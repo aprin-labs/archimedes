@@ -227,6 +227,11 @@ def test_dependabot_puts_the_four_react_packages_in_one_group() -> None:
     updates it cannot (see the note above), so there this test is not the
     whole guard.
     """
+    if not DEPENDABOT_YML.exists():
+        # Dependabot version updates are off (owner decision, 2026-11-01): no
+        # version-update PR can move react alone. Restoring dependabot.yml
+        # re-arms this check, which must then find the four in one group.
+        pytest.skip(".github/dependabot.yml removed: Dependabot version updates are off")
     config = yaml.safe_load(DEPENDABOT_YML.read_text(encoding="utf-8"))
     dep_types = _ui_dep_types()
     assert dep_types == {
