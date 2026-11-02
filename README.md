@@ -16,7 +16,7 @@ Survivors run as paper deployments, so a gated strategy's results play out in th
 with full provenance.
 
 Archimedes is open-source software you run yourself, against Arc testnet. The hosted site
-at archimedes-arc.com is being shut down, so the way to use it is to run your own instance.
+at archimedes-arc.com has closed, so the way to use it is to run your own instance.
 
 ## Run it locally
 
